@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "ホットキーで呼び出す階層ポップアップランチャー"
 license = "MIT"
+default-run = "waypoint"
 
 [lib]
 name = "waypoint"
@@ -12,6 +13,10 @@ path = "src/lib.rs"
 [[bin]]
 name = "waypoint"
 path = "src/main.rs"
+
+[[bin]]
+name = "waypoint-settings"
+path = "src/settings_main.rs"
 
 [dependencies]
 # Win32 API バインディング。必要な feature のみ有効にする
@@ -37,6 +42,8 @@ serde = { version = "1", features = ["derive"] }
 # preserve_order: 設定ファイルは手編集を想定するため、保存で項目順を入れ替えない
 serde_json = { version = "1", features = ["preserve_order"] }
 dirs = "6"
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow"] }
+rfd = { version = "0.17", default-features = false }
 
 [profile.release]
 opt-level = "z"

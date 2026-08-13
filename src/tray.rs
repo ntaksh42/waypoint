@@ -17,10 +17,10 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-    GetCursorPos, HMENU, IDI_APPLICATION, LoadIconW, MF_CHECKED, MF_SEPARATOR, MF_STRING,
-    PostQuitMessage, RegisterClassW, SetForegroundWindow, TPM_BOTTOMALIGN, TPM_RETURNCMD,
-    TPM_RIGHTBUTTON, TrackPopupMenuEx, WM_APP, WM_COMMAND, WM_DESTROY, WM_HOTKEY, WM_LBUTTONUP,
-    WM_RBUTTONUP, WNDCLASSW, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
+    FindWindowW, GetCursorPos, HMENU, IDI_APPLICATION, LoadIconW, MF_CHECKED, MF_SEPARATOR,
+    MF_STRING, PostMessageW, PostQuitMessage, RegisterClassW, SetForegroundWindow, TPM_BOTTOMALIGN,
+    TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, WM_APP, WM_COMMAND, WM_DESTROY, WM_HOTKEY,
+    WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSW, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
 };
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
@@ -32,6 +32,7 @@ use crate::trigger::{self, WM_TRIGGER_MENU};
 
 /// トレイアイコンからの通知。WM_APP 以降はアプリが自由に使える。
 const WM_TRAY: u32 = WM_APP + 1;
+const WM_RELOAD_CONFIG: u32 = WM_APP + 3;
 const TRAY_UID: u32 = 1;
 
 // トレイの右クリックメニューの項目 ID
@@ -241,6 +242,10 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
             show_launcher_at_cursor(hwnd);
             LRESULT(0)
         }
+        WM_RELOAD_CONFIG => {
+            reload(hwnd);
+            LRESULT(0)
+        }
         WM_COMMAND => LRESULT(0),
         WM_DESTROY => {
             unsafe { PostQuitMessage(0) };
@@ -295,12 +300,26 @@ fn show_tray_menu(hwnd: HWND) {
     }
 }
 
-/// 管理画面は未実装のため、当面は設定ファイルを既定のエディタで開く。
 fn open_config_in_editor() {
-    if let Some(path) = crate::config::config_path() {
-        let _ = std::process::Command::new("cmd")
-            .args(["/c", "start", "", &path.to_string_lossy()])
-            .spawn();
+    if let Ok(exe) = std::env::current_exe() {
+        let editor = exe.with_file_name("waypoint-settings.exe");
+        let _ = std::process::Command::new(editor).spawn();
+    }
+}
+
+/// 管理画面から常駐部へ設定の再読み込みを通知する。
+pub fn signal_reload() -> bool {
+    unsafe {
+        let Ok(hwnd) = FindWindowW(CLASS_NAME, None) else {
+            return false;
+        };
+        PostMessageW(
+            Some(hwnd),
+            WM_RELOAD_CONFIG,
+            Default::default(),
+            Default::default(),
+        )
+        .is_ok()
     }
 }
 
@@ -365,7 +384,7 @@ unsafe fn build_tray_items(menu: HMENU) -> Result<()> {
             AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
         }
 
-        AppendMenuW(menu, MF_STRING, ID_SETTINGS, w!("Open config file"))?;
+        AppendMenuW(menu, MF_STRING, ID_SETTINGS, w!("Settings..."))?;
         AppendMenuW(menu, MF_STRING, ID_RELOAD, w!("Reload config"))?;
 
         let autostart_flags = if crate::autostart::is_enabled() {

@@ -7,7 +7,7 @@ use windows::Win32::System::Com::{
     CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
 };
 use windows::Win32::System::Variant::VARIANT;
-use windows::Win32::UI::Shell::{IShellWindows, IWebBrowser2, ShellWindows};
+use windows::Win32::UI::Shell::{IShellWindows, IWebBrowser2, ShellExecuteW, ShellWindows};
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 use windows::core::{BSTR, HSTRING, Interface};
 
@@ -63,14 +63,19 @@ pub fn open(path: &str, mode: OpenMode, origin: Option<HWND>) -> std::io::Result
     open_new_window(path)
 }
 
-/// 新しいエクスプローラーウィンドウで開く。
+/// Windows の既定のフォルダーハンドラーで開く。
 fn open_new_window(path: &str) -> std::io::Result<()> {
-    // ShellExecuteW でも良いが、explorer.exe に渡すほうが
-    // 引数のエスケープを自前で考えずに済む
-    std::process::Command::new("explorer.exe")
-        .arg(path)
-        .spawn()
-        .map(|_| ())
+    let path = HSTRING::from(path);
+    let result = unsafe { ShellExecuteW(None, None, &path, None, None, SW_SHOWNORMAL) };
+    let code = result.0 as isize;
+
+    if code > 32 {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(format!(
+            "ShellExecuteW failed with code {code}"
+        )))
+    }
 }
 
 /// 既存のエクスプローラーウィンドウのフォルダを変更する。
