@@ -25,6 +25,7 @@ windows = { version = "0.62", features = [
   "Win32_UI_WindowsAndMessaging",    # メニュー・フック・ウィンドウ
   "Win32_UI_Input_KeyboardAndMouse", # RegisterHotKey
   "Win32_UI_Shell",                  # SHGetKnownFolderPath / Shell_NotifyIcon
+  "Win32_UI_Shell_Common",           # シェル名前空間項目の PIDL
   "Win32_UI_HiDpi",                  # Per-Monitor V2
   "Win32_System_LibraryLoader",
   "Win32_System_Com",                # エクスプローラー操作 (IShellWindows)

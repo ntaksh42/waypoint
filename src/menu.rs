@@ -30,12 +30,16 @@ pub enum Action {
     ActivateWindow {
         hwnd: isize,
     },
+    OpenShell {
+        target: String,
+    },
 }
 
 /// ランチャーメニューで選ばれた操作。
 #[derive(Debug, Clone, PartialEq)]
 pub enum Selection {
     Action(Action),
+    AddSpecialFolder,
     Settings,
     Reload,
     Close,
@@ -73,6 +77,7 @@ impl BuiltMenu {
                 Action::ActivateWindow { hwnd } => {
                     (*id, "activateWindow".to_string(), hwnd.to_string())
                 }
+                Action::OpenShell { target } => (*id, "openShell".to_string(), target.clone()),
             })
             .collect()
     }
@@ -99,6 +104,7 @@ impl BuiltMenu {
         }
         match id.0 as usize {
             ID_SETTINGS => Some(Selection::Settings),
+            ID_ADD_SPECIAL_FOLDER => Some(Selection::AddSpecialFolder),
             ID_RELOAD => Some(Selection::Reload),
             ID_CLOSE => Some(Selection::Close),
             id => self.action(id).cloned().map(Selection::Action),
@@ -129,6 +135,7 @@ pub fn build(cfg: &Config, dynamic: &DynamicMenus) -> Result<BuiltMenu> {
     let menu = unsafe { build_level(&cfg.items, &mut ctx)? };
     unsafe {
         append_in_the_works(menu, dynamic, &mut ctx)?;
+        append_special_folders(menu, &mut ctx)?;
         append_footer(menu)?;
     }
     Ok(BuiltMenu {
@@ -142,6 +149,7 @@ const FIRST_ITEM_ID: usize = 1;
 const ID_SETTINGS: usize = 0xe001;
 const ID_RELOAD: usize = 0xe002;
 const ID_CLOSE: usize = 0xe003;
+const ID_ADD_SPECIAL_FOLDER: usize = 0xe004;
 
 struct BuildCtx<'a> {
     vars: &'a BTreeMap<String, String>,
@@ -267,6 +275,79 @@ unsafe fn append_in_the_works(
         )?;
 
         AppendMenuW(menu, MF_POPUP, submenu.0 as usize, w!("In the Works"))?;
+        if let Some(path) = crate::known_folder::resolve("Documents")
+            && let Some(bitmap) = crate::icon::bitmap_for(&path)
+        {
+            set_last_item_bitmap(menu, bitmap);
+        }
+        Ok(())
+    }
+}
+
+/// QAP の My Special Folders と同じ、Windows 標準の場所への入口。
+unsafe fn append_special_folders(menu: HMENU, ctx: &mut BuildCtx) -> Result<()> {
+    unsafe {
+        let submenu = CreatePopupMenu()?;
+        AppendMenuW(
+            submenu,
+            MF_STRING,
+            ID_ADD_SPECIAL_FOLDER,
+            w!("Add Favorite - Special Folder..."),
+        )?;
+        AppendMenuW(submenu, MF_SEPARATOR, 0, PCWSTR::null())?;
+
+        for (index, (label, known_folder)) in [
+            ("Desktop", "Desktop"),
+            ("Documents", "Documents"),
+            ("Pictures", "Pictures"),
+            ("Downloads", "Downloads"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            append_leaf(
+                submenu,
+                ctx,
+                label,
+                crate::known_folder::resolve(known_folder),
+                OpenMode::NewWindow,
+                index + 1,
+            )?;
+        }
+
+        AppendMenuW(submenu, MF_SEPARATOR, 0, PCWSTR::null())?;
+        for (index, (label, target)) in [
+            ("This PC", "shell:MyComputerFolder"),
+            ("Network", "shell:NetworkPlacesFolder"),
+            ("All Control Panel Items", "shell:ControlPanelFolder"),
+            ("Recycle Bin", "shell:RecycleBinFolder"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let id = ctx.next_id;
+            ctx.next_id += 1;
+            let label = HSTRING::from(decorate(label, ctx.numeric, index + 5));
+            AppendMenuW(submenu, MF_STRING, id, PCWSTR(label.as_ptr()))?;
+            if let Some(bitmap) = crate::icon::bitmap_for_shell(target) {
+                set_item_bitmap(submenu, id, bitmap);
+            }
+            ctx.actions.insert(
+                id,
+                Action::OpenShell {
+                    target: target.to_string(),
+                },
+            );
+        }
+
+        AppendMenuW(submenu, MF_SEPARATOR, 0, PCWSTR::null())?;
+        AppendMenuW(
+            submenu,
+            MF_STRING,
+            ID_SETTINGS,
+            w!("Customize this menu (or group)"),
+        )?;
+        AppendMenuW(menu, MF_POPUP, submenu.0 as usize, w!("My Special Folders"))?;
         if let Some(path) = crate::known_folder::resolve("Documents")
             && let Some(bitmap) = crate::icon::bitmap_for(&path)
         {

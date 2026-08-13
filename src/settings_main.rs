@@ -6,6 +6,7 @@ use eframe::egui;
 use waypoint::config::{Config, Item, LoadOutcome, OpenMode};
 
 fn main() -> eframe::Result<()> {
+    let add_special_folder = std::env::args().any(|arg| arg == "--add-special-folder");
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([700.0, 560.0])
@@ -16,9 +17,13 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Customize - Waypoint",
         options,
-        Box::new(|creation| {
+        Box::new(move |creation| {
             creation.egui_ctx.set_visuals(egui::Visuals::dark());
-            Ok(Box::new(SettingsApp::load()))
+            let mut app = SettingsApp::load();
+            if add_special_folder {
+                app.begin_add(DraftKind::SpecialFolder);
+            }
+            Ok(Box::new(app))
         }),
     )
 }
