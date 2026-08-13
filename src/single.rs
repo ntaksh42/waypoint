@@ -18,16 +18,31 @@ pub struct InstanceGuard(#[allow(dead_code)] HANDLE);
 pub struct AlreadyRunning;
 
 /// 先行プロセスがあれば Err を返す。
+///
+/// `GetLastError` は `CreateMutexW` の**直後**に読むこと。
+/// Result を分解するだけでも別の Win32 呼び出しが挟まり、
+/// ERROR_ALREADY_EXISTS(183) が別の値に上書きされる。
 pub fn acquire() -> Result<InstanceGuard, AlreadyRunning> {
     unsafe {
-        let Ok(handle) = CreateMutexW(None, true, w!("Global\\waypoint_single_instance")) else {
+        // 所有権は取らない (第2引数 false) 。
+        // 存在するかどうかだけが判定材料で、所有権を握ると
+        // 強制終了されたプロセスの mutex が abandoned 状態で残り、
+        // 次の起動が待たされる。
+        let result = CreateMutexW(None, false, w!(r"Local\waypoint_single_instance"));
+        // ここを 1 行でも後ろにずらすと壊れる
+        let already_exists = GetLastError() == ERROR_ALREADY_EXISTS;
+
+        match result {
+            Ok(handle) => {
+                if already_exists {
+                    Err(AlreadyRunning)
+                } else {
+                    Ok(InstanceGuard(handle))
+                }
+            }
             // Mutex を作れない場合は起動を止めない
-            return Ok(InstanceGuard(HANDLE::default()));
-        };
-        if GetLastError() == ERROR_ALREADY_EXISTS {
-            return Err(AlreadyRunning);
+            Err(_) => Ok(InstanceGuard(HANDLE::default())),
         }
-        Ok(InstanceGuard(handle))
     }
 }
 

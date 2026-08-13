@@ -14,13 +14,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 fn main() {
+    let selftest = std::env::args().any(|a| a == "--selftest");
     // メニューの座標は物理ピクセルで扱うため、モニタごとの DPI を
     // 自前で解釈する。ウィンドウを作る前に宣言する必要がある。
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
-
-    let selftest = std::env::args().any(|a| a == "--selftest");
 
     // 二重起動なら既存プロセスにメニューを出させて終わる (FR-8.3)
     let _instance = match single::acquire() {
