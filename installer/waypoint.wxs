@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <!--
+    ユーザー単位 (perUser) でインストールする。設定 (%APPDATA%) も
+    自動起動 (HKCU) もユーザー単位なので整合し、UAC も出ない。
+    perUser では ProgramFiles を使えないため LocalAppDataFolder へ入れる。
+
+    バージョンは -d Version=x.y.z で渡す (Cargo.toml と同期させる)。
+  -->
+  <?ifndef Version?>
+  <?define Version="0.1.0"?>
+  <?endif?>
+
+  <!--
+    Codepage 65001 (UTF-8) / Language 1041 (日本語)。
+    既定の 1252 では説明文の日本語が WIX0311 で通らない。
+  -->
+  <Package Name="waypoint"
+           Manufacturer="ntaksh42"
+           Version="$(Version)"
+           UpgradeCode="6B2F1C84-7E3A-4D19-9C56-0A8E4F2D7B31"
+           Scope="perUser"
+           Compressed="yes"
+           Codepage="65001"
+           Language="1041">
+
+    <SummaryInformation Description="ホットキーで呼び出す階層ポップアップランチャー"
+                        Manufacturer="ntaksh42" />
+
+    <!-- 同じ UpgradeCode の古い版を自動で置き換える -->
+    <MajorUpgrade DowngradeErrorMessage="より新しいバージョンの waypoint が既にインストールされています。" />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!--
+      「設定 > アプリ」と「プログラムと機能」への表示。
+      ARPINSTALLLOCATION が空だと一覧に出ないことがあるので明示する。
+    -->
+    <!-- Property では他プロパティを参照できない (WIX1077)。SetProperty で入れる -->
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]"
+                 After="CostFinalize" Sequence="both" />
+    <!-- 変更/修復は使わない。アンインストールと再インストールで足りる -->
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+    <Icon Id="AppIcon" SourceFile="waypoint.exe" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+
+    <!--
+      常駐中の waypoint.exe はファイルを掴んだままなので、
+      アップグレード・アンインストール時に終了させる (R-10)。
+      これが無いと「使用中のファイル」ダイアログや再起動要求になる。
+    -->
+    <util:CloseApplication Id="CloseWaypoint"
+                           Target="waypoint.exe"
+                           CloseMessage="yes"
+                           RebootPrompt="no"
+                           Timeout="5" />
+    <util:CloseApplication Id="CloseWaypointSettings"
+                           Target="waypoint-settings.exe"
+                           CloseMessage="yes"
+                           RebootPrompt="no"
+                           Timeout="5" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="waypoint">
+
+          <!-- 常駐部 -->
+          <Component Id="MainExe" Guid="*">
+            <File Id="WaypointExe" Source="waypoint.exe" KeyPath="yes" />
+          </Component>
+
+          <!-- 管理画面 (別プロセス) -->
+          <Component Id="SettingsExe" Guid="*">
+            <File Id="WaypointSettingsExe" Source="waypoint-settings.exe" KeyPath="yes" />
+          </Component>
+
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <!--
+      スタートメニューのショートカット。
+      自動起動は MSI では設定しない。アプリ側の設定 (FR-8.4) が
+      HKCU\...\Run を書くので、二重管理になるのを避ける。
+    -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut" Guid="*">
+        <Shortcut Id="AppShortcut"
+                  Name="waypoint"
+                  Description="ホットキーで呼び出す階層ポップアップランチャー"
+                  Target="[INSTALLFOLDER]waypoint.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <!-- perUser なのでアンインストール時にこのキーごと消える -->
+        <RegistryValue Root="HKCU" Key="Software\waypoint" Name="installed"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="waypoint">
+      <ComponentRef Id="MainExe" />
+      <ComponentRef Id="SettingsExe" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+
+  </Package>
+</Wix>

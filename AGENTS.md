@@ -32,6 +32,10 @@ cargo run                                    # 起動(トレイ常駐)
 # GUI サブシステムのため stdout に出せない。自己診断は結果をファイルに書く
 cargo run -- --selftest
 Get-Content "$env:TEMP\waypoint_selftest.txt"
+
+# MSI をビルドする (WiX 5 が必要)
+.\installer\build.ps1
+.\installer\build.ps1 -SkipBuild   # ビルド済みバイナリを使う
 ```
 
 - **リビルド前に実行中の `waypoint` を必ず終了する。** 実行中の exe は出力をロックし、ビルドが「アクセスが拒否されました (os error 5)」で落ちる。ビルドエラーに見えるが原因は別。
@@ -39,6 +43,25 @@ Get-Content "$env:TEMP\waypoint_selftest.txt"
   Get-Process waypoint -ErrorAction SilentlyContinue | Stop-Process -Force
   ```
 - **警告 0 を維持する。** CI が `-D warnings` で強制する。
+
+## リリース手順
+
+1. `Cargo.toml` の `version` を上げる。**バージョンの出どころはここだけ**
+   （`installer/build.ps1` が読んで `-d Version=` で wxs へ渡す）
+2. `.\installer\build.ps1` で `dist\waypoint-<version>-x64.msi` を作る
+3. `git tag vX.Y.Z && git push --tags`
+   → `installer.yml` が Release に MSI を添付する
+
+インストーラの決定事項は `docs/spec.md` の「08-2. 配布形態」にある。
+
+- **`UpgradeCode` は変えない。** 変えると別製品扱いになり、古い版が残る
+- MSI は **perUser**。`ProgramFiles` は使えないので `LocalAppDataFolder` へ入れる
+- **`util:CloseApplication` を消さない。** 常駐中の exe を掴んだままだと
+  上書きに失敗し「使用中のファイル」ダイアログや再起動要求になる (R-10)
+- 説明文に日本語を使うので `Codepage="65001"` が要る。既定の 1252 では
+  `WIX0311` で通らない
+- ARP の登録先は perUser でも **`HKLM\...\Uninstall`** と
+  `Installer\UserData\<SID>\Products`。`HKCU\...\Uninstall` を見ても無い
 
 ## The scope rule
 
