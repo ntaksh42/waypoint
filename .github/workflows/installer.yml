@@ -16,6 +16,10 @@ on:
 jobs:
   msi:
     runs-on: windows-latest
+    # タグ push 時に Release へ添付するため、既定の read-only トークンでは
+    # HTTP 403 (Resource not accessible by integration) になる。書き込みを明示する。
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
