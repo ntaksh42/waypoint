@@ -137,3 +137,42 @@ fn separator_without_name_is_valid() {
     let cfg: Config = serde_json::from_str(r#"{ "items": [ { "type": "separator" } ] }"#).unwrap();
     assert_eq!(cfg.items[0].label(), None);
 }
+
+/// FR-5.4: 解決できない変数を含む項目を洗い出す。
+/// サブメニューの中も見る。
+#[test]
+fn unresolved_items_are_reported_including_submenus() {
+    let cfg: Config = serde_json::from_str(
+        r#"{
+            "variables": { "Known": "C:\\known" },
+            "items": [
+                { "type": "folder", "name": "OK",      "path": "{Known}\\a" },
+                { "type": "folder", "name": "BadUser", "path": "{Missing}\\b" },
+                { "type": "specialFolder", "name": "Special", "knownFolder": "Desktop" },
+                { "type": "submenu", "name": "Nested", "items": [
+                    { "type": "folder", "name": "BadEnv", "path": "%NO_SUCH_ENV_VAR_XYZ%\\c" }
+                ]}
+            ]
+        }"#,
+    )
+    .unwrap();
+
+    let found = waypoint::config::unresolved_items(&cfg);
+    let names: Vec<&str> = found.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, vec!["BadUser", "BadEnv"], "{found:?}");
+    // 展開前のパスを返す (何が解決できなかったか分かるように)
+    assert_eq!(found[0].1, "{Missing}\\b");
+}
+
+/// 解決できる項目しかなければ空。
+#[test]
+fn unresolved_items_is_empty_when_all_resolve() {
+    let cfg: Config = serde_json::from_str(
+        r#"{
+            "variables": { "P": "C:\\p" },
+            "items": [ { "type": "folder", "name": "OK", "path": "{P}\\x" } ]
+        }"#,
+    )
+    .unwrap();
+    assert!(waypoint::config::unresolved_items(&cfg).is_empty());
+}

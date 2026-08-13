@@ -1,4 +1,4 @@
-//! panic をログファイルへ残す (06 章のログ要件) 。
+//! ログ出力 (06 章のログ要件: 起動・設定読込・エラーのみ記録) 。
 //!
 //! GUI サブシステム (`windows_subsystem = "windows"`) では stderr が
 //! どこにも繋がらないため、既定の panic ハンドラの出力は消える。
@@ -6,6 +6,9 @@
 //! 「unwind できない関数での panic」として即 abort するので、
 //! 画面には何も出ないままプロセスだけが消える。原因を後から
 //! 追えるように、パニックの内容をファイルへ追記する。
+//!
+//! panic 以外の記録もここへ集約する。出力先が同じで、
+//! 「後から原因を追う」という目的も同じため。
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -23,6 +26,14 @@ pub fn install() {
         // 既定のフックも呼び、デバッグ実行時は stderr にも出す
         default_hook(info);
     }));
+}
+
+/// 1 行記録する。起動・設定読込・エラーのみに使う (06 章) 。
+///
+/// 頻繁に呼ぶ用途は想定しない。メニュー表示経路からは呼ばないこと
+/// (ファイル I/O が表示遅延に乗る)。
+pub fn record(message: &str) {
+    write_entry(&format!("[{}] {message}\n", timestamp()));
 }
 
 fn format_entry(info: &std::panic::PanicHookInfo<'_>) -> String {

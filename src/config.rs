@@ -310,6 +310,32 @@ fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
+/// 変数を解決できない項目を洗い出す (FR-5.4) 。
+///
+/// 返すのは (項目名, 展開前のパス) 。メニューではグレー表示になるだけで
+/// 理由が分からないため、起動時にログへ残すのに使う。
+pub fn unresolved_items(config: &Config) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    collect_unresolved(&config.items, &config.variables, &mut found);
+    found
+}
+
+fn collect_unresolved(
+    items: &[Item],
+    vars: &BTreeMap<String, String>,
+    found: &mut Vec<(String, String)>,
+) {
+    for item in items {
+        match item {
+            Item::Folder { name, path, .. } if expand(path, vars).is_none() => {
+                found.push((name.clone(), path.clone()));
+            }
+            Item::Submenu { items, .. } => collect_unresolved(items, vars, found),
+            _ => {}
+        }
+    }
+}
+
 /// パス中の `%ENV%` と `{UserVar}` を展開する (FR-5.1 / FR-5.2) 。
 ///
 /// 解決できない変数が残った場合は None を返し、呼び出し側で

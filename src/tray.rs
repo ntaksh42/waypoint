@@ -21,7 +21,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     MF_SEPARATOR, MF_STRING, MIIM_BITMAP, PostMessageW, PostQuitMessage, RegisterClassW,
     SetForegroundWindow, SetMenuItemInfoW, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON,
     TrackPopupMenuEx, WM_APP, WM_COMMAND, WM_DESTROY, WM_HOTKEY, WM_LBUTTONUP, WM_RBUTTONUP,
-    WNDCLASSW, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
+    WM_SETTINGCHANGE, WM_THEMECHANGED, WNDCLASSW, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
 };
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
@@ -67,10 +67,25 @@ struct AppState {
 /// 設定を読み込み、メニューを構築して保持する。
 pub fn load_state() {
     let (config, load_error) = match crate::config::load() {
-        LoadOutcome::Loaded(c) | LoadOutcome::Created(c) => (c, None),
+        LoadOutcome::Loaded(c) => {
+            crate::panic_log::record(&format!("config loaded: {} items", c.items.len()));
+            (c, None)
+        }
+        LoadOutcome::Created(c) => {
+            crate::panic_log::record("config not found; wrote defaults");
+            (c, None)
+        }
         // 壊れた設定でも起動は続ける (FR-7.4)
-        LoadOutcome::Failed(e) => (Config::default(), Some(e)),
+        LoadOutcome::Failed(e) => {
+            crate::panic_log::record(&format!("config load failed: {e}"));
+            (Config::default(), Some(e))
+        }
     };
+    // 解決できない変数を含む項目を残す。メニューではグレー表示に
+    // なるだけで理由が分からない (FR-5.4)
+    for (name, path) in crate::config::unresolved_items(&config) {
+        crate::panic_log::record(&format!("unresolved variable in \"{name}\": {path}"));
+    }
     let dynamic = crate::dynamic::refresh();
     let menu = crate::menu::build(&config, &dynamic).ok();
     quick_launch_window::configure(&config, &dynamic);
@@ -90,6 +105,9 @@ pub fn load_state() {
 pub fn reload(hwnd: HWND) {
     // ホットキーが変わっているかもしれないので張り直す
     trigger::unregister_hotkeys(hwnd);
+    // 項目のパスやアイコン指定が変わっている可能性がある。
+    // 古いビットマップを使い回さないよう捨ててから組み直す
+    crate::icon::clear_cache();
     load_state();
     let ok = register_hotkey_from_config(hwnd);
     set_hotkey_failed(!ok);
@@ -242,7 +260,24 @@ fn write_tip(dst: &mut [u16; 128], text: &str) {
     dst[len] = 0;
 }
 
+/// Win32 から呼ばれる入口。
+///
+/// `extern "system"` は unwind できず、panic すると abort する。
+/// ここが落ちると常駐部ごと消えてトレイアイコンも残らないため、
+/// 捕まえてログに残し、既定処理へ流して動作を続ける。
 extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    match std::panic::catch_unwind(|| dispatch(hwnd, msg, wparam, lparam)) {
+        Ok(result) => result,
+        Err(_) => {
+            crate::panic_log::record(&format!(
+                "tray wnd_proc panicked on message 0x{msg:04x}; recovered"
+            ));
+            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+        }
+    }
+}
+
+fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_TRAY => {
             let event = (lparam.0 as u32) & 0xffff;
@@ -288,6 +323,14 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
         WM_RELOAD_CONFIG => {
             reload(hwnd);
             LRESULT(0)
+        }
+        // ダーク / ライトの切り替えでアイコンの見え方が変わる。
+        // 古いビットマップを捨て、次回表示で引き直す
+        WM_SETTINGCHANGE | WM_THEMECHANGED => {
+            crate::icon::clear_cache();
+            crate::theme::enable_dark_menus();
+            rebuild_menu();
+            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
         }
         WM_COMMAND => LRESULT(0),
         WM_DESTROY => {
@@ -339,6 +382,20 @@ fn show_launcher(hwnd: HWND, at: POINT, origin: Option<HWND>) {
         Some(Selection::Reload) => reload(hwnd),
         Some(Selection::Close) | None => refresh_dynamic(),
     }
+}
+
+/// 保持済みの設定と動的データのままメニューだけ組み直す。
+///
+/// テーマ変更のようにアイコンだけ作り直したい場合に使う。
+/// Recent / Frequent の再列挙は不要なので `refresh_dynamic` は呼ばない。
+fn rebuild_menu() {
+    STATE.with(|s| {
+        let mut state = s.borrow_mut();
+        let Some(state) = state.as_mut() else {
+            return;
+        };
+        state.menu = crate::menu::build(&state.config, &state.dynamic).ok();
+    });
 }
 
 /// メニューが閉じた後に列挙し、次回表示用キャッシュを入れ替える。

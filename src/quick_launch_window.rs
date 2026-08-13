@@ -252,12 +252,34 @@ fn ensure_window(owner: HWND) -> Result<()> {
     Ok(())
 }
 
+/// Win32 から呼ばれる入口。
+///
+/// `extern "system"` は unwind できないため、中で panic すると
+/// 「panic in a function that cannot unwind」で即 abort する
+/// (GUI サブシステムでは stderr も出ないので無言で消える)。
+/// 実際に RefCell の再入借用でこれを踏んだ。原因を潰したうえで、
+/// 再発時に落ちないよう捕まえてログに残す。
 extern "system" fn window_proc(
     hwnd: HWND,
     message: u32,
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    let handled = std::panic::catch_unwind(|| dispatch(hwnd, message, wparam, lparam));
+    match handled {
+        Ok(result) => result,
+        Err(_) => {
+            // panic フックが既に詳細を記録している。ここでは
+            // どのメッセージで落ちたかを補足する
+            crate::panic_log::record(&format!(
+                "quick launch window_proc panicked on message 0x{message:04x}; recovered"
+            ));
+            unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+        }
+    }
+}
+
+fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match message {
         WM_COMMAND => {
             let notification = ((wparam.0 >> 16) & 0xffff) as u32;
