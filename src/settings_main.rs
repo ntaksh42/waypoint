@@ -31,6 +31,40 @@ fn main() -> eframe::Result<()> {
     )
 }
 
+/// 項目一覧の列幅。見出しと各行で共有する。
+const COL_NAME: f32 = 170.0;
+const COL_KIND: f32 = 96.0;
+const COL_OPEN: f32 = 82.0;
+/// 見出し行のグリップ分の字下げ。
+const ROW_INDENT: f32 = 20.0;
+/// 一覧末尾に置く受け口の高さ。ここへ落とすと最後尾へ移る。
+const TAIL_DROP_HEIGHT: f32 = 24.0;
+
+/// ドラッグ中の行。掴んだ時点の添字だけを運ぶ。
+#[derive(Debug, Clone, Copy)]
+struct DragRow {
+    index: usize,
+}
+
+/// 挿入位置を示す線を引く。`after` なら行の下端、そうでなければ上端。
+fn draw_insert_line(ui: &egui::Ui, rect: egui::Rect, after: bool) {
+    let y = if after { rect.bottom() } else { rect.top() };
+    let stroke = egui::Stroke::new(2.0, ui.visuals().selection.bg_fill);
+    ui.painter().hline(rect.x_range(), y, stroke);
+}
+
+/// 「元の並びで `insert_at` の手前」を、取り除いた後の添字へ直す。
+///
+/// 先に `remove(from)` すると `from` より後ろが 1 つ詰まるため、
+/// 挿入位置がそれより後ろなら 1 引く。
+fn reorder_target(from: usize, insert_at: usize) -> usize {
+    if insert_at > from {
+        insert_at - 1
+    } else {
+        insert_at
+    }
+}
+
 struct SettingsApp {
     config: Config,
     selected_menu: Vec<usize>,
@@ -165,6 +199,28 @@ impl SettingsApp {
             self.dirty = true;
             self.status = None;
         }
+    }
+
+    /// ドラッグした行を挿入位置へ移す (FR-6.3) 。
+    ///
+    /// `insert_at` は「元の並びで何番目の手前に入れるか」なので、
+    /// 取り除く操作で後ろの添字が 1 つ詰まる分を補正する。
+    fn reorder(&mut self, from: usize, insert_at: usize) {
+        let Some(items) = self.current_items_mut() else {
+            return;
+        };
+        if from >= items.len() || insert_at > items.len() {
+            return;
+        }
+        let target = reorder_target(from, insert_at);
+        if target == from {
+            return;
+        }
+        let item = items.remove(from);
+        items.insert(target, item);
+        self.selected_item = Some(target);
+        self.dirty = true;
+        self.status = None;
     }
 
     fn add_dropped_folders(&mut self, ctx: &egui::Context) {
@@ -416,37 +472,10 @@ impl SettingsApp {
                             egui::ScrollArea::both()
                                 .min_scrolled_height(360.0)
                                 .show(ui, |ui| {
-                                    egui::Grid::new("items_grid")
-                                        .striped(true)
-                                        .min_col_width(90.0)
-                                        .show(ui, |ui| {
-                                            ui.strong("Name");
-                                            ui.strong("Type");
-                                            ui.strong("Open");
-                                            ui.strong("Location or content");
-                                            ui.end_row();
-
-                                            for (index, item) in rows.iter().enumerate() {
-                                                let response = ui.selectable_label(
-                                                    self.selected_item == Some(index),
-                                                    item.label().unwrap_or("----------------"),
-                                                );
-                                                if response.clicked() {
-                                                    self.selected_item = Some(index);
-                                                }
-                                                if response.double_clicked() {
-                                                    self.selected_item = Some(index);
-                                                    self.begin_edit();
-                                                }
-                                                ui.label(item_kind(item));
-                                                ui.label(item_open(item));
-                                                ui.label(item_detail(item));
-                                                ui.end_row();
-                                            }
-                                        });
+                                    self.show_item_rows(ui, &rows);
                                 });
                         });
-                        ui.weak("Drop folders into the list to add them");
+                        ui.weak("Drag rows to reorder. Drop folders into the list to add them");
                     },
                 );
 
@@ -550,6 +579,116 @@ impl SettingsApp {
                 );
                 ui.label("The file was not overwritten. Close this window and repair config.json.");
             }
+        });
+    }
+
+    /// 項目一覧の各行を描く。行全体がドラッグ元になる (FR-6.3) 。
+    ///
+    /// `Grid` ではなく行ごとの `horizontal` にしているのは、
+    /// 行全体を 1 つのドラッグ元として掴めるようにするため。
+    fn show_item_rows(&mut self, ui: &mut egui::Ui, rows: &[Item]) {
+        ui.horizontal(|ui| {
+            ui.add_space(ROW_INDENT);
+            ui.allocate_ui_with_layout(
+                egui::vec2(COL_NAME, ui.spacing().interact_size.y),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| ui.strong("Name"),
+            );
+            ui.allocate_ui_with_layout(
+                egui::vec2(COL_KIND, ui.spacing().interact_size.y),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| ui.strong("Type"),
+            );
+            ui.allocate_ui_with_layout(
+                egui::vec2(COL_OPEN, ui.spacing().interact_size.y),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| ui.strong("Open"),
+            );
+            ui.strong("Location or content");
+        });
+        ui.separator();
+
+        // ドラッグ中に「何番目の手前へ入るか」。行の上半分/下半分で決める
+        let mut insert_at: Option<usize> = None;
+        let mut dropped: Option<(usize, usize)> = None;
+
+        for (index, item) in rows.iter().enumerate() {
+            let id = egui::Id::new(("item_row", &self.selected_menu, index));
+            let response = ui
+                .dnd_drag_source(id, DragRow { index }, |ui| {
+                    self.show_item_row(ui, index, item);
+                })
+                .response;
+
+            // 掴んでいる行の上半分なら手前、下半分なら後ろへ挿入する
+            if let Some(pointer) = ui.ctx().pointer_interact_pos()
+                && response.dnd_hover_payload::<DragRow>().is_some()
+            {
+                let rect = response.rect;
+                let after = pointer.y > rect.center().y;
+                let at = if after { index + 1 } else { index };
+                insert_at = Some(at);
+                draw_insert_line(ui, rect, after);
+            }
+
+            if let Some(payload) = response.dnd_release_payload::<DragRow>() {
+                let at = insert_at.unwrap_or(index);
+                dropped = Some((payload.index, at));
+            }
+        }
+
+        // 一覧の末尾へ落とせるように、残り領域も受け口にする
+        let tail = ui.allocate_response(
+            egui::vec2(
+                ui.available_width(),
+                TAIL_DROP_HEIGHT.max(ui.available_height()),
+            ),
+            egui::Sense::hover(),
+        );
+        if tail.dnd_hover_payload::<DragRow>().is_some() {
+            draw_insert_line(ui, tail.rect, false);
+        }
+        if let Some(payload) = tail.dnd_release_payload::<DragRow>() {
+            dropped = Some((payload.index, rows.len()));
+        }
+
+        if let Some((from, at)) = dropped {
+            self.reorder(from, at);
+        }
+    }
+
+    /// 1 行分のセルを描く。列幅は見出しと揃える。
+    fn show_item_row(&mut self, ui: &mut egui::Ui, index: usize, item: &Item) {
+        ui.horizontal(|ui| {
+            // 掴む場所が分かるようにグリップを置く
+            ui.add_space(2.0);
+            ui.weak("⠿");
+
+            let selected = self.selected_item == Some(index);
+            let response = ui.allocate_ui_with_layout(
+                egui::vec2(COL_NAME, ui.spacing().interact_size.y),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| ui.selectable_label(selected, item.label().unwrap_or("----------------")),
+            );
+            if response.inner.clicked() {
+                self.selected_item = Some(index);
+            }
+            if response.inner.double_clicked() {
+                self.selected_item = Some(index);
+                self.begin_edit();
+            }
+
+            ui.allocate_ui_with_layout(
+                egui::vec2(COL_KIND, ui.spacing().interact_size.y),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| ui.label(item_kind(item)),
+            );
+            ui.allocate_ui_with_layout(
+                egui::vec2(COL_OPEN, ui.spacing().interact_size.y),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| ui.label(item_open(item)),
+            );
+            ui.label(item_detail(item));
         });
     }
 
@@ -1319,5 +1458,41 @@ mod tests {
                 items: vec![Item::Separator { name: None }],
             }
         );
+    }
+
+    /// 実際に remove → insert したときの並びを返す。
+    /// `reorder_target` の補正が正しいことを、結果の並びで確かめる。
+    fn reordered(len: usize, from: usize, insert_at: usize) -> Vec<usize> {
+        let mut items: Vec<usize> = (0..len).collect();
+        let item = items.remove(from);
+        items.insert(reorder_target(from, insert_at), item);
+        items
+    }
+
+    /// 後ろへ動かすとき、取り除きで添字が 1 つ詰まる分を補正する。
+    #[test]
+    fn dragging_down_lands_before_the_target() {
+        // [0,1,2,3,4] の 1 を「3 の手前」へ → [0,2,1,3,4]
+        assert_eq!(reordered(5, 1, 3), vec![0, 2, 1, 3, 4]);
+    }
+
+    /// 前へ動かすときは補正しない。
+    #[test]
+    fn dragging_up_lands_at_the_target() {
+        // [0,1,2,3,4] の 3 を「1 の手前」へ → [0,3,1,2,4]
+        assert_eq!(reordered(5, 3, 1), vec![0, 3, 1, 2, 4]);
+    }
+
+    /// 一覧の末尾へ落とすと最後尾に来る。
+    #[test]
+    fn dragging_to_the_tail_lands_last() {
+        assert_eq!(reordered(4, 0, 4), vec![1, 2, 3, 0]);
+    }
+
+    /// 自分の位置とその直後は、どちらも並びを変えない。
+    #[test]
+    fn dropping_onto_itself_keeps_the_order() {
+        assert_eq!(reordered(4, 2, 2), vec![0, 1, 2, 3]);
+        assert_eq!(reordered(4, 2, 3), vec![0, 1, 2, 3]);
     }
 }
