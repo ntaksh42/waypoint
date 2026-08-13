@@ -103,11 +103,7 @@ pub fn handle_message(message: &windows::Win32::UI::WindowsAndMessaging::MSG) ->
     }
     let belongs_to_quick_launch = STATE.with(|state| {
         let state = state.borrow();
-        if Some(message.hwnd) != state.edit && Some(message.hwnd) != state.list {
-            false
-        } else {
-            true
-        }
+        Some(message.hwnd) == state.edit || Some(message.hwnd) == state.list
     });
     if !belongs_to_quick_launch {
         return false;
