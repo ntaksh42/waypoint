@@ -35,6 +35,7 @@ struct SettingsApp {
     draft: Option<ItemDraft>,
     variables_draft: Option<VariablesDraft>,
     trigger_draft: Option<TriggerDraft>,
+    import_draft: Option<ImportDraft>,
     add_pending: bool,
     move_pending: bool,
     delete_pending: bool,
@@ -58,6 +59,7 @@ impl SettingsApp {
             draft: None,
             variables_draft: None,
             trigger_draft: None,
+            import_draft: None,
             add_pending: false,
             move_pending: false,
             delete_pending: false,
@@ -224,6 +226,15 @@ impl SettingsApp {
         self.trigger_draft = Some(TriggerDraft::from_config(&self.config));
     }
 
+    fn open_import(&mut self) {
+        self.import_draft = Some(ImportDraft {
+            root: String::new(),
+            depth: 2,
+            preview: None,
+            error: None,
+        });
+    }
+
     fn request_close(&mut self, ctx: &egui::Context) {
         if self.dirty {
             self.close_pending = true;
@@ -236,6 +247,7 @@ impl SettingsApp {
         if self.draft.is_some()
             || self.variables_draft.is_some()
             || self.trigger_draft.is_some()
+            || self.import_draft.is_some()
             || self.add_pending
             || self.move_pending
             || self.delete_pending
@@ -310,6 +322,10 @@ impl SettingsApp {
                     }
                     if ui.button("Add separator").clicked() {
                         self.begin_add(DraftKind::Separator);
+                        ui.close();
+                    }
+                    if ui.button("Import folder structure...").clicked() {
+                        self.open_import();
                         ui.close();
                     }
                     ui.separator();
@@ -437,6 +453,13 @@ impl SettingsApp {
                         .clicked()
                     {
                         self.add_pending = true;
+                    }
+                    if ui
+                        .add(egui::Button::new("Import").min_size([74.0, 32.0].into()))
+                        .on_hover_text("Import a folder structure")
+                        .clicked()
+                    {
+                        self.open_import();
                     }
                     let selected = self.selected_item.is_some();
                     if ui
@@ -734,6 +757,104 @@ impl SettingsApp {
         }
     }
 
+    fn show_import_editor(&mut self, ctx: &egui::Context) {
+        let Some(draft) = self.import_draft.as_mut() else {
+            return;
+        };
+        let mut refresh = false;
+        let mut apply = false;
+        let mut cancel = false;
+
+        egui::Window::new("Import folder structure")
+            .collapsible(false)
+            .resizable(true)
+            .default_size([620.0, 520.0])
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label("Root folder");
+                ui.horizontal(|ui| {
+                    ui.add(egui::TextEdit::singleline(&mut draft.root).desired_width(460.0));
+                    if ui.button("Browse...").clicked()
+                        && let Some(path) = rfd::FileDialog::new().pick_folder()
+                    {
+                        draft.root = path.display().to_string();
+                        refresh = true;
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Subfolder depth");
+                    ui.add(egui::DragValue::new(&mut draft.depth).range(0..=10));
+                    if ui.button("Preview").clicked() {
+                        refresh = true;
+                    }
+                });
+                ui.weak("Depth 0 imports only the selected folder. This is a one-time import.");
+
+                if let Some(error) = &draft.error {
+                    ui.colored_label(egui::Color32::RED, error);
+                }
+                ui.separator();
+                if let Some(preview) = draft.preview.as_mut() {
+                    ui.label(format!(
+                        "Preview: {} selected folder(s). Rename or clear items before importing.",
+                        preview.included_count()
+                    ));
+                    egui::ScrollArea::vertical()
+                        .max_height(330.0)
+                        .show(ui, |ui| show_import_node(ui, preview, 0));
+                } else {
+                    ui.weak("Choose a folder and select Preview.");
+                }
+
+                ui.separator();
+                ui.horizontal(|ui| {
+                    apply = ui
+                        .add_enabled(
+                            draft
+                                .preview
+                                .as_ref()
+                                .is_some_and(|preview| preview.included_count() > 0),
+                            egui::Button::new("Import"),
+                        )
+                        .clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+
+        if refresh {
+            let root = std::path::Path::new(draft.root.trim());
+            match waypoint::folder_import::scan(root, draft.depth) {
+                Ok(preview) => {
+                    draft.preview = Some(preview);
+                    draft.error = None;
+                }
+                Err(error) => {
+                    draft.preview = None;
+                    draft.error = Some(format!("Could not read folder: {error}"));
+                }
+            }
+        }
+
+        if apply {
+            let item = self
+                .import_draft
+                .as_ref()
+                .and_then(|draft| draft.preview.as_ref())
+                .and_then(waypoint::folder_import::FolderNode::to_item);
+            if let Some(item) = item {
+                if let Some(items) = self.current_items_mut() {
+                    items.push(item);
+                    self.selected_item = Some(items.len() - 1);
+                    self.dirty = true;
+                    self.status = None;
+                }
+                self.import_draft = None;
+            }
+        } else if cancel {
+            self.import_draft = None;
+        }
+    }
+
     fn show_confirmations(&mut self, ctx: &egui::Context) {
         if self.add_pending {
             egui::Window::new("Add favorite")
@@ -755,6 +876,10 @@ impl SettingsApp {
                     }
                     if ui.button("Separator").clicked() {
                         self.begin_add(DraftKind::Separator);
+                        self.add_pending = false;
+                    }
+                    if ui.button("Folder structure...").clicked() {
+                        self.open_import();
                         self.add_pending = false;
                     }
                     if ui.button("Cancel").clicked() {
@@ -838,6 +963,7 @@ impl eframe::App for SettingsApp {
         self.show_item_editor(&ctx);
         self.show_variables_editor(&ctx);
         self.show_trigger_editor(&ctx);
+        self.show_import_editor(&ctx);
         self.show_confirmations(&ctx);
     }
 }
@@ -871,6 +997,13 @@ struct TriggerDraft {
     middle_click: bool,
     hotkey: String,
     excluded_processes: String,
+    error: Option<String>,
+}
+
+struct ImportDraft {
+    root: String,
+    depth: usize,
+    preview: Option<waypoint::folder_import::FolderNode>,
     error: Option<String>,
 }
 
@@ -1071,6 +1204,23 @@ fn show_open_mode(ui: &mut egui::Ui, mode: &mut OpenMode) {
     ui.horizontal(|ui| {
         ui.radio_value(mode, OpenMode::NewWindow, "New window");
         ui.radio_value(mode, OpenMode::Reuse, "Reuse Explorer window");
+    });
+}
+
+fn show_import_node(
+    ui: &mut egui::Ui,
+    node: &mut waypoint::folder_import::FolderNode,
+    depth: usize,
+) {
+    ui.horizontal(|ui| {
+        ui.add_space(depth as f32 * 18.0);
+        ui.checkbox(&mut node.included, "");
+        ui.add(egui::TextEdit::singleline(&mut node.name).desired_width(360.0));
+    });
+    ui.add_enabled_ui(node.included, |ui| {
+        for child in &mut node.children {
+            show_import_node(ui, child, depth + 1);
+        }
     });
 }
 
