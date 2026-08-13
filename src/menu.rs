@@ -7,7 +7,10 @@ use std::collections::BTreeMap;
 
 use windows::Win32::Foundation::{HWND, POINT};
 use windows::Win32::Graphics::Gdi::HBITMAP;
-use windows::Win32::UI::Shell::{SIID_DOCNOASSOC, SIID_FOLDER};
+use windows::Win32::UI::Shell::{
+    SHSTOCKICONID, SIID_DESKTOPPC, SIID_DOCASSOC, SIID_DOCNOASSOC, SIID_FOLDER, SIID_FOLDEROPEN,
+    SIID_STACK,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, DestroyMenu, GetMenuItemCount, HMENU, MENUITEMINFOW, MF_DISABLED,
     MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_BITMAP, SetForegroundWindow,
@@ -191,9 +194,7 @@ unsafe fn build_level(items: &[Item], ctx: &mut BuildCtx) -> Result<HMENU> {
                     accel += 1;
                     let label = HSTRING::from(decorate(name, ctx.numeric, accel));
                     AppendMenuW(menu, MF_POPUP, sub.0 as usize, PCWSTR(label.as_ptr()))?;
-                    if let Some(path) = crate::known_folder::resolve("Documents")
-                        && let Some(bitmap) = crate::icon::bitmap_for(&path)
-                    {
+                    if let Some(bitmap) = crate::icon::bitmap_for_stock(SIID_FOLDER) {
                         set_last_item_bitmap(menu, bitmap);
                     }
                 }
@@ -294,9 +295,8 @@ unsafe fn append_in_the_works(
         }
 
         AppendMenuW(menu, MF_POPUP, submenu.0 as usize, w!("In the Works"))?;
-        if let Some(path) = crate::known_folder::resolve("Documents")
-            && let Some(bitmap) = crate::icon::bitmap_for(&path)
-        {
+        // 作業中の項目が積み重なっている絵。フォルダ系と区別する
+        if let Some(bitmap) = crate::icon::bitmap_for_stock(SIID_STACK) {
             set_last_item_bitmap(menu, bitmap);
         }
         Ok(())
@@ -313,9 +313,8 @@ unsafe fn append_special_folders(menu: HMENU, ctx: &mut BuildCtx) -> Result<()> 
             ID_ADD_SPECIAL_FOLDER,
             w!("Add Favorite - Special Folder..."),
         )?;
-        if let Some(path) = crate::known_folder::resolve("Documents")
-            && let Some(bitmap) = crate::icon::bitmap_for(&path)
-        {
+        // 追加の操作なので開いたフォルダ。閉じたフォルダの項目と見分けられる
+        if let Some(bitmap) = crate::icon::bitmap_for_stock(SIID_FOLDEROPEN) {
             set_item_bitmap(submenu, ID_ADD_SPECIAL_FOLDER, bitmap);
         }
         AppendMenuW(submenu, MF_SEPARATOR, 0, PCWSTR::null())?;
@@ -375,9 +374,8 @@ unsafe fn append_special_folders(menu: HMENU, ctx: &mut BuildCtx) -> Result<()> 
             set_item_bitmap(submenu, ID_SETTINGS, bitmap);
         }
         AppendMenuW(menu, MF_POPUP, submenu.0 as usize, w!("My Special Folders"))?;
-        if let Some(path) = crate::known_folder::resolve("Documents")
-            && let Some(bitmap) = crate::icon::bitmap_for(&path)
-        {
+        // Windows 標準の場所をまとめた入口なので PC のアイコン
+        if let Some(bitmap) = crate::icon::bitmap_for_stock(SIID_DESKTOPPC) {
             set_last_item_bitmap(menu, bitmap);
         }
         Ok(())
@@ -420,17 +418,9 @@ unsafe fn append_path_menu(
         append_close(submenu)?;
         let label = HSTRING::from(name);
         AppendMenuW(parent, MF_POPUP, submenu.0 as usize, PCWSTR(label.as_ptr()))?;
-        let bitmap = entries
-            .first()
-            .and_then(|entry| crate::icon::bitmap_for(&entry.path))
-            .or_else(|| {
-                crate::icon::bitmap_for_stock(if name.ends_with("Folders") {
-                    SIID_FOLDER
-                } else {
-                    SIID_DOCNOASSOC
-                })
-            });
-        if let Some(bitmap) = bitmap {
+        // 先頭項目のアイコンを借りると中身次第で毎回変わり、
+        // Recent と Frequent が見分けられない。メニュー種別で固定する
+        if let Some(bitmap) = crate::icon::bitmap_for_stock(path_menu_icon(name)) {
             set_last_item_bitmap(parent, bitmap);
         }
         Ok(())
@@ -543,6 +533,20 @@ unsafe fn set_last_item_bitmap(menu: HMENU, bmp: HBITMAP) {
     }
 }
 
+/// Recent / Frequent の各サブメニューに割り当てるアイコン。
+///
+/// 「最近」は時計 (履歴)、「よく使う」は星 (お気に入り) に相当する
+/// Windows 標準アイコンが無いため、フォルダ / ファイルの区別に加えて
+/// 開いた・閉じたで最近とよく使うを描き分ける。
+fn path_menu_icon(name: &str) -> SHSTOCKICONID {
+    match (name.starts_with("Recent"), name.ends_with("Folders")) {
+        (true, true) => SIID_FOLDEROPEN,
+        (false, true) => SIID_FOLDER,
+        (true, false) => SIID_DOCASSOC,
+        (false, false) => SIID_DOCNOASSOC,
+    }
+}
+
 /// ブランチ名があれば項目名の後ろに `[名前]` を付す (FR-2.14) 。
 /// リポジトリでない項目は名前のみ。
 fn with_branch(name: &str, branch: Option<&str>) -> String {
@@ -564,7 +568,27 @@ fn decorate(name: &str, numeric: bool, accel: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{decorate, with_branch};
+    use super::{decorate, path_menu_icon, with_branch};
+
+    /// Recent / Frequent × フォルダ / ファイルの 4 つが別アイコンになること。
+    /// 同じだと In the Works の中で見分けが付かない。
+    #[test]
+    fn path_menu_icons_are_distinct() {
+        let ids: Vec<i32> = [
+            "Recent Folders",
+            "Frequent Folders",
+            "Recent Files",
+            "Frequent Files",
+        ]
+        .iter()
+        .map(|name| path_menu_icon(name).0)
+        .collect();
+
+        let mut unique = ids.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), 4, "同じアイコンが割り当てられている: {ids:?}");
+    }
 
     #[test]
     fn appends_branch_when_present() {
