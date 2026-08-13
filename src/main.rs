@@ -109,6 +109,8 @@ fn selftest_report(hwnd: HWND, hotkey_ok: bool, hook_ok: bool) -> String {
     for (id, mode, path) in tray::dump_actions() {
         let status = if mode == "activateWindow" {
             "WINDOW "
+        } else if mode == "openShell" {
+            "SHELL  "
         } else if std::path::Path::new(&path).exists() {
             "OK     "
         } else {

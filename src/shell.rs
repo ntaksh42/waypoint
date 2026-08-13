@@ -76,12 +76,11 @@ pub fn activate_window(hwnd: HWND) {
     }
 }
 
-/// Windows の既定のフォルダーハンドラーで開く。
-fn open_new_window(path: &str) -> std::io::Result<()> {
-    let path = HSTRING::from(path);
-    let result = unsafe { ShellExecuteW(None, None, &path, None, None, SW_SHOWNORMAL) };
+/// `This PC` など、ファイルシステム上のパスを持たないシェル項目を開く。
+pub fn open_shell_item(target: &str) -> std::io::Result<()> {
+    let target = HSTRING::from(target);
+    let result = unsafe { ShellExecuteW(None, None, &target, None, None, SW_SHOWNORMAL) };
     let code = result.0 as isize;
-
     if code > 32 {
         Ok(())
     } else {
@@ -89,6 +88,11 @@ fn open_new_window(path: &str) -> std::io::Result<()> {
             "ShellExecuteW failed with code {code}"
         )))
     }
+}
+
+/// Windows の既定のフォルダーハンドラーで開く。
+fn open_new_window(path: &str) -> std::io::Result<()> {
+    open_shell_item(path)
 }
 
 /// 既存のエクスプローラーウィンドウのフォルダを変更する。

@@ -12,15 +12,17 @@ use windows::Win32::Graphics::Gdi::{BI_RGB, BITMAPINFO, BITMAPINFOHEADER};
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS, DeleteDC, HBITMAP, HGDIOBJ, SelectObject,
 };
+use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::UI::Controls::{IImageList, ILD_TRANSPARENT};
 use windows::Win32::UI::Shell::{
-    SHFILEINFOW, SHGFI_ICON, SHGFI_SMALLICON, SHGFI_SYSICONINDEX, SHGSI_ICON, SHGSI_SMALLICON,
-    SHGetFileInfoW, SHGetImageList, SHGetStockIconInfo, SHIL_SMALL, SHSTOCKICONID, SHSTOCKICONINFO,
+    SHFILEINFOW, SHGFI_ICON, SHGFI_PIDL, SHGFI_SMALLICON, SHGFI_SYSICONINDEX, SHGSI_ICON,
+    SHGSI_SMALLICON, SHGetFileInfoW, SHGetImageList, SHGetStockIconInfo, SHIL_SMALL,
+    SHParseDisplayName, SHSTOCKICONID, SHSTOCKICONINFO,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     DestroyIcon, GCLP_HICON, GCLP_HICONSM, GetClassLongPtrW, HICON,
 };
-use windows::core::HSTRING;
+use windows::core::{HSTRING, PCWSTR};
 
 thread_local! {
     /// パス -> ビットマップ。メニュー再構築のたびに引き直さない。
@@ -104,6 +106,29 @@ fn cached_bitmap(key: &str, load: impl FnOnce() -> Option<HBITMAP>) -> Option<HB
     bitmap
 }
 
+/// ファイルパスを持たないシェル名前空間項目のアイコンを得る。
+pub fn bitmap_for_shell(target: &str) -> Option<HBITMAP> {
+    let key = format!("shell-namespace:{target}");
+    let cached = CACHE.with(|cache| cache.borrow().get(&key).copied());
+    if let Some(raw) = cached {
+        return (raw != 0).then_some(HBITMAP(raw as *mut _));
+    }
+
+    let bitmap = shell_icon(target).and_then(|icon| {
+        let bitmap = icon_to_bitmap(icon);
+        unsafe {
+            let _ = DestroyIcon(icon);
+        }
+        bitmap
+    });
+    CACHE.with(|cache| {
+        cache
+            .borrow_mut()
+            .insert(key, bitmap.map_or(0, |value| value.0 as isize))
+    });
+    bitmap
+}
+
 /// キャッシュを捨てる。テーマ変更や設定再読み込みで呼ぶ。
 pub fn clear_cache() {
     CACHE.with(|c| c.borrow_mut().clear());
@@ -151,6 +176,33 @@ fn system_icon(path: &str) -> Option<HICON> {
             SHGFI_ICON | SHGFI_SMALLICON,
         );
         (ok != 0 && !info.hIcon.is_invalid()).then_some(info.hIcon)
+    }
+}
+
+fn shell_icon(target: &str) -> Option<HICON> {
+    unsafe {
+        let target = HSTRING::from(target);
+        let mut pidl = std::ptr::null_mut();
+        SHParseDisplayName(&target, None, &mut pidl, 0, None).ok()?;
+
+        let mut info = SHFILEINFOW::default();
+        let flags = SHGFI_PIDL | SHGFI_SYSICONINDEX | SHGFI_SMALLICON;
+        let ok = SHGetFileInfoW(
+            PCWSTR(pidl.cast()),
+            Default::default(),
+            Some(&mut info),
+            size_of::<SHFILEINFOW>() as u32,
+            flags,
+        );
+        let icon = if ok != 0 {
+            SHGetImageList::<IImageList>(SHIL_SMALL as i32)
+                .ok()
+                .and_then(|list| list.GetIcon(info.iIcon, ILD_TRANSPARENT.0).ok())
+        } else {
+            None
+        };
+        CoTaskMemFree(Some(pidl.cast()));
+        icon
     }
 }
 
