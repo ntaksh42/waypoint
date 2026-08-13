@@ -1,5 +1,7 @@
 # Build output
 /target
+# インストーラの成果物 (MSI / wixpdb)
+/dist
 
 # Rider / VS
 .vs/

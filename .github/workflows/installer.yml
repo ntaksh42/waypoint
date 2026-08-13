@@ -1,0 +1,48 @@
+# MSI がビルドできることを検証する。
+# タグを打った場合は成果物を Release に添付する。
+name: installer
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    paths:
+      - 'installer/**'
+      - 'Cargo.toml'
+      - '.github/workflows/installer.yml'
+  workflow_dispatch:
+
+jobs:
+  msi:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install WiX
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add --global WixToolset.Util.wixext/5.0.2
+
+      - name: Build MSI
+        run: .\installer\build.ps1
+        shell: pwsh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: waypoint-msi
+          path: dist/*.msi
+
+      # タグを打ったときだけ Release に添付する
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: gh release upload "${{ github.ref_name }}" (Get-Item dist/*.msi).FullName --clobber
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
