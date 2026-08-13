@@ -42,6 +42,20 @@ impl BuiltMenu {
         self.actions.len()
     }
 
+    /// 全項目を (ID, 開き方, 解決済みパス) で返す。診断用。
+    pub fn dump(&self) -> Vec<(usize, String, String)> {
+        self.actions
+            .iter()
+            .map(|(id, a)| {
+                let mode = match a.open {
+                    OpenMode::NewWindow => "newWindow",
+                    OpenMode::Reuse => "reuse",
+                };
+                (*id, mode.to_string(), a.path.clone())
+            })
+            .collect()
+    }
+
     /// カーソル位置にメニューを表示し、選ばれた動作を返す。
     ///
     /// `owner` は必ず事前に前面化する。そうしないとメニュー外を

@@ -90,7 +90,7 @@ fn selftest_report(hwnd: HWND, hotkey_ok: bool, hook_ok: bool) -> String {
     let spec = tray::hotkey_spec();
     // メニューが組み立てられ、トリガーが両方張れていれば PASS
     let all_ok = hotkey_ok && hook_ok && actions > 0;
-    format!(
+    let mut out = format!(
         "{}: window={:?} items={} actions={} hotkey=\"{}\":{} mouse_hook={} autostart={}",
         if all_ok { "PASS" } else { "FAIL" },
         hwnd.0,
@@ -100,7 +100,19 @@ fn selftest_report(hwnd: HWND, hotkey_ok: bool, hook_ok: bool) -> String {
         hotkey_ok,
         hook_ok,
         autostart::is_enabled(),
-    )
+    );
+
+    // 各項目が実際にどのパスへ解決されたか。
+    // 存在しないパスはメニューで選んでも何も起きないので、ここで分かるようにする。
+    out.push_str("\n\n-- menu items --\n");
+    for (id, mode, path) in tray::dump_actions() {
+        let exists = std::path::Path::new(&path).exists();
+        out.push_str(&format!(
+            "  [{id}] {mode:<9} {} {path}\n",
+            if exists { "OK     " } else { "MISSING" }
+        ));
+    }
+    out
 }
 
 fn write_selftest_result(text: &str) {

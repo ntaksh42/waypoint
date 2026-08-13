@@ -120,6 +120,18 @@ pub fn action_count() -> usize {
     })
 }
 
+/// 組み立て済みメニューの全項目を「表示名 → 解決済みパス」で返す。
+/// 診断用。パスが解決できなかった項目はメニューでグレー表示になる。
+pub fn dump_actions() -> Vec<(usize, String, String)> {
+    STATE.with(|s| {
+        s.borrow()
+            .as_ref()
+            .and_then(|st| st.menu.as_ref())
+            .map(|m| m.dump())
+            .unwrap_or_default()
+    })
+}
+
 /// ホットキーが取れなかったことをトレイメニューで知らせるために保持する。
 pub fn set_hotkey_failed(failed: bool) {
     STATE.with(|s| {
