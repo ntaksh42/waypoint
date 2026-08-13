@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 
 use windows::Win32::Foundation::{HWND, POINT};
 use windows::Win32::Graphics::Gdi::HBITMAP;
+use windows::Win32::UI::Shell::{SIID_DOCNOASSOC, SIID_FOLDER};
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, DestroyMenu, GetMenuItemCount, HMENU, MENUITEMINFOW, MF_DISABLED,
     MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_BITMAP, SetForegroundWindow,
@@ -150,6 +151,11 @@ const ID_SETTINGS: usize = 0xe001;
 const ID_RELOAD: usize = 0xe002;
 const ID_CLOSE: usize = 0xe003;
 const ID_ADD_SPECIAL_FOLDER: usize = 0xe004;
+const ICON_SETTINGS: &[u8] = include_bytes!("../assets/menu/settings.png");
+const ICON_RELOAD: &[u8] = include_bytes!("../assets/menu/reload.png");
+const ICON_CLOSE: &[u8] = include_bytes!("../assets/menu/close.png");
+const ICON_CUSTOMIZE: &[u8] = include_bytes!("../assets/menu/customize.png");
+const ICON_WINDOW: &[u8] = include_bytes!("../assets/menu/window.png");
 
 struct BuildCtx<'a> {
     vars: &'a BTreeMap<String, String>,
@@ -273,6 +279,9 @@ unsafe fn append_in_the_works(
             ID_SETTINGS,
             w!("Customize this menu (or group)"),
         )?;
+        if let Some(bitmap) = crate::icon::bitmap_for_asset("customize", ICON_CUSTOMIZE) {
+            set_item_bitmap(submenu, ID_SETTINGS, bitmap);
+        }
 
         AppendMenuW(menu, MF_POPUP, submenu.0 as usize, w!("In the Works"))?;
         if let Some(path) = crate::known_folder::resolve("Documents")
@@ -294,6 +303,11 @@ unsafe fn append_special_folders(menu: HMENU, ctx: &mut BuildCtx) -> Result<()> 
             ID_ADD_SPECIAL_FOLDER,
             w!("Add Favorite - Special Folder..."),
         )?;
+        if let Some(path) = crate::known_folder::resolve("Documents")
+            && let Some(bitmap) = crate::icon::bitmap_for(&path)
+        {
+            set_item_bitmap(submenu, ID_ADD_SPECIAL_FOLDER, bitmap);
+        }
         AppendMenuW(submenu, MF_SEPARATOR, 0, PCWSTR::null())?;
 
         for (index, (label, known_folder)) in [
@@ -347,6 +361,9 @@ unsafe fn append_special_folders(menu: HMENU, ctx: &mut BuildCtx) -> Result<()> 
             ID_SETTINGS,
             w!("Customize this menu (or group)"),
         )?;
+        if let Some(bitmap) = crate::icon::bitmap_for_asset("customize", ICON_CUSTOMIZE) {
+            set_item_bitmap(submenu, ID_SETTINGS, bitmap);
+        }
         AppendMenuW(menu, MF_POPUP, submenu.0 as usize, w!("My Special Folders"))?;
         if let Some(path) = crate::known_folder::resolve("Documents")
             && let Some(bitmap) = crate::icon::bitmap_for(&path)
@@ -393,9 +410,17 @@ unsafe fn append_path_menu(
         append_close(submenu)?;
         let label = HSTRING::from(name);
         AppendMenuW(parent, MF_POPUP, submenu.0 as usize, PCWSTR(label.as_ptr()))?;
-        if let Some(entry) = entries.first()
-            && let Some(bitmap) = crate::icon::bitmap_for(&entry.path)
-        {
+        let bitmap = entries
+            .first()
+            .and_then(|entry| crate::icon::bitmap_for(&entry.path))
+            .or_else(|| {
+                crate::icon::bitmap_for_stock(if name.ends_with("Folders") {
+                    SIID_FOLDER
+                } else {
+                    SIID_DOCNOASSOC
+                })
+            });
+        if let Some(bitmap) = bitmap {
             set_last_item_bitmap(parent, bitmap);
         }
         Ok(())
@@ -423,6 +448,11 @@ unsafe fn append_window_menu(
                 ctx.next_id += 1;
                 let label = HSTRING::from(decorate(&entry.title, ctx.numeric, index + 1));
                 AppendMenuW(submenu, MF_STRING, id, PCWSTR(label.as_ptr()))?;
+                if let Some(bitmap) = crate::icon::bitmap_for_window(HWND(entry.hwnd as *mut _))
+                    .or_else(|| crate::icon::bitmap_for_asset("window", ICON_WINDOW))
+                {
+                    set_item_bitmap(submenu, id, bitmap);
+                }
                 ctx.actions
                     .insert(id, Action::ActivateWindow { hwnd: entry.hwnd });
             }
@@ -430,6 +460,9 @@ unsafe fn append_window_menu(
         append_close(submenu)?;
         let label = HSTRING::from(name);
         AppendMenuW(parent, MF_POPUP, submenu.0 as usize, PCWSTR(label.as_ptr()))?;
+        if let Some(bitmap) = crate::icon::bitmap_for_asset("window", ICON_WINDOW) {
+            set_last_item_bitmap(parent, bitmap);
+        }
         Ok(())
     }
 }
@@ -437,7 +470,11 @@ unsafe fn append_window_menu(
 unsafe fn append_close(menu: HMENU) -> Result<()> {
     unsafe {
         AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
-        AppendMenuW(menu, MF_STRING, ID_CLOSE, w!("Close this menu"))
+        AppendMenuW(menu, MF_STRING, ID_CLOSE, w!("Close this menu"))?;
+        if let Some(bitmap) = crate::icon::bitmap_for_asset("close", ICON_CLOSE) {
+            set_item_bitmap(menu, ID_CLOSE, bitmap);
+        }
+        Ok(())
     }
 }
 
@@ -447,27 +484,22 @@ unsafe fn append_footer(menu: HMENU) -> Result<()> {
         AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
         let settings = HSTRING::from("Settings...");
         AppendMenuW(menu, MF_STRING, ID_SETTINGS, PCWSTR(settings.as_ptr()))?;
-        if let Ok(exe) = std::env::current_exe()
-            && let Some(bitmap) = crate::icon::bitmap_for(
-                exe.with_file_name("waypoint-settings.exe")
-                    .to_string_lossy()
-                    .as_ref(),
-            )
-        {
-            set_item_bitmap(menu, ID_SETTINGS, bitmap);
+        if let Some(bitmap) = crate::icon::bitmap_for_asset("settings", ICON_SETTINGS) {
+            set_last_item_bitmap(menu, bitmap);
         }
 
         let reload = HSTRING::from("Reload config");
         AppendMenuW(menu, MF_STRING, ID_RELOAD, PCWSTR(reload.as_ptr()))?;
-        if let Some(path) = crate::config::config_path()
-            && let Some(bitmap) = crate::icon::bitmap_for(path.to_string_lossy().as_ref())
-        {
+        if let Some(bitmap) = crate::icon::bitmap_for_asset("reload", ICON_RELOAD) {
             set_item_bitmap(menu, ID_RELOAD, bitmap);
         }
 
         AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
         let close = HSTRING::from("Close this menu");
         AppendMenuW(menu, MF_STRING, ID_CLOSE, PCWSTR(close.as_ptr()))?;
+        if let Some(bitmap) = crate::icon::bitmap_for_asset("close", ICON_CLOSE) {
+            set_last_item_bitmap(menu, bitmap);
+        }
         Ok(())
     }
 }

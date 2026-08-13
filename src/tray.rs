@@ -17,10 +17,11 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-    FindWindowW, GetCursorPos, HMENU, IDI_APPLICATION, LoadIconW, MF_CHECKED, MF_SEPARATOR,
-    MF_STRING, PostMessageW, PostQuitMessage, RegisterClassW, SetForegroundWindow, TPM_BOTTOMALIGN,
-    TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, WM_APP, WM_COMMAND, WM_DESTROY, WM_HOTKEY,
-    WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSW, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
+    FindWindowW, GetCursorPos, HMENU, IDI_APPLICATION, LoadIconW, MENUITEMINFOW, MF_CHECKED,
+    MF_SEPARATOR, MF_STRING, MIIM_BITMAP, PostMessageW, PostQuitMessage, RegisterClassW,
+    SetForegroundWindow, SetMenuItemInfoW, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON,
+    TrackPopupMenuEx, WM_APP, WM_COMMAND, WM_DESTROY, WM_HOTKEY, WM_LBUTTONUP, WM_RBUTTONUP,
+    WNDCLASSW, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
 };
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
@@ -40,6 +41,9 @@ const ID_SETTINGS: usize = 9001;
 const ID_RELOAD: usize = 9002;
 const ID_AUTOSTART: usize = 9003;
 const ID_EXIT: usize = 9004;
+const ICON_SETTINGS: &[u8] = include_bytes!("../assets/menu/settings.png");
+const ICON_RELOAD: &[u8] = include_bytes!("../assets/menu/reload.png");
+const ICON_CLOSE: &[u8] = include_bytes!("../assets/menu/close.png");
 
 pub const CLASS_NAME: PCWSTR = w!("WaypointMessageWindow");
 
@@ -424,7 +428,9 @@ unsafe fn build_tray_items(menu: HMENU) -> Result<()> {
         }
 
         AppendMenuW(menu, MF_STRING, ID_SETTINGS, w!("Settings..."))?;
+        set_tray_item_icon(menu, ID_SETTINGS, "settings", ICON_SETTINGS);
         AppendMenuW(menu, MF_STRING, ID_RELOAD, w!("Reload config"))?;
+        set_tray_item_icon(menu, ID_RELOAD, "reload", ICON_RELOAD);
 
         let autostart_flags = if crate::autostart::is_enabled() {
             MF_STRING | MF_CHECKED
@@ -437,10 +443,37 @@ unsafe fn build_tray_items(menu: HMENU) -> Result<()> {
             ID_AUTOSTART,
             w!("Start with Windows"),
         )?;
+        if let Ok(exe) = std::env::current_exe()
+            && let Some(bitmap) = crate::icon::bitmap_for(exe.to_string_lossy().as_ref())
+        {
+            set_tray_bitmap(menu, ID_AUTOSTART, bitmap);
+        }
 
         AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
         AppendMenuW(menu, MF_STRING, ID_EXIT, w!("Exit"))?;
+        set_tray_item_icon(menu, ID_EXIT, "close", ICON_CLOSE);
         Ok(())
+    }
+}
+
+unsafe fn set_tray_item_icon(menu: HMENU, id: usize, key: &str, png: &[u8]) {
+    unsafe {
+        let Some(bitmap) = crate::icon::bitmap_for_asset(key, png) else {
+            return;
+        };
+        set_tray_bitmap(menu, id, bitmap);
+    }
+}
+
+unsafe fn set_tray_bitmap(menu: HMENU, id: usize, bitmap: windows::Win32::Graphics::Gdi::HBITMAP) {
+    unsafe {
+        let info = MENUITEMINFOW {
+            cbSize: size_of::<MENUITEMINFOW>() as u32,
+            fMask: MIIM_BITMAP,
+            hbmpItem: bitmap,
+            ..Default::default()
+        };
+        let _ = SetMenuItemInfoW(menu, id as u32, false, &info);
     }
 }
 
