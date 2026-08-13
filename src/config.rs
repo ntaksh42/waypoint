@@ -190,7 +190,7 @@ fn default_quick_launch_hotkey() -> String {
 }
 
 fn default_visible_results() -> usize {
-    10
+    12
 }
 /// 既定のホットキー。
 ///
