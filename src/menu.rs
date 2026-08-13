@@ -154,10 +154,8 @@ const ID_SETTINGS: usize = 0xe001;
 const ID_RELOAD: usize = 0xe002;
 const ID_CLOSE: usize = 0xe003;
 const ID_ADD_SPECIAL_FOLDER: usize = 0xe004;
-const ICON_SETTINGS: &[u8] = include_bytes!("../assets/menu/settings.png");
 const ICON_RELOAD: &[u8] = include_bytes!("../assets/menu/reload.png");
 const ICON_CLOSE: &[u8] = include_bytes!("../assets/menu/close.png");
-const ICON_CUSTOMIZE: &[u8] = include_bytes!("../assets/menu/customize.png");
 const ICON_WINDOW: &[u8] = include_bytes!("../assets/menu/window.png");
 
 struct BuildCtx<'a> {
@@ -290,7 +288,8 @@ unsafe fn append_in_the_works(
             ID_SETTINGS,
             w!("Customize this menu (or group)"),
         )?;
-        if let Some(bitmap) = crate::icon::bitmap_for_asset("customize", ICON_CUSTOMIZE) {
+        // Customize も設定画面への入口。Settings... と同じ歯車で揃える
+        if let Some(bitmap) = crate::icon::bitmap_for_settings() {
             set_item_bitmap(submenu, ID_SETTINGS, bitmap);
         }
 
@@ -370,7 +369,8 @@ unsafe fn append_special_folders(menu: HMENU, ctx: &mut BuildCtx) -> Result<()> 
             ID_SETTINGS,
             w!("Customize this menu (or group)"),
         )?;
-        if let Some(bitmap) = crate::icon::bitmap_for_asset("customize", ICON_CUSTOMIZE) {
+        // Customize も設定画面への入口。Settings... と同じ歯車で揃える
+        if let Some(bitmap) = crate::icon::bitmap_for_settings() {
             set_item_bitmap(submenu, ID_SETTINGS, bitmap);
         }
         AppendMenuW(menu, MF_POPUP, submenu.0 as usize, w!("My Special Folders"))?;
@@ -484,7 +484,8 @@ unsafe fn append_footer(menu: HMENU) -> Result<()> {
         AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
         let settings = HSTRING::from("Settings...");
         AppendMenuW(menu, MF_STRING, ID_SETTINGS, PCWSTR(settings.as_ptr()))?;
-        if let Some(bitmap) = crate::icon::bitmap_for_asset("settings", ICON_SETTINGS) {
+        // Windows の歯車アイコン。自前 PNG は線が細く 16px で潰れていた
+        if let Some(bitmap) = crate::icon::bitmap_for_settings() {
             set_last_item_bitmap(menu, bitmap);
         }
 

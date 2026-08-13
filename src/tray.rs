@@ -42,7 +42,6 @@ const ID_SETTINGS: usize = 9001;
 const ID_RELOAD: usize = 9002;
 const ID_AUTOSTART: usize = 9003;
 const ID_EXIT: usize = 9004;
-const ICON_SETTINGS: &[u8] = include_bytes!("../assets/menu/settings.png");
 const ICON_RELOAD: &[u8] = include_bytes!("../assets/menu/reload.png");
 const ICON_CLOSE: &[u8] = include_bytes!("../assets/menu/close.png");
 
@@ -472,7 +471,10 @@ unsafe fn build_tray_items(menu: HMENU) -> Result<()> {
         }
 
         AppendMenuW(menu, MF_STRING, ID_SETTINGS, w!("Settings..."))?;
-        set_tray_item_icon(menu, ID_SETTINGS, "settings", ICON_SETTINGS);
+        // ランチャーメニュー側と同じ歯車で揃える
+        if let Some(bitmap) = crate::icon::bitmap_for_settings() {
+            set_tray_bitmap(menu, ID_SETTINGS, bitmap);
+        }
         AppendMenuW(menu, MF_STRING, ID_RELOAD, w!("Reload config"))?;
         set_tray_item_icon(menu, ID_RELOAD, "reload", ICON_RELOAD);
 

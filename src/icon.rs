@@ -15,8 +15,8 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::UI::Controls::{IImageList, ILD_TRANSPARENT};
 use windows::Win32::UI::Shell::{
-    SHFILEINFOW, SHGFI_ICON, SHGFI_PIDL, SHGFI_SMALLICON, SHGFI_SYSICONINDEX, SHGSI_ICON,
-    SHGSI_SMALLICON, SHGetFileInfoW, SHGetImageList, SHGetStockIconInfo, SHIL_SMALL,
+    ExtractIconExW, SHFILEINFOW, SHGFI_ICON, SHGFI_PIDL, SHGFI_SMALLICON, SHGFI_SYSICONINDEX,
+    SHGSI_ICON, SHGSI_SMALLICON, SHGetFileInfoW, SHGetImageList, SHGetStockIconInfo, SHIL_SMALL,
     SHParseDisplayName, SHSTOCKICONID, SHSTOCKICONINFO,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -27,6 +27,18 @@ use windows::core::{HSTRING, PCWSTR};
 thread_local! {
     /// パス -> ビットマップ。メニュー再構築のたびに引き直さない。
     static CACHE: RefCell<HashMap<String, isize>> = RefCell::new(HashMap::new());
+}
+
+/// 設定 (歯車) アイコンの在り処。
+///
+/// `SIID_SETTINGS` は実測で中身が空だったため使えない。
+/// shell32.dll の 314 番が単体の歯車で、16px でも形が潰れない。
+const SHELL32: &str = "shell32.dll";
+const GEAR_INDEX: i32 = 314;
+
+/// メニューの「設定」項目に使う歯車アイコン。
+pub fn bitmap_for_settings() -> Option<HBITMAP> {
+    bitmap_for_dll_icon(SHELL32, GEAR_INDEX)
 }
 
 /// 指定パスのアイコンをメニュー用ビットマップとして得る。
@@ -57,6 +69,28 @@ pub fn bitmap_for_stock(id: SHSTOCKICONID) -> Option<HBITMAP> {
         SHGetStockIconInfo(id, SHGSI_ICON | SHGSI_SMALLICON, &mut info).ok()?;
         let bitmap = icon_to_bitmap(info.hIcon);
         let _ = DestroyIcon(info.hIcon);
+        bitmap
+    })
+}
+
+/// DLL に埋め込まれたアイコンをインデックス指定で取得する。
+///
+/// `SHGetStockIconInfo` は ID によっては中身が空のアイコンを返す
+/// (実測: `SIID_SETTINGS` は全ピクセルが透明で、メニューには何も
+/// 表示されない)。歯車のように標準 ID から取れないものは、
+/// シェルの DLL から直接引く。
+pub fn bitmap_for_dll_icon(dll: &str, index: i32) -> Option<HBITMAP> {
+    let key = format!("dll-icon:{dll}:{index}");
+    cached_bitmap(&key, || unsafe {
+        let path = HSTRING::from(dll);
+        let mut small = HICON::default();
+        // 小アイコンのみ要求する。メニューは 16px 相当で描く
+        let extracted = ExtractIconExW(&path, index, None, Some(&mut small), 1);
+        if extracted == 0 || small.is_invalid() {
+            return None;
+        }
+        let bitmap = icon_to_bitmap(small);
+        let _ = DestroyIcon(small);
         bitmap
     })
 }
