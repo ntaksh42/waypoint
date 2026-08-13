@@ -5,6 +5,14 @@ edition = "2024"
 description = "ホットキーで呼び出す階層ポップアップランチャー"
 license = "MIT"
 
+[lib]
+name = "waypoint"
+path = "src/lib.rs"
+
+[[bin]]
+name = "waypoint"
+path = "src/main.rs"
+
 [dependencies]
 # Win32 API バインディング。必要な feature のみ有効にする
 windows = { version = "0.62", features = [
@@ -14,7 +22,13 @@ windows = { version = "0.62", features = [
   "Win32_UI_Shell",                  # SHGetKnownFolderPath / Shell_NotifyIcon
   "Win32_UI_HiDpi",                  # Per-Monitor V2
   "Win32_System_LibraryLoader",
-  "Win32_System_Com",                # エクスプローラー操作
+  "Win32_System_Com",                # エクスプローラー操作 (IShellWindows)
+  "Win32_System_Ole",                # COM の VARIANT 操作
+  "Win32_System_Variant",            # IShellWindows::Item の引数
+  "Win32_System_Threading",          # プロセス名の取得 / 二重起動抑止の Mutex
+  "Win32_Security",                  # CreateMutexW の引数型
+  "Win32_System_ProcessStatus",      # 同上
+  "Win32_System_Registry",           # 自動起動 (FR-8.4)
   "Win32_Graphics_Gdi",              # アイコン
 ] }
 serde = { version = "1", features = ["derive"] }
