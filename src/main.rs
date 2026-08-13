@@ -50,7 +50,9 @@ fn main() {
 
     // 設定は tray::load_state() で読み込み済み。ここで再読み込みしない
     let hotkey_ok = tray::register_hotkey_from_config(hwnd);
+    let quick_launch_hotkey_ok = tray::register_quick_launch_hotkey_from_config(hwnd);
     tray::set_hotkey_failed(!hotkey_ok);
+    tray::set_quick_launch_hotkey_failed(!quick_launch_hotkey_ok);
     let hook = trigger::install_mouse_hook(hwnd).ok();
 
     if selftest {
@@ -68,7 +70,7 @@ fn cleanup(hwnd: HWND, hook: Option<windows::Win32::UI::WindowsAndMessaging::HHO
     if let Some(h) = hook {
         trigger::remove_mouse_hook(h);
     }
-    trigger::unregister_hotkey(hwnd);
+    trigger::unregister_hotkeys(hwnd);
     tray::remove(hwnd);
 }
 
@@ -77,8 +79,10 @@ fn run_message_loop() {
     unsafe {
         // GetMessageW は終了時に 0、エラー時に -1 を返す
         while GetMessageW(&mut msg, Some(HWND::default()), 0, 0).as_bool() {
-            let _ = TranslateMessage(&msg);
-            DispatchMessageW(&msg);
+            if !waypoint::quick_launch_window::handle_message(&msg) {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
         }
     }
 }

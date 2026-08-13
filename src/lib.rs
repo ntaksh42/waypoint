@@ -12,6 +12,8 @@ pub mod icon;
 pub mod known_folder;
 pub mod menu;
 pub mod process;
+pub mod quick_launch;
+pub mod quick_launch_window;
 pub mod shell;
 pub mod single;
 pub mod theme;

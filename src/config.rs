@@ -102,6 +102,33 @@ pub struct MenuSettings {
     pub numeric_accelerators: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuickLaunchSettings {
+    #[serde(default = "default_quick_launch_hotkey")]
+    pub hotkey: String,
+    #[serde(default = "default_true")]
+    pub include_recent_folders: bool,
+    #[serde(default = "default_true")]
+    pub include_frequent_folders: bool,
+    #[serde(default)]
+    pub search_paths: bool,
+    #[serde(default = "default_visible_results")]
+    pub visible_results: usize,
+}
+
+impl Default for QuickLaunchSettings {
+    fn default() -> Self {
+        Self {
+            hotkey: default_quick_launch_hotkey(),
+            include_recent_folders: true,
+            include_frequent_folders: true,
+            search_paths: false,
+            visible_results: default_visible_results(),
+        }
+    }
+}
+
 impl Default for MenuSettings {
     fn default() -> Self {
         Self {
@@ -118,6 +145,8 @@ pub struct Settings {
     pub trigger: TriggerSettings,
     #[serde(default)]
     pub menu: MenuSettings,
+    #[serde(default)]
+    pub quick_launch: QuickLaunchSettings,
     #[serde(default)]
     pub start_with_windows: bool,
 }
@@ -154,6 +183,14 @@ fn default_version() -> u32 {
 }
 fn default_icon_size() -> u32 {
     16
+}
+
+fn default_quick_launch_hotkey() -> String {
+    "Ctrl+Shift+Q".to_string()
+}
+
+fn default_visible_results() -> usize {
+    10
 }
 /// 既定のホットキー。
 ///

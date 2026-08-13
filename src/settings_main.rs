@@ -719,6 +719,21 @@ impl SettingsApp {
                 ui.label("Hotkey");
                 ui.text_edit_singleline(&mut draft.hotkey);
                 ui.weak("Example: Ctrl+Alt+W");
+                ui.separator();
+                ui.strong("Quick Launch");
+                ui.label("Hotkey");
+                ui.text_edit_singleline(&mut draft.quick_launch_hotkey);
+                ui.checkbox(&mut draft.include_recent_folders, "Include Recent Folders");
+                ui.checkbox(
+                    &mut draft.include_frequent_folders,
+                    "Include Frequent Folders",
+                );
+                ui.checkbox(&mut draft.search_paths, "Search folder paths");
+                ui.horizontal(|ui| {
+                    ui.label("Visible results");
+                    ui.add(egui::DragValue::new(&mut draft.visible_results).range(5..=20));
+                });
+                ui.separator();
                 ui.label("Excluded processes (one per line)");
                 ui.add(
                     egui::TextEdit::multiline(&mut draft.excluded_processes)
@@ -738,6 +753,14 @@ impl SettingsApp {
         if apply {
             if waypoint::trigger::parse_hotkey(draft.hotkey.trim()).is_none() {
                 draft.error = Some("Hotkey is invalid.".to_string());
+            } else if waypoint::trigger::parse_hotkey(draft.quick_launch_hotkey.trim()).is_none() {
+                draft.error = Some("Quick Launch hotkey is invalid.".to_string());
+            } else if draft
+                .hotkey
+                .trim()
+                .eq_ignore_ascii_case(draft.quick_launch_hotkey.trim())
+            {
+                draft.error = Some("The two hotkeys must be different.".to_string());
             } else {
                 self.config.settings.trigger.middle_click = draft.middle_click;
                 self.config.settings.trigger.hotkey = draft.hotkey.trim().to_string();
@@ -748,6 +771,15 @@ impl SettingsApp {
                     .filter(|line| !line.is_empty())
                     .map(str::to_string)
                     .collect();
+                self.config.settings.quick_launch.hotkey =
+                    draft.quick_launch_hotkey.trim().to_string();
+                self.config.settings.quick_launch.include_recent_folders =
+                    draft.include_recent_folders;
+                self.config.settings.quick_launch.include_frequent_folders =
+                    draft.include_frequent_folders;
+                self.config.settings.quick_launch.search_paths = draft.search_paths;
+                self.config.settings.quick_launch.visible_results =
+                    draft.visible_results.clamp(5, 20);
                 self.trigger_draft = None;
                 self.dirty = true;
                 self.status = None;
@@ -997,6 +1029,11 @@ struct TriggerDraft {
     middle_click: bool,
     hotkey: String,
     excluded_processes: String,
+    quick_launch_hotkey: String,
+    include_recent_folders: bool,
+    include_frequent_folders: bool,
+    search_paths: bool,
+    visible_results: usize,
     error: Option<String>,
 }
 
@@ -1010,10 +1047,16 @@ struct ImportDraft {
 impl TriggerDraft {
     fn from_config(config: &Config) -> Self {
         let trigger = &config.settings.trigger;
+        let quick_launch = &config.settings.quick_launch;
         Self {
             middle_click: trigger.middle_click,
             hotkey: trigger.hotkey.clone(),
             excluded_processes: trigger.excluded_processes.join("\n"),
+            quick_launch_hotkey: quick_launch.hotkey.clone(),
+            include_recent_folders: quick_launch.include_recent_folders,
+            include_frequent_folders: quick_launch.include_frequent_folders,
+            search_paths: quick_launch.search_paths,
+            visible_results: quick_launch.visible_results,
             error: None,
         }
     }

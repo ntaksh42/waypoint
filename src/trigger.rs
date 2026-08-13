@@ -24,6 +24,7 @@ pub const WM_TRIGGER_MENU: u32 = WM_APP + 2;
 
 /// ホットキーの識別子。
 pub const HOTKEY_ID: i32 = 1;
+pub const QUICK_LAUNCH_HOTKEY_ID: i32 = 2;
 
 /// ドラッグとみなす移動量 (ピクセル) 。これを超えたらメニューを出さない。
 const DRAG_THRESHOLD: i32 = 5;
@@ -146,14 +147,23 @@ fn virtual_key(name: &str) -> Option<u32> {
 
 /// ホットキーを登録する。既に使われている場合は Err。
 pub fn register_hotkey(target: HWND, spec: &str) -> Result<()> {
+    register_hotkey_with_id(target, HOTKEY_ID, spec)
+}
+
+pub fn register_quick_launch_hotkey(target: HWND, spec: &str) -> Result<()> {
+    register_hotkey_with_id(target, QUICK_LAUNCH_HOTKEY_ID, spec)
+}
+
+fn register_hotkey_with_id(target: HWND, id: i32, spec: &str) -> Result<()> {
     let Some((mods, vk)) = parse_hotkey(spec) else {
         return Err(windows::core::Error::empty());
     };
-    unsafe { RegisterHotKey(Some(target), HOTKEY_ID, mods, vk) }
+    unsafe { RegisterHotKey(Some(target), id, mods, vk) }
 }
 
-pub fn unregister_hotkey(target: HWND) {
+pub fn unregister_hotkeys(target: HWND) {
     unsafe {
         let _ = UnregisterHotKey(Some(target), HOTKEY_ID);
+        let _ = UnregisterHotKey(Some(target), QUICK_LAUNCH_HOTKEY_ID);
     }
 }

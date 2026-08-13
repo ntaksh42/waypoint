@@ -114,6 +114,11 @@ fn missing_optional_fields_use_defaults() {
             .contains(&"chrome.exe".to_string())
     );
     assert_eq!(cfg.settings.menu.icon_size, 16);
+    assert_eq!(cfg.settings.quick_launch.hotkey, "Ctrl+Shift+Q");
+    assert!(cfg.settings.quick_launch.include_recent_folders);
+    assert!(cfg.settings.quick_launch.include_frequent_folders);
+    assert!(!cfg.settings.quick_launch.search_paths);
+    assert_eq!(cfg.settings.quick_launch.visible_results, 10);
 }
 
 #[test]

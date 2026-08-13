@@ -28,6 +28,7 @@ use windows::core::{HSTRING, PCWSTR, Result, w};
 use crate::config::{Config, LoadOutcome};
 use crate::menu::{Action, BuiltMenu, Selection};
 use crate::process;
+use crate::quick_launch_window::{self, WM_QUICK_LAUNCH_EXECUTE};
 use crate::shell;
 use crate::trigger::{self, WM_TRIGGER_MENU};
 
@@ -61,6 +62,7 @@ struct AppState {
     load_error: Option<String>,
     /// ホットキーが他アプリに取られていた場合に立つ。
     hotkey_failed: bool,
+    quick_launch_hotkey_failed: bool,
 }
 
 /// 設定を読み込み、メニューを構築して保持する。
@@ -72,6 +74,7 @@ pub fn load_state() {
     };
     let dynamic = crate::dynamic::refresh();
     let menu = crate::menu::build(&config, &dynamic).ok();
+    quick_launch_window::configure(&config, &dynamic);
     STATE.with(|s| {
         *s.borrow_mut() = Some(AppState {
             config,
@@ -79,6 +82,7 @@ pub fn load_state() {
             menu,
             load_error,
             hotkey_failed: false,
+            quick_launch_hotkey_failed: false,
         })
     });
 }
@@ -86,10 +90,12 @@ pub fn load_state() {
 /// 設定を読み直してメニューを組み立て直す (FR-8.2) 。
 pub fn reload(hwnd: HWND) {
     // ホットキーが変わっているかもしれないので張り直す
-    trigger::unregister_hotkey(hwnd);
+    trigger::unregister_hotkeys(hwnd);
     load_state();
     let ok = register_hotkey_from_config(hwnd);
     set_hotkey_failed(!ok);
+    let quick_ok = register_quick_launch_hotkey_from_config(hwnd);
+    set_quick_launch_hotkey_failed(!quick_ok);
 }
 
 /// 読み込み済みの設定でホットキーを登録する。
@@ -98,6 +104,16 @@ pub fn register_hotkey_from_config(hwnd: HWND) -> bool {
     STATE.with(|s| match s.borrow().as_ref() {
         Some(state) => {
             trigger::register_hotkey(hwnd, &state.config.settings.trigger.hotkey).is_ok()
+        }
+        None => false,
+    })
+}
+
+pub fn register_quick_launch_hotkey_from_config(hwnd: HWND) -> bool {
+    STATE.with(|s| match s.borrow().as_ref() {
+        Some(state) => {
+            trigger::register_quick_launch_hotkey(hwnd, &state.config.settings.quick_launch.hotkey)
+                .is_ok()
         }
         None => false,
     })
@@ -145,6 +161,14 @@ pub fn set_hotkey_failed(failed: bool) {
     STATE.with(|s| {
         if let Some(state) = s.borrow_mut().as_mut() {
             state.hotkey_failed = failed;
+        }
+    });
+}
+
+pub fn set_quick_launch_hotkey_failed(failed: bool) {
+    STATE.with(|s| {
+        if let Some(state) = s.borrow_mut().as_mut() {
+            state.quick_launch_hotkey_failed = failed;
         }
     });
 }
@@ -246,7 +270,20 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
             LRESULT(0)
         }
         WM_HOTKEY => {
-            show_launcher_at_cursor(hwnd);
+            if wparam.0 as i32 == trigger::QUICK_LAUNCH_HOTKEY_ID {
+                let origin =
+                    unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
+                let _ = quick_launch_window::show(hwnd, Some(origin));
+            } else {
+                show_launcher_at_cursor(hwnd);
+            }
+            LRESULT(0)
+        }
+        WM_QUICK_LAUNCH_EXECUTE => {
+            if let Some((entry, mode, origin)) = quick_launch_window::take_pending() {
+                let _ = shell::open(&entry.path, mode, origin);
+                refresh_dynamic();
+            }
             LRESULT(0)
         }
         WM_RELOAD_CONFIG => {
@@ -314,6 +351,7 @@ fn refresh_dynamic() {
             return;
         };
         state.menu = crate::menu::build(&state.config, &dynamic).ok();
+        quick_launch_window::configure(&state.config, &dynamic);
         state.dynamic = dynamic;
     });
 }
@@ -408,6 +446,12 @@ unsafe fn build_tray_items(menu: HMENU) -> Result<()> {
                     warnings.push(format!(
                         "hotkey \"{}\" is taken by another app",
                         st.config.settings.trigger.hotkey
+                    ));
+                }
+                if st.quick_launch_hotkey_failed {
+                    warnings.push(format!(
+                        "Quick Launch hotkey \"{}\" is taken by another app",
+                        st.config.settings.quick_launch.hotkey
                     ));
                 }
             }
