@@ -7,6 +7,7 @@
 pub mod autostart;
 pub mod config;
 pub mod dynamic;
+pub mod folder_import;
 pub mod icon;
 pub mod known_folder;
 pub mod menu;
