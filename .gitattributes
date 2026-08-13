@@ -1,0 +1,3 @@
+# 改行を LF に固定する。CI(windows-latest) と手元で
+# cargo fmt --check の結果が食い違わないようにするため。
+* text=auto eol=lf

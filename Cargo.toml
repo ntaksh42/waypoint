@@ -1,0 +1,28 @@
+[package]
+name = "waypoint"
+version = "0.1.0"
+edition = "2024"
+description = "ホットキーで呼び出す階層ポップアップランチャー"
+license = "MIT"
+
+[dependencies]
+# Win32 API バインディング。必要な feature のみ有効にする
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",    # メニュー・フック・ウィンドウ
+  "Win32_UI_Input_KeyboardAndMouse", # RegisterHotKey
+  "Win32_UI_Shell",                  # SHGetKnownFolderPath / Shell_NotifyIcon
+  "Win32_UI_HiDpi",                  # Per-Monitor V2
+  "Win32_System_LibraryLoader",
+  "Win32_System_Com",                # エクスプローラー操作
+  "Win32_Graphics_Gdi",              # アイコン
+] }
+serde = { version = "1", features = ["derive"] }
+# preserve_order: 設定ファイルは手編集を想定するため、保存で項目順を入れ替えない
+serde_json = { version = "1", features = ["preserve_order"] }
+dirs = "6"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true

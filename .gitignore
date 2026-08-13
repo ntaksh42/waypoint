@@ -1,0 +1,16 @@
+# Build output
+/target
+
+# Rider / VS
+.vs/
+.idea/
+*.user
+
+# OS
+Thumbs.db
+desktop.ini
+
+.claude/*
+!.claude/settings.json
+!.claude/skills/
+!.claude/hooks/
