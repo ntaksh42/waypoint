@@ -25,7 +25,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
 use crate::config::{Config, LoadOutcome};
-use crate::menu::BuiltMenu;
+use crate::menu::{BuiltMenu, Selection};
 use crate::process;
 use crate::shell;
 use crate::trigger::{self, WM_TRIGGER_MENU};
@@ -271,15 +271,20 @@ fn show_launcher_at_cursor(hwnd: HWND) {
 
 /// ランチャーのメニューを表示し、選ばれた項目を実行する。
 fn show_launcher(hwnd: HWND, at: POINT, origin: Option<HWND>) {
-    let action = STATE.with(|s| {
+    let selection = STATE.with(|s| {
         let state = s.borrow();
         let state = state.as_ref()?;
         let menu = state.menu.as_ref()?;
-        menu.track(hwnd, at).cloned()
+        menu.track(hwnd, at)
     });
 
-    if let Some(action) = action {
-        let _ = shell::open(&action.path, action.open, origin);
+    match selection {
+        Some(Selection::Open(action)) => {
+            let _ = shell::open(&action.path, action.open, origin);
+        }
+        Some(Selection::Settings) => open_config_in_editor(),
+        Some(Selection::Reload) => reload(hwnd),
+        Some(Selection::Close) | None => {}
     }
 }
 

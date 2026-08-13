@@ -8,15 +8,18 @@ use waypoint::config::{Config, Item, LoadOutcome, OpenMode};
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([980.0, 600.0])
-            .with_min_inner_size([760.0, 440.0]),
+            .with_inner_size([700.0, 560.0])
+            .with_min_inner_size([640.0, 520.0]),
         ..Default::default()
     };
 
     eframe::run_native(
-        "waypoint settings",
+        "Customize - Waypoint",
         options,
-        Box::new(|_| Ok(Box::new(SettingsApp::load()))),
+        Box::new(|creation| {
+            creation.egui_ctx.set_visuals(egui::Visuals::dark());
+            Ok(Box::new(SettingsApp::load()))
+        }),
     )
 }
 
@@ -27,6 +30,8 @@ struct SettingsApp {
     draft: Option<ItemDraft>,
     variables_draft: Option<VariablesDraft>,
     trigger_draft: Option<TriggerDraft>,
+    add_pending: bool,
+    move_pending: bool,
     delete_pending: bool,
     close_pending: bool,
     dirty: bool,
@@ -40,13 +45,16 @@ impl SettingsApp {
             LoadOutcome::Loaded(config) | LoadOutcome::Created(config) => (config, None),
             LoadOutcome::Failed(error) => (Config::default(), Some(error)),
         };
+        let selected_item = (!config.items.is_empty()).then_some(0);
         Self {
             config,
             selected_menu: Vec::new(),
-            selected_item: None,
+            selected_item,
             draft: None,
             variables_draft: None,
             trigger_draft: None,
+            add_pending: false,
+            move_pending: false,
             delete_pending: false,
             close_pending: false,
             dirty: false,
@@ -174,9 +182,9 @@ impl SettingsApp {
         }
     }
 
-    fn save(&mut self) {
+    fn save(&mut self) -> bool {
         if self.load_error.is_some() {
-            return;
+            return false;
         }
         match waypoint::config::save(&self.config) {
             Ok(()) => {
@@ -186,8 +194,36 @@ impl SettingsApp {
                 } else {
                     "Saved. Waypoint is not running.".to_string()
                 });
+                true
             }
-            Err(error) => self.status = Some(format!("Save failed: {error}")),
+            Err(error) => {
+                self.status = Some(format!("Save failed: {error}"));
+                false
+            }
+        }
+    }
+
+    fn open_variables(&mut self) {
+        self.variables_draft = Some(VariablesDraft {
+            entries: self
+                .config
+                .variables
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect(),
+            error: None,
+        });
+    }
+
+    fn open_trigger(&mut self) {
+        self.trigger_draft = Some(TriggerDraft::from_config(&self.config));
+    }
+
+    fn request_close(&mut self, ctx: &egui::Context) {
+        if self.dirty {
+            self.close_pending = true;
+        } else {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
 
@@ -195,6 +231,8 @@ impl SettingsApp {
         if self.draft.is_some()
             || self.variables_draft.is_some()
             || self.trigger_draft.is_some()
+            || self.add_pending
+            || self.move_pending
             || self.delete_pending
             || self.close_pending
         {
@@ -232,155 +270,243 @@ impl SettingsApp {
         }
     }
 
-    fn show_menu_tree(&mut self, root: &mut egui::Ui) {
-        egui::Panel::left("menus")
-            .default_size(220.0)
-            .resizable(true)
-            .show(root, |ui| {
-                ui.heading("Menus");
-                ui.separator();
-                if ui
-                    .selectable_label(self.selected_menu.is_empty(), "Root")
-                    .clicked()
-                {
-                    self.selected_menu.clear();
-                    self.selected_item = None;
-                }
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    let mut path = Vec::new();
-                    show_submenus(
-                        ui,
-                        &self.config.items,
-                        &mut path,
-                        &mut self.selected_menu,
-                        &mut self.selected_item,
-                    );
-                });
-            });
-    }
-
     fn show_items(&mut self, root: &mut egui::Ui) {
         let ctx = root.ctx().clone();
         egui::CentralPanel::default().show(root, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("Items");
-                ui.weak("Drop folders here to add them");
+            egui::MenuBar::new().ui(ui, |ui| {
+                ui.menu_button("File", |ui| {
+                    if ui.button("Save").clicked() {
+                        self.save();
+                        ui.close();
+                    }
+                    if ui.button("Save & Close").clicked() {
+                        if self.save() {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        ui.close();
+                    }
+                    if ui.button("Close").clicked() {
+                        self.request_close(&ctx);
+                        ui.close();
+                    }
+                });
+                ui.menu_button("Favorite", |ui| {
+                    if ui.button("Add folder").clicked() {
+                        self.begin_add(DraftKind::Folder);
+                        ui.close();
+                    }
+                    if ui.button("Add special folder").clicked() {
+                        self.begin_add(DraftKind::SpecialFolder);
+                        ui.close();
+                    }
+                    if ui.button("Add menu").clicked() {
+                        self.begin_add(DraftKind::Submenu);
+                        ui.close();
+                    }
+                    if ui.button("Add separator").clicked() {
+                        self.begin_add(DraftKind::Separator);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui
+                        .add_enabled(self.selected_item.is_some(), egui::Button::new("Edit"))
+                        .clicked()
+                    {
+                        self.begin_edit();
+                        ui.close();
+                    }
+                });
+                ui.menu_button("Options", |ui| {
+                    if ui.button("Variables...").clicked() {
+                        self.open_variables();
+                        ui.close();
+                    }
+                    if ui.button("Trigger...").clicked() {
+                        self.open_trigger();
+                        ui.close();
+                    }
+                });
             });
             ui.separator();
+
+            ui.label("Menu or group to edit:");
+            let choices = menu_choices(&self.config);
+            let selected_name = choices
+                .iter()
+                .find(|(path, _)| path == &self.selected_menu)
+                .map(|(_, name)| name.as_str())
+                .unwrap_or("Main");
+            egui::ComboBox::from_id_salt("menu_to_edit")
+                .selected_text(selected_name)
+                .width(ui.available_width())
+                .show_ui(ui, |ui| {
+                    for (path, name) in choices {
+                        if ui
+                            .selectable_label(path == self.selected_menu, name)
+                            .clicked()
+                        {
+                            self.selected_item = items_at(&self.config, &path)
+                                .and_then(|items| (!items.is_empty()).then_some(0));
+                            self.selected_menu = path;
+                        }
+                    }
+                });
+            ui.add_space(8.0);
 
             let rows = self.current_items().cloned().unwrap_or_default();
-            egui::ScrollArea::both().show(ui, |ui| {
-                egui::Grid::new("items_grid")
-                    .striped(true)
-                    .min_col_width(110.0)
-                    .show(ui, |ui| {
-                        ui.strong("Name");
-                        ui.strong("Type");
-                        ui.strong("Path / target");
-                        ui.end_row();
-
-                        for (index, item) in rows.iter().enumerate() {
-                            let response = ui.selectable_label(
-                                self.selected_item == Some(index),
-                                item.label().unwrap_or("—"),
-                            );
-                            if response.clicked() {
-                                self.selected_item = Some(index);
-                            }
-                            if response.double_clicked() {
-                                self.selected_item = Some(index);
-                                self.begin_edit();
-                            }
-                            ui.label(item_kind(item));
-                            ui.label(item_detail(item));
-                            ui.end_row();
-                        }
-                    });
-            });
-
-            ui.add_space(8.0);
-            ui.separator();
-            ui.horizontal_wrapped(|ui| {
-                if ui.button("Add folder").clicked() {
-                    self.begin_add(DraftKind::Folder);
-                }
-                if ui.button("Add special folder").clicked() {
-                    self.begin_add(DraftKind::SpecialFolder);
-                }
-                if ui.button("Add submenu").clicked() {
-                    self.begin_add(DraftKind::Submenu);
-                }
-                if ui.button("Add separator").clicked() {
-                    self.begin_add(DraftKind::Separator);
-                }
-                ui.separator();
-                let selected = self.selected_item.is_some();
-                if ui
-                    .add_enabled(selected, egui::Button::new("Edit"))
-                    .clicked()
-                {
-                    self.begin_edit();
-                }
-                if ui
-                    .add_enabled(selected, egui::Button::new("Duplicate"))
-                    .clicked()
-                {
-                    self.duplicate_selected();
-                }
-                if ui
-                    .add_enabled(selected, egui::Button::new("Remove"))
-                    .clicked()
-                {
-                    self.delete_pending = true;
-                }
-                if ui
-                    .add_enabled(selected, egui::Button::new("Move up"))
-                    .clicked()
-                {
-                    self.move_selected(-1);
-                }
-                if ui
-                    .add_enabled(selected, egui::Button::new("Move down"))
-                    .clicked()
-                {
-                    self.move_selected(1);
-                }
-            });
-
-            ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui.button("Variables...").clicked() {
-                    self.variables_draft = Some(VariablesDraft {
-                        entries: self
-                            .config
-                            .variables
-                            .iter()
-                            .map(|(name, value)| (name.clone(), value.clone()))
-                            .collect(),
-                        error: None,
-                    });
-                }
-                if ui.button("Trigger...").clicked() {
-                    self.trigger_draft = Some(TriggerDraft::from_config(&self.config));
-                }
-                ui.separator();
+                ui.vertical(|ui| {
+                    let selected = self.selected_item.is_some();
+                    if ui
+                        .add_enabled(
+                            selected,
+                            egui::Button::new("Up").min_size([34.0, 28.0].into()),
+                        )
+                        .on_hover_text("Move up (Alt+Up)")
+                        .clicked()
+                    {
+                        self.move_selected(-1);
+                    }
+                    if ui
+                        .add_enabled(
+                            selected,
+                            egui::Button::new("Down").min_size([34.0, 28.0].into()),
+                        )
+                        .on_hover_text("Move down (Alt+Down)")
+                        .clicked()
+                    {
+                        self.move_selected(1);
+                    }
+                });
+
+                let list_width = (ui.available_width() - 92.0).max(360.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(list_width, 400.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_min_width(list_width);
+                        ui.set_max_width(list_width);
+                        egui::Frame::group(ui.style()).show(ui, |ui| {
+                            ui.set_min_size(egui::vec2(list_width - 4.0, 360.0));
+                            egui::ScrollArea::both()
+                                .min_scrolled_height(360.0)
+                                .show(ui, |ui| {
+                                    egui::Grid::new("items_grid")
+                                        .striped(true)
+                                        .min_col_width(90.0)
+                                        .show(ui, |ui| {
+                                            ui.strong("Name");
+                                            ui.strong("Type");
+                                            ui.strong("Open");
+                                            ui.strong("Location or content");
+                                            ui.end_row();
+
+                                            for (index, item) in rows.iter().enumerate() {
+                                                let response = ui.selectable_label(
+                                                    self.selected_item == Some(index),
+                                                    item.label().unwrap_or("----------------"),
+                                                );
+                                                if response.clicked() {
+                                                    self.selected_item = Some(index);
+                                                }
+                                                if response.double_clicked() {
+                                                    self.selected_item = Some(index);
+                                                    self.begin_edit();
+                                                }
+                                                ui.label(item_kind(item));
+                                                ui.label(item_open(item));
+                                                ui.label(item_detail(item));
+                                                ui.end_row();
+                                            }
+                                        });
+                                });
+                        });
+                        ui.weak("Drop folders into the list to add them");
+                    },
+                );
+
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 9.0;
+                    if ui
+                        .add(egui::Button::new("Add").min_size([74.0, 32.0].into()))
+                        .clicked()
+                    {
+                        self.add_pending = true;
+                    }
+                    let selected = self.selected_item.is_some();
+                    if ui
+                        .add_enabled(
+                            selected,
+                            egui::Button::new("Edit").min_size([74.0, 32.0].into()),
+                        )
+                        .clicked()
+                    {
+                        self.begin_edit();
+                    }
+                    if ui
+                        .add_enabled(
+                            selected,
+                            egui::Button::new("Remove").min_size([74.0, 32.0].into()),
+                        )
+                        .clicked()
+                    {
+                        self.delete_pending = true;
+                    }
+                    if ui
+                        .add_enabled(
+                            selected,
+                            egui::Button::new("Copy").min_size([74.0, 32.0].into()),
+                        )
+                        .clicked()
+                    {
+                        self.duplicate_selected();
+                    }
+                    if ui
+                        .add_enabled(
+                            selected,
+                            egui::Button::new("Move").min_size([74.0, 32.0].into()),
+                        )
+                        .clicked()
+                    {
+                        self.move_pending = true;
+                    }
+                });
+            });
+
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                let button_widths = 120.0 + 90.0 + 90.0 + ui.spacing().item_spacing.x * 2.0;
+                ui.add_space(((ui.available_width() - button_widths) / 2.0).max(0.0));
                 if ui
-                    .add_enabled(self.load_error.is_none(), egui::Button::new("Save"))
+                    .add_enabled(
+                        self.load_error.is_none(),
+                        egui::Button::new("Save & Close").min_size([120.0, 34.0].into()),
+                    )
+                    .clicked()
+                    && self.save()
+                {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                if ui
+                    .add_enabled(
+                        self.load_error.is_none(),
+                        egui::Button::new("Save").min_size([90.0, 34.0].into()),
+                    )
                     .clicked()
                 {
                     self.save();
                 }
-                if ui.button("Close").clicked() {
-                    if self.dirty {
-                        self.close_pending = true;
-                    } else {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
+                if ui
+                    .add(egui::Button::new("Close").min_size([90.0, 34.0].into()))
+                    .clicked()
+                {
+                    self.request_close(&ctx);
                 }
+            });
+            ui.horizontal_centered(|ui| {
                 if self.dirty {
                     ui.weak("Unsaved changes");
-                }
-                if let Some(status) = &self.status {
+                } else if let Some(status) = &self.status {
                     ui.label(status);
                 }
             });
@@ -604,6 +730,56 @@ impl SettingsApp {
     }
 
     fn show_confirmations(&mut self, ctx: &egui::Context) {
+        if self.add_pending {
+            egui::Window::new("Add favorite")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    if ui.button("Folder").clicked() {
+                        self.begin_add(DraftKind::Folder);
+                        self.add_pending = false;
+                    }
+                    if ui.button("Special folder").clicked() {
+                        self.begin_add(DraftKind::SpecialFolder);
+                        self.add_pending = false;
+                    }
+                    if ui.button("Menu").clicked() {
+                        self.begin_add(DraftKind::Submenu);
+                        self.add_pending = false;
+                    }
+                    if ui.button("Separator").clicked() {
+                        self.begin_add(DraftKind::Separator);
+                        self.add_pending = false;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.add_pending = false;
+                    }
+                });
+        }
+
+        if self.move_pending {
+            egui::Window::new("Move favorite")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.button("Move up").clicked() {
+                            self.move_selected(-1);
+                            self.move_pending = false;
+                        }
+                        if ui.button("Move down").clicked() {
+                            self.move_selected(1);
+                            self.move_pending = false;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.move_pending = false;
+                        }
+                    });
+                });
+        }
+
         if self.delete_pending {
             egui::Window::new("Remove item?")
                 .collapsible(false)
@@ -653,7 +829,6 @@ impl eframe::App for SettingsApp {
         }
         self.add_dropped_folders(&ctx);
         self.handle_shortcuts(&ctx);
-        self.show_menu_tree(ui);
         self.show_items(ui);
         self.show_item_editor(&ctx);
         self.show_variables_editor(&ctx);
@@ -825,12 +1000,17 @@ fn items_at_mut<'a>(config: &'a mut Config, path: &[usize]) -> Option<&'a mut Ve
     Some(items)
 }
 
-fn show_submenus(
-    ui: &mut egui::Ui,
+fn menu_choices(config: &Config) -> Vec<(Vec<usize>, String)> {
+    let mut choices = vec![(Vec::new(), "Main".to_string())];
+    collect_menu_choices(&config.items, &mut Vec::new(), "", &mut choices);
+    choices
+}
+
+fn collect_menu_choices(
     items: &[Item],
     path: &mut Vec<usize>,
-    selected_menu: &mut Vec<usize>,
-    selected_item: &mut Option<usize>,
+    parent_name: &str,
+    choices: &mut Vec<(Vec<usize>, String)>,
 ) {
     for (index, item) in items.iter().enumerate() {
         let Item::Submenu {
@@ -841,17 +1021,13 @@ fn show_submenus(
             continue;
         };
         path.push(index);
-        let current_path = path.clone();
-        let response = egui::CollapsingHeader::new(name)
-            .id_salt(&current_path)
-            .default_open(true)
-            .show(ui, |ui| {
-                show_submenus(ui, children, path, selected_menu, selected_item);
-            });
-        if response.header_response.clicked() {
-            *selected_menu = current_path;
-            *selected_item = None;
-        }
+        let full_name = if parent_name.is_empty() {
+            name.clone()
+        } else {
+            format!("{parent_name} > {name}")
+        };
+        choices.push((path.clone(), full_name.clone()));
+        collect_menu_choices(children, path, &full_name, choices);
         path.pop();
     }
 }
@@ -870,6 +1046,18 @@ fn item_detail(item: &Item) -> &str {
         Item::Folder { path, .. } => path,
         Item::SpecialFolder { known_folder, .. } => known_folder,
         Item::Submenu { .. } | Item::Separator { .. } => "",
+    }
+}
+
+fn item_open(item: &Item) -> &'static str {
+    match item {
+        Item::Folder { open, .. } | Item::SpecialFolder { open, .. } => {
+            match open.unwrap_or_default() {
+                OpenMode::NewWindow => "New window",
+                OpenMode::Reuse => "Reuse",
+            }
+        }
+        Item::Submenu { .. } | Item::Separator { .. } => "—",
     }
 }
 

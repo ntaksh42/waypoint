@@ -12,5 +12,6 @@ pub mod menu;
 pub mod process;
 pub mod shell;
 pub mod single;
+pub mod theme;
 pub mod tray;
 pub mod trigger;

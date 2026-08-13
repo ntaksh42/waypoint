@@ -3,7 +3,7 @@
 // コンソールウィンドウを出さない
 #![windows_subsystem = "windows"]
 
-use waypoint::{autostart, shell, single, tray, trigger};
+use waypoint::{autostart, shell, single, theme, tray, trigger};
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::HiDpi::{
@@ -20,6 +20,7 @@ fn main() {
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
+    theme::enable_dark_menus();
 
     // 二重起動なら既存プロセスにメニューを出させて終わる (FR-8.3)
     let _instance = match single::acquire() {

@@ -8,9 +8,10 @@ use std::collections::BTreeMap;
 use windows::Win32::Foundation::{HWND, POINT};
 use windows::Win32::Graphics::Gdi::HBITMAP;
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, DestroyMenu, HMENU, MENUITEMINFOW, MF_DISABLED, MF_GRAYED,
-    MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_BITMAP, SetForegroundWindow, SetMenuItemInfoW,
-    TPM_LEFTALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, TPM_TOPALIGN, TrackPopupMenuEx,
+    AppendMenuW, CreatePopupMenu, DestroyMenu, GetMenuItemCount, HMENU, MENUITEMINFOW, MF_DISABLED,
+    MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_BITMAP, SetForegroundWindow,
+    SetMenuItemInfoW, TPM_LEFTALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, TPM_TOPALIGN,
+    TrackPopupMenuEx,
 };
 use windows::core::{HSTRING, PCWSTR, Result};
 
@@ -23,6 +24,15 @@ pub struct Action {
     /// 展開済みの絶対パス。
     pub path: String,
     pub open: OpenMode,
+}
+
+/// ランチャーメニューで選ばれた操作。
+#[derive(Debug, Clone, PartialEq)]
+pub enum Selection {
+    Open(Action),
+    Settings,
+    Reload,
+    Close,
 }
 
 /// 構築したメニューと、ID → 動作の対応表。
@@ -60,7 +70,7 @@ impl BuiltMenu {
     ///
     /// `owner` は必ず事前に前面化する。そうしないとメニュー外を
     /// クリックしても閉じない (R-2) 。
-    pub fn track(&self, owner: HWND, at: POINT) -> Option<&Action> {
+    pub fn track(&self, owner: HWND, at: POINT) -> Option<Selection> {
         let id = unsafe {
             // これを呼ばないとメニューが閉じなくなる
             let _ = SetForegroundWindow(owner);
@@ -76,7 +86,12 @@ impl BuiltMenu {
         if id.0 == 0 {
             return None; // Esc または領域外クリックで取り消し
         }
-        self.action(id.0 as usize)
+        match id.0 as usize {
+            ID_SETTINGS => Some(Selection::Settings),
+            ID_RELOAD => Some(Selection::Reload),
+            ID_CLOSE => Some(Selection::Close),
+            id => self.action(id).cloned().map(Selection::Open),
+        }
     }
 }
 
@@ -101,6 +116,7 @@ pub fn build(cfg: &Config) -> Result<BuiltMenu> {
         actions: BTreeMap::new(),
     };
     let menu = unsafe { build_level(&cfg.items, &mut ctx)? };
+    unsafe { append_footer(menu)? };
     Ok(BuiltMenu {
         menu,
         actions: ctx.actions,
@@ -109,6 +125,9 @@ pub fn build(cfg: &Config) -> Result<BuiltMenu> {
 
 /// 0 は「取り消し」を表すため、項目 ID は 1 から始める。
 const FIRST_ITEM_ID: usize = 1;
+const ID_SETTINGS: usize = 0xe001;
+const ID_RELOAD: usize = 0xe002;
+const ID_CLOSE: usize = 0xe003;
 
 struct BuildCtx<'a> {
     vars: &'a BTreeMap<String, String>,
@@ -144,6 +163,11 @@ unsafe fn build_level(items: &[Item], ctx: &mut BuildCtx) -> Result<HMENU> {
                     accel += 1;
                     let label = HSTRING::from(decorate(name, ctx.numeric, accel));
                     AppendMenuW(menu, MF_POPUP, sub.0 as usize, PCWSTR(label.as_ptr()))?;
+                    if let Some(path) = crate::known_folder::resolve("Documents")
+                        && let Some(bitmap) = crate::icon::bitmap_for(&path)
+                    {
+                        set_last_item_bitmap(menu, bitmap);
+                    }
                 }
                 Item::Folder {
                     name, path, open, ..
@@ -204,6 +228,37 @@ unsafe fn append_leaf(
     }
 }
 
+/// QAP と同様に、頻繁に使う管理操作をルートメニューの末尾へ置く。
+unsafe fn append_footer(menu: HMENU) -> Result<()> {
+    unsafe {
+        AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
+        let settings = HSTRING::from("Settings...");
+        AppendMenuW(menu, MF_STRING, ID_SETTINGS, PCWSTR(settings.as_ptr()))?;
+        if let Ok(exe) = std::env::current_exe()
+            && let Some(bitmap) = crate::icon::bitmap_for(
+                exe.with_file_name("waypoint-settings.exe")
+                    .to_string_lossy()
+                    .as_ref(),
+            )
+        {
+            set_item_bitmap(menu, ID_SETTINGS, bitmap);
+        }
+
+        let reload = HSTRING::from("Reload config");
+        AppendMenuW(menu, MF_STRING, ID_RELOAD, PCWSTR(reload.as_ptr()))?;
+        if let Some(path) = crate::config::config_path()
+            && let Some(bitmap) = crate::icon::bitmap_for(path.to_string_lossy().as_ref())
+        {
+            set_item_bitmap(menu, ID_RELOAD, bitmap);
+        }
+
+        AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
+        let close = HSTRING::from("Close this menu");
+        AppendMenuW(menu, MF_STRING, ID_CLOSE, PCWSTR(close.as_ptr()))?;
+        Ok(())
+    }
+}
+
 /// 項目にアイコンを設定する (FR-2.3) 。
 unsafe fn set_item_bitmap(menu: HMENU, id: usize, bmp: HBITMAP) {
     unsafe {
@@ -214,6 +269,22 @@ unsafe fn set_item_bitmap(menu: HMENU, id: usize, bmp: HBITMAP) {
             ..Default::default()
         };
         let _ = SetMenuItemInfoW(menu, id as u32, false, &info);
+    }
+}
+
+unsafe fn set_last_item_bitmap(menu: HMENU, bmp: HBITMAP) {
+    unsafe {
+        let position = GetMenuItemCount(Some(menu)) - 1;
+        if position < 0 {
+            return;
+        }
+        let info = MENUITEMINFOW {
+            cbSize: size_of::<MENUITEMINFOW>() as u32,
+            fMask: MIIM_BITMAP,
+            hbmpItem: bmp,
+            ..Default::default()
+        };
+        let _ = SetMenuItemInfoW(menu, position as u32, true, &info);
     }
 }
 
