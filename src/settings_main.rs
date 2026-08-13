@@ -181,6 +181,7 @@ impl SettingsApp {
                     path: path.display().to_string(),
                     open: None,
                     icon: None,
+                    show_branch: false,
                 });
                 self.selected_item = Some(items.len() - 1);
                 self.dirty = true;
@@ -583,6 +584,10 @@ impl SettingsApp {
                         }
                     });
                     show_open_mode(ui, &mut draft.open);
+                    ui.checkbox(&mut draft.show_branch, "Show Git branch name")
+                        .on_hover_text(
+                            "Appends [branch] to the menu label when the path is inside a Git work tree.",
+                        );
                 }
                 DraftKind::SpecialFolder => {
                     ui.label("Name");
@@ -1016,6 +1021,7 @@ struct ItemDraft {
     known_folder: String,
     open: OpenMode,
     icon: Option<String>,
+    show_branch: bool,
     submenu_items: Vec<Item>,
     error: Option<String>,
 }
@@ -1072,6 +1078,7 @@ impl ItemDraft {
             known_folder: waypoint::known_folder::NAMES[0].to_string(),
             open: OpenMode::default(),
             icon: None,
+            show_branch: false,
             submenu_items: Vec::new(),
             error: None,
         }
@@ -1084,12 +1091,14 @@ impl ItemDraft {
                 path,
                 open,
                 icon,
+                show_branch,
             } => Self {
                 kind: DraftKind::Folder,
                 name: name.clone(),
                 path: path.clone(),
                 open: open.unwrap_or_default(),
                 icon: icon.clone(),
+                show_branch: *show_branch,
                 ..Self::new(DraftKind::Folder)
             },
             Item::SpecialFolder {
@@ -1142,6 +1151,7 @@ impl ItemDraft {
                 path: self.path,
                 open,
                 icon: self.icon,
+                show_branch: self.show_branch,
             },
             DraftKind::SpecialFolder => Item::SpecialFolder {
                 name: self.name,

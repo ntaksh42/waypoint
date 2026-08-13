@@ -55,6 +55,7 @@ Quick Access Popup の全機能を分解し、本プロジェクトでの扱い�
 | Quick Launch（クイック検索） | **採用** | 登録数が増えたため、名前を入力してキーボードだけで目的のフォルダを開けるようにする |
 | In the Works（Recent / Frequent のフォルダ・ファイル） | **採用** | Windows の Recent Items をローカル集計し、作業中の項目へ素早く戻るために使う |
 | Current Windows | **採用** | 現在開いている Explorer とアプリのウィンドウへ切り替える |
+| Git ブランチ名の表示 | **採用** | 同一リポジトリの複数ワークツリーを使い分けるため、ジャンプ先の判断材料として必要。項目ごとのオプトインに限定し、表示経路では `.git/HEAD` のキャッシュのみ参照する |
 | Reopen a Folder | 除外 | Current Windows と役割が重複し、ファイルダイアログ内のフォルダ切替も v1.0 の対象外 |
 | スニペット / ホットストリング | 除外 | キーストローク送出のミニ言語を実装することになる。用途が無関係 |
 | プレースホルダ（動的値挿入） | 除外 | 実質的に式評価エンジン。変数展開で代替する |
@@ -112,12 +113,14 @@ Quick Access Popup の全機能を分解し、本プロジェクトでの扱い�
 - **FR-2.11** Current Windows は表示中の Explorer とアプリのトップレベルウィンドウを列挙し、選択時に対象ウィンドウを前面へ移す
 - **FR-2.12** 動的メニューの列挙と集計はメニュー表示経路では行わない。起動時とメニューを閉じた後にキャッシュを更新し、次回表示ではキャッシュのみ参照する
 - **FR-2.13** ルートに `My Special Folders` サブメニューを表示する。`Desktop`、`Documents`、`Pictures`、`Downloads`、`This PC`、`Network`、`All Control Panel Items`、`Recycle Bin` と、特殊フォルダ追加・設定画面への入口を持つ
+- **FR-2.14** `folder` 項目で `showBranch` が真のとき、パスが Git 作業ツリー内にあれば項目名の後ろに `[ブランチ名]` を付す。リポジトリでない場合、または解決できない場合は何も付さない。detached HEAD では短縮 SHA を表示する
+- **FR-2.15** ブランチ名の取得は `git` コマンドを起動せず `.git/HEAD` の直読みで行う。FR-2.12 と同じくメニュー表示経路では行わず、メニュー構築時に読んだ値をそのまま使う。対象は `showBranch` が真の項目のみとし、全項目を走査しない
 
 ### FR-3 項目の型
 
 | 型 | 保持する情報 | 選択時の動作 |
 |---|---|---|
-| `folder` | 表示名、パス、開き方 | 指定パスを既定のフォルダーハンドラーで開く |
+| `folder` | 表示名、パス、開き方、ブランチ表示の可否 | 指定パスを既定のフォルダーハンドラーで開く |
 | `specialFolder` | 表示名、既知フォルダ ID | 解決したパスを既定のフォルダーハンドラーで開く |
 | `submenu` | 表示名、子項目の配列 | サブメニューを展開する |
 | `separator` | 表示名（省略可） | 選択不可。区切り線または見出しとして描画する |
@@ -179,6 +182,8 @@ Quick Access Popup の全機能を分解し、本プロジェクトでの扱い�
 - **FR-9.8** `Shift+Enter` は常に `newWindow`、`Ctrl+Enter` は常に `reuse` として開く
 - **FR-9.9** 検索インデックスは起動時、設定再読み込み時、動的メニュー更新後に構築する。キー入力時はメモリ上の検索だけを行う
 - **FR-9.10** 検索画面は常駐プロセス内の標準 Win32 コントロールで実装し、管理画面プロセスを起動しない
+- **FR-9.11** 検索画面は黒を基調とし、`Segoe UI Variable Text`、Windows 11 の角丸・ダークタイトルバー、青系の選択色を使う。未対応環境では通常の Win32 表示へフォールバックする
+- **FR-9.12** 候補はフォルダーアイコン、名前、パンくずとパスの 2 段を高密度に描画し、DPI に応じてフォント・余白・行高を拡縮する。表示件数は 12〜24 件、既定は 12 件とする
 
 ---
 
@@ -210,7 +215,7 @@ Quick Access Popup の全機能を分解し、本プロジェクトでの扱い�
       "includeRecentFolders": true,
       "includeFrequentFolders": true,
       "searchPaths": false,
-      "visibleResults": 10
+      "visibleResults": 12
     },
     "startWithWindows": false
   },
@@ -220,7 +225,8 @@ Quick Access Popup の全機能を分解し、本プロジェクトでの扱い�
       "type": "folder",
       "name": "現在のプロジェクト",
       "path": "{Proj}\\waypoint",
-      "open": "reuse"
+      "open": "reuse",
+      "showBranch": true
     },
     { "type": "separator", "name": "開発" },
     {
@@ -262,6 +268,7 @@ Quick Access Popup の全機能を分解し、本プロジェクトでの扱い�
 | `items` | `submenu` のみ | 子項目の配列 |
 | `open` | 任意 | `newWindow`（既定）または `reuse` |
 | `icon` | 任意 | アイコンファイルのパス。省略時はシステム既定 |
+| `showBranch` | 任意 | `folder` のみ。真のとき Git ブランチ名を項目名の後ろに表示する。既定は偽 |
 
 ---
 

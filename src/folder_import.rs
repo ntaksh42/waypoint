@@ -95,6 +95,7 @@ fn folder_item(name: String, path: &Path) -> Item {
         path: path.display().to_string(),
         open: None,
         icon: None,
+        show_branch: false,
     }
 }
 

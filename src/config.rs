@@ -28,6 +28,10 @@ pub enum Item {
         open: Option<OpenMode>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         icon: Option<String>,
+        /// Git ブランチ名を表示するか (FR-2.14) 。
+        /// 項目ごとのオプトイン。既定の偽では `.git` を一切読まない。
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        show_branch: bool,
     },
     /// 既知フォルダ (Downloads, Desktop など) 。
     SpecialFolder {
@@ -271,6 +275,7 @@ fn default_config() -> Config {
                 path: "%USERPROFILE%".to_string(),
                 open: None,
                 icon: None,
+                show_branch: false,
             },
         ],
         ..Default::default()
