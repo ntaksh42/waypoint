@@ -107,11 +107,14 @@ fn selftest_report(hwnd: HWND, hotkey_ok: bool, hook_ok: bool) -> String {
     // 存在しないパスはメニューで選んでも何も起きないので、ここで分かるようにする。
     out.push_str("\n\n-- menu items --\n");
     for (id, mode, path) in tray::dump_actions() {
-        let exists = std::path::Path::new(&path).exists();
-        out.push_str(&format!(
-            "  [{id}] {mode:<9} {} {path}\n",
-            if exists { "OK     " } else { "MISSING" }
-        ));
+        let status = if mode == "activateWindow" {
+            "WINDOW "
+        } else if std::path::Path::new(&path).exists() {
+            "OK     "
+        } else {
+            "MISSING"
+        };
+        out.push_str(&format!("  [{id}] {mode:<9} {} {path}\n", status));
     }
     out
 }

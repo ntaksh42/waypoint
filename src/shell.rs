@@ -9,6 +9,9 @@ use windows::Win32::System::Com::{
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Shell::{IShellWindows, IWebBrowser2, ShellExecuteW, ShellWindows};
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+use windows::Win32::UI::WindowsAndMessaging::{
+    IsIconic, SW_RESTORE, SetForegroundWindow, ShowWindow,
+};
 use windows::core::{BSTR, HSTRING, Interface};
 
 use crate::config::OpenMode;
@@ -61,6 +64,16 @@ pub fn open(path: &str, mode: OpenMode, origin: Option<HWND>) -> std::io::Result
     }
 
     open_new_window(path)
+}
+
+/// Current Windows で選んだウィンドウを復元して前面へ移す。
+pub fn activate_window(hwnd: HWND) {
+    unsafe {
+        if IsIconic(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+        }
+        let _ = SetForegroundWindow(hwnd);
+    }
 }
 
 /// Windows の既定のフォルダーハンドラーで開く。

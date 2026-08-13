@@ -25,7 +25,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
 use crate::config::{Config, LoadOutcome};
-use crate::menu::{BuiltMenu, Selection};
+use crate::menu::{Action, BuiltMenu, Selection};
 use crate::process;
 use crate::shell;
 use crate::trigger::{self, WM_TRIGGER_MENU};
@@ -51,6 +51,7 @@ thread_local! {
 
 struct AppState {
     config: Config,
+    dynamic: crate::dynamic::Menus,
     menu: Option<BuiltMenu>,
     /// 設定の読み込みに失敗した理由。空メニューで起動した場合に入る。
     load_error: Option<String>,
@@ -65,10 +66,12 @@ pub fn load_state() {
         // 壊れた設定でも起動は続ける (FR-7.4)
         LoadOutcome::Failed(e) => (Config::default(), Some(e)),
     };
-    let menu = crate::menu::build(&config).ok();
+    let dynamic = crate::dynamic::refresh();
+    let menu = crate::menu::build(&config, &dynamic).ok();
     STATE.with(|s| {
         *s.borrow_mut() = Some(AppState {
             config,
+            dynamic,
             menu,
             load_error,
             hotkey_failed: false,
@@ -279,13 +282,31 @@ fn show_launcher(hwnd: HWND, at: POINT, origin: Option<HWND>) {
     });
 
     match selection {
-        Some(Selection::Open(action)) => {
-            let _ = shell::open(&action.path, action.open, origin);
+        Some(Selection::Action(Action::Open { path, open })) => {
+            let _ = shell::open(&path, open, origin);
+            refresh_dynamic();
+        }
+        Some(Selection::Action(Action::ActivateWindow { hwnd })) => {
+            shell::activate_window(HWND(hwnd as *mut _));
+            refresh_dynamic();
         }
         Some(Selection::Settings) => open_config_in_editor(),
         Some(Selection::Reload) => reload(hwnd),
-        Some(Selection::Close) | None => {}
+        Some(Selection::Close) | None => refresh_dynamic(),
     }
+}
+
+/// メニューが閉じた後に列挙し、次回表示用キャッシュを入れ替える。
+fn refresh_dynamic() {
+    let dynamic = crate::dynamic::refresh();
+    STATE.with(|s| {
+        let mut state = s.borrow_mut();
+        let Some(state) = state.as_mut() else {
+            return;
+        };
+        state.menu = crate::menu::build(&state.config, &dynamic).ok();
+        state.dynamic = dynamic;
+    });
 }
 
 /// トレイの右クリックメニュー (FR-8.2) 。
