@@ -6,10 +6,11 @@
 use std::collections::BTreeMap;
 
 use windows::Win32::Foundation::{HWND, POINT};
+use windows::Win32::Graphics::Gdi::HBITMAP;
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, DestroyMenu, HMENU, MENU_ITEM_FLAGS, MF_DISABLED, MF_GRAYED,
-    MF_POPUP, MF_SEPARATOR, MF_STRING, MFT_STRING, SetForegroundWindow, TPM_LEFTALIGN,
-    TPM_RETURNCMD, TPM_RIGHTBUTTON, TPM_TOPALIGN, TrackPopupMenuEx,
+    AppendMenuW, CreatePopupMenu, DestroyMenu, HMENU, MENUITEMINFOW, MF_DISABLED, MF_GRAYED,
+    MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_BITMAP, SetForegroundWindow, SetMenuItemInfoW,
+    TPM_LEFTALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, TPM_TOPALIGN, TrackPopupMenuEx,
 };
 use windows::core::{HSTRING, PCWSTR, Result};
 
@@ -168,8 +169,12 @@ unsafe fn append_leaf(
             Some(path) => {
                 let id = ctx.next_id;
                 ctx.next_id += 1;
-                ctx.actions.insert(id, Action { path, open });
                 AppendMenuW(menu, MF_STRING, id, PCWSTR(label.as_ptr()))?;
+                // アイコンは付かなくても致命的ではないので失敗を無視する
+                if let Some(bmp) = crate::icon::bitmap_for(&path) {
+                    set_item_bitmap(menu, id, bmp);
+                }
+                ctx.actions.insert(id, Action { path, open });
             }
             None => {
                 // 解決できない項目は選べないようにする (FR-2.6)
@@ -185,6 +190,19 @@ unsafe fn append_leaf(
     }
 }
 
+/// 項目にアイコンを設定する (FR-2.3) 。
+unsafe fn set_item_bitmap(menu: HMENU, id: usize, bmp: HBITMAP) {
+    unsafe {
+        let info = MENUITEMINFOW {
+            cbSize: size_of::<MENUITEMINFOW>() as u32,
+            fMask: MIIM_BITMAP,
+            hbmpItem: bmp,
+            ..Default::default()
+        };
+        let _ = SetMenuItemInfoW(menu, id as u32, false, &info);
+    }
+}
+
 /// 上位 9 件に `&1 ` のようなアクセラレータを前置する (FR-2.4) 。
 fn decorate(name: &str, numeric: bool, accel: usize) -> String {
     if numeric && (1..=9).contains(&accel) {
@@ -194,9 +212,3 @@ fn decorate(name: &str, numeric: bool, accel: usize) -> String {
         name.replace('&', "&&")
     }
 }
-
-// MENU_ITEM_FLAGS の | を使うために型を揃える
-const _: () = {
-    let _ = MFT_STRING;
-    let _: MENU_ITEM_FLAGS = MF_STRING;
-};

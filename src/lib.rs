@@ -6,6 +6,7 @@
 
 pub mod autostart;
 pub mod config;
+pub mod icon;
 pub mod known_folder;
 pub mod menu;
 pub mod process;
