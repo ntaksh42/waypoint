@@ -3,7 +3,7 @@
 // コンソールウィンドウを出さない
 #![windows_subsystem = "windows"]
 
-use waypoint::{autostart, shell, single, theme, tray, trigger};
+use waypoint::{autostart, panic_log, shell, single, theme, tray, trigger};
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::HiDpi::{
@@ -14,6 +14,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 fn main() {
+    // GUI サブシステムでは panic の出力先が無い。最初に登録して
+    // 以降の panic をログに残す
+    panic_log::install();
+
     let selftest = std::env::args().any(|a| a == "--selftest");
     // メニューの座標は物理ピクセルで扱うため、モニタごとの DPI を
     // 自前で解釈する。ウィンドウを作る前に宣言する必要がある。

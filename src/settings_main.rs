@@ -6,6 +6,9 @@ use eframe::egui;
 use waypoint::config::{Config, Item, LoadOutcome, OpenMode};
 
 fn main() -> eframe::Result<()> {
+    // 設定画面も GUI サブシステム。panic を握り潰さずログへ残す
+    waypoint::panic_log::install();
+
     let add_special_folder = std::env::args().any(|arg| arg == "--add-special-folder");
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -736,7 +739,7 @@ impl SettingsApp {
                 ui.checkbox(&mut draft.search_paths, "Search folder paths");
                 ui.horizontal(|ui| {
                     ui.label("Visible results");
-                    ui.add(egui::DragValue::new(&mut draft.visible_results).range(5..=20));
+                    ui.add(egui::DragValue::new(&mut draft.visible_results).range(12..=24));
                 });
                 ui.separator();
                 ui.label("Excluded processes (one per line)");
@@ -784,7 +787,7 @@ impl SettingsApp {
                     draft.include_frequent_folders;
                 self.config.settings.quick_launch.search_paths = draft.search_paths;
                 self.config.settings.quick_launch.visible_results =
-                    draft.visible_results.clamp(5, 20);
+                    draft.visible_results.clamp(12, 24);
                 self.trigger_draft = None;
                 self.dirty = true;
                 self.status = None;

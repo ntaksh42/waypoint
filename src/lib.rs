@@ -12,6 +12,7 @@ pub mod git;
 pub mod icon;
 pub mod known_folder;
 pub mod menu;
+pub mod panic_log;
 pub mod process;
 pub mod quick_launch;
 pub mod quick_launch_window;
