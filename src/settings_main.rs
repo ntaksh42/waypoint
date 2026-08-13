@@ -718,7 +718,7 @@ impl SettingsApp {
                 ui.checkbox(&mut draft.middle_click, "Enable middle click");
                 ui.label("Hotkey");
                 ui.text_edit_singleline(&mut draft.hotkey);
-                ui.weak("Example: Ctrl+Alt+W");
+                ui.weak("Example: Win+W");
                 ui.separator();
                 ui.strong("Quick Launch");
                 ui.label("Hotkey");

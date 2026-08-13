@@ -194,11 +194,12 @@ fn default_visible_results() -> usize {
 }
 /// 既定のホットキー。
 ///
-/// 仕様書は `Win+W` だが、Windows 11 では Widgets が予約済みで
-/// `RegisterHotKey` が「既に登録されています」で失敗する
-/// (`Win+Q` も検索に予約済み)。実機で登録できる組み合わせにする。
+/// 仕様書 (`docs/spec.md` FR-1.2) 通り `Win+W`。ただし Windows 11 では
+/// Widgets が予約済みで `RegisterHotKey` が「既に登録されています」で
+/// 失敗する環境がある (`Win+Q` も検索に予約済み、実測で確認済み)。
+/// その場合はトレイメニューに警告が出るので、設定画面で変更する。
 fn default_hotkey() -> String {
-    "Ctrl+Alt+W".to_string()
+    "Win+W".to_string()
 }
 fn default_excluded() -> Vec<String> {
     vec![

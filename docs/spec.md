@@ -356,7 +356,8 @@ Quick Access Popup の全機能を分解し、本プロジェクトでの扱い�
 | スコープ | ユーザー単位 (`perUser`) | 設定 (`%APPDATA%`) も自動起動 (`HKCU`) もユーザー単位なので整合する。UAC が出ない |
 | インストール先 | `%LOCALAPPDATA%\Programs\waypoint` | `perUser` では `ProgramFiles` を使えない |
 | 同梱物 | `waypoint.exe` / `waypoint-settings.exe` | 常駐部と管理画面 |
-| ショートカット | スタートメニューに `waypoint` | 自動起動は MSI では設定せず、アプリ側の設定 (FR-8.4) に任せる |
+| ショートカット | スタートメニューに `waypoint` | インストール後すぐ起動できるように |
+| 自動起動 | 初回インストール時のみ MSI が既定で有効にする | アプリ本体を `--enable-autostart-once` で一度だけ起動し、トレイの手動トグル (FR-8.4) と同じ関数でレジストリを書く。MSI がレジストリ値自体を Component として持たないため、ユーザーが後で OFF にしてもアップグレード時に勝手に ON へ戻らない (二重管理を避ける) |
 | 署名 | しない | R-7 のとおり |
 
 ---

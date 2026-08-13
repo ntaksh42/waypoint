@@ -82,8 +82,10 @@
 
     <!--
       スタートメニューのショートカット。
-      自動起動は MSI では設定しない。アプリ側の設定 (FR-8.4) が
-      HKCU\...\Run を書くので、二重管理になるのを避ける。
+      自動起動 (HKCU\...\Run) は下の EnableAutostartOnInstall が
+      アプリ本体を呼んで書く。ここで RegistryValue として Component化
+      すると、ユーザーがトレイで OFF にした後もアップグレード/修復時に
+      MSI が自己修復でキーを復活させてしまう (二重管理)。
     -->
     <StandardDirectory Id="ProgramMenuFolder">
       <Component Id="StartMenuShortcut" Guid="*">
@@ -97,6 +99,27 @@
                        Type="integer" Value="1" KeyPath="yes" />
       </Component>
     </StandardDirectory>
+
+    <!--
+      初回インストール時のみ、自動起動 (FR-8.4) を既定で有効にする。
+      下の ExeCommand (enable autostart once 引数) はトレイの手動トグルと
+      同じ set_enabled() を呼んで即終了する (常駐は開始しない)。
+
+      NOT Installed: 初回インストール (このプロダクトがまだ入っていない)。
+      NOT UPGRADINGPRODUCTCODE: MajorUpgrade の置き換え中は除外する。
+      これによりアップグレードのたびに ON へ戻ることを防ぐ。
+      HKCU への書き込みだけなので昇格・Impersonate の考慮は不要。
+    -->
+    <CustomAction Id="EnableAutostartOnInstall"
+                  FileRef="WaypointExe"
+                  ExeCommand="--enable-autostart-once"
+                  Return="ignore"
+                  Execute="deferred" />
+
+    <InstallExecuteSequence>
+      <Custom Action="EnableAutostartOnInstall" After="InstallFiles"
+              Condition="NOT Installed AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
 
     <Feature Id="Main" Title="waypoint">
       <ComponentRef Id="MainExe" />

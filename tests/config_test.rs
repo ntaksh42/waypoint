@@ -104,9 +104,9 @@ fn missing_optional_fields_use_defaults() {
     let cfg: Config = serde_json::from_str(r#"{ "items": [] }"#).unwrap();
     assert_eq!(cfg.version, 1);
     assert!(cfg.settings.trigger.middle_click);
-    // 既定は Ctrl+Alt+W。Win+W は Windows 11 の Widgets が予約済みで
-    // RegisterHotKey が失敗するため使えない
-    assert_eq!(cfg.settings.trigger.hotkey, "Ctrl+Alt+W");
+    // 仕様書 (FR-1.2) 通り既定は Win+W。Windows 11 の Widgets が予約済みの
+    // 環境では RegisterHotKey が失敗しうるが、その場合はトレイに警告が出る
+    assert_eq!(cfg.settings.trigger.hotkey, "Win+W");
     assert!(
         cfg.settings
             .trigger

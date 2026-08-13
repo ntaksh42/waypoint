@@ -14,6 +14,15 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 fn main() {
+    // インストーラーが初回インストール時のみ渡す一度きりのフラグ。
+    // 常駐は開始せず、自動起動 (FR-8.4) を有効にして即終了する。
+    // トレイの手動トグルと同じ関数を呼ぶことで管理主体をアプリ側に一本化し、
+    // MSI がレジストリキーを直接持つことによる二重管理を避ける (installer/waypoint.wxs 参照)。
+    if std::env::args().any(|a| a == "--enable-autostart-once") {
+        let _ = autostart::set_enabled(true);
+        return;
+    }
+
     let selftest = std::env::args().any(|a| a == "--selftest");
     // メニューの座標は物理ピクセルで扱うため、モニタごとの DPI を
     // 自前で解釈する。ウィンドウを作る前に宣言する必要がある。
