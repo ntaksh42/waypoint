@@ -1,0 +1,780 @@
+//! 管理画面 (FR-6) 。
+//!
+//! 左に階層ツリー、右に選択中メニューの項目一覧を出す 2 ペイン構成。
+//! 常駐部と同じプロセス・同じスレッドで動かし、閉じたらメニューを
+//! 組み立て直す。
+//!
+//! ツリーとリストの対応付けは「パス」(各階層での添字の並び) で行う。
+//! 項目に ID を振らずに済み、設定ファイルの構造をそのまま保てる。
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use native_windows_gui as nwg;
+
+use crate::config::{Config, Item};
+
+/// 木構造のどこを指しているかを表す添字の並び。
+/// 例: `[2, 0]` = ルートの 3 番目 (submenu) の 1 番目。
+type ItemPath = Vec<usize>;
+
+/// 指定パスの項目リストを取り出す。
+fn items_at<'a>(cfg: &'a Config, path: &[usize]) -> Option<&'a Vec<Item>> {
+    let mut items = &cfg.items;
+    for &i in path {
+        match items.get(i)? {
+            Item::Submenu { items: sub, .. } => items = sub,
+            _ => return None,
+        }
+    }
+    Some(items)
+}
+
+fn items_at_mut<'a>(cfg: &'a mut Config, path: &[usize]) -> Option<&'a mut Vec<Item>> {
+    let mut items = &mut cfg.items;
+    for &i in path {
+        match items.get_mut(i)? {
+            Item::Submenu { items: sub, .. } => items = sub,
+            _ => return None,
+        }
+    }
+    Some(items)
+}
+
+/// 管理画面を開く。閉じるまで戻らない (モーダルに回す) 。
+///
+/// 保存された場合は true を返し、呼び出し側でメニューを再構築する。
+pub fn show(config: &Config) -> bool {
+    // nwg はスレッドごとに一度初期化する
+    if nwg::init().is_err() {
+        return false;
+    }
+    let _ = nwg::Font::set_global_family("Segoe UI");
+
+    let state = Rc::new(RefCell::new(EditorState {
+        config: config.clone(),
+        current: Vec::new(),
+        dirty: false,
+        saved: false,
+    }));
+
+    let ui = match build_window(state.clone()) {
+        Some(ui) => ui,
+        None => return false,
+    };
+
+    nwg::dispatch_thread_events();
+
+    // ハンドラを外してからウィンドウを捨てる
+    drop(ui);
+
+    state.borrow().saved
+}
+
+struct EditorState {
+    config: Config,
+    /// いま右ペインに出している階層。
+    current: ItemPath,
+    dirty: bool,
+    saved: bool,
+}
+
+/// ウィンドウと配置したコントロール一式。
+/// `_handler` を保持している間だけイベントが飛ぶ。
+struct EditorUi {
+    _window: Rc<nwg::Window>,
+    _handler: nwg::EventHandler,
+}
+
+fn build_window(state: Rc<RefCell<EditorState>>) -> Option<EditorUi> {
+    let mut window = nwg::Window::default();
+    nwg::Window::builder()
+        .size((880, 520))
+        .position((300, 200))
+        .title("waypoint settings")
+        .flags(nwg::WindowFlags::MAIN_WINDOW | nwg::WindowFlags::VISIBLE)
+        .build(&mut window)
+        .ok()?;
+    let window = Rc::new(window);
+
+    // --- 左: 階層ツリー (FR-6.1) ---
+    let mut tree = nwg::TreeView::default();
+    nwg::TreeView::builder()
+        .parent(window.as_ref())
+        .position((10, 10))
+        .size((240, 430))
+        .build(&mut tree)
+        .ok()?;
+    let tree = Rc::new(tree);
+
+    // --- 右: 項目一覧 ---
+    let mut list = nwg::ListView::default();
+    nwg::ListView::builder()
+        .parent(window.as_ref())
+        .position((260, 10))
+        .size((500, 430))
+        .list_style(nwg::ListViewStyle::Detailed)
+        .ex_flags(nwg::ListViewExFlags::FULL_ROW_SELECT | nwg::ListViewExFlags::GRID)
+        .build(&mut list)
+        .ok()?;
+    list.insert_column(nwg::InsertListViewColumn {
+        index: Some(0),
+        fmt: None,
+        width: Some(150),
+        text: Some("Name".into()),
+    });
+    list.insert_column(nwg::InsertListViewColumn {
+        index: Some(1),
+        fmt: None,
+        width: Some(90),
+        text: Some("Type".into()),
+    });
+    list.insert_column(nwg::InsertListViewColumn {
+        index: Some(2),
+        fmt: None,
+        width: Some(240),
+        text: Some("Path".into()),
+    });
+    list.set_headers_enabled(true);
+    let list = Rc::new(list);
+
+    // --- 右端: 操作ボタン ---
+    let buttons = [
+        ("Add folder", 10),
+        ("Add submenu", 44),
+        ("Add separator", 78),
+        ("Edit", 120),
+        ("Duplicate", 154),
+        ("Remove", 188),
+        ("Move up", 230),
+        ("Move down", 264),
+    ];
+    let mut made: Vec<Rc<nwg::Button>> = Vec::new();
+    for (label, y) in buttons {
+        let mut b = nwg::Button::default();
+        nwg::Button::builder()
+            .parent(window.as_ref())
+            .text(label)
+            .position((770, y))
+            .size((100, 28))
+            .build(&mut b)
+            .ok()?;
+        made.push(Rc::new(b));
+    }
+
+    // --- 下: 保存 / 閉じる ---
+    let mut save_btn = nwg::Button::default();
+    nwg::Button::builder()
+        .parent(window.as_ref())
+        .text("Save")
+        .position((580, 450))
+        .size((90, 30))
+        .build(&mut save_btn)
+        .ok()?;
+    let save_btn = Rc::new(save_btn);
+
+    let mut close_btn = nwg::Button::default();
+    nwg::Button::builder()
+        .parent(window.as_ref())
+        .text("Close")
+        .position((680, 450))
+        .size((90, 30))
+        .build(&mut close_btn)
+        .ok()?;
+    let close_btn = Rc::new(close_btn);
+
+    let mut vars_btn = nwg::Button::default();
+    nwg::Button::builder()
+        .parent(window.as_ref())
+        .text("Variables…")
+        .position((10, 450))
+        .size((110, 30))
+        .build(&mut vars_btn)
+        .ok()?;
+    let vars_btn = Rc::new(vars_btn);
+
+    let mut trigger_btn = nwg::Button::default();
+    nwg::Button::builder()
+        .parent(window.as_ref())
+        .text("Trigger…")
+        .position((130, 450))
+        .size((110, 30))
+        .build(&mut trigger_btn)
+        .ok()?;
+    let trigger_btn = Rc::new(trigger_btn);
+
+    refresh_tree(&tree, &state.borrow().config);
+    refresh_list(&list, &state.borrow().config, &[]);
+
+    // --- イベント ---
+    let handler = {
+        let window = window.clone();
+        let tree = tree.clone();
+        let list = list.clone();
+        let state = state.clone();
+        let add_folder = made[0].clone();
+        let add_submenu = made[1].clone();
+        let add_sep = made[2].clone();
+        let edit = made[3].clone();
+        let dup = made[4].clone();
+        let remove = made[5].clone();
+        let up = made[6].clone();
+        let down = made[7].clone();
+        let save_btn = save_btn.clone();
+        let close_btn = close_btn.clone();
+        let vars_btn = vars_btn.clone();
+        let trigger_btn = trigger_btn.clone();
+
+        nwg::full_bind_event_handler(&window.handle, move |evt, _data, handle| {
+            use nwg::Event as E;
+            match evt {
+                E::OnWindowClose => {
+                    // 未保存なら確認する (FR-6.6)
+                    if state.borrow().dirty && !confirm_discard() {
+                        // 閉じるのを取りやめる手段がないので、
+                        // ここでは保存してから閉じる
+                        do_save(&state);
+                    }
+                    nwg::stop_thread_dispatch();
+                }
+                E::OnButtonClick => {
+                    if handle == add_folder.handle {
+                        add_folder_item(&state, &list, &tree);
+                    } else if handle == add_submenu.handle {
+                        add_submenu_item(&state, &list, &tree);
+                    } else if handle == add_sep.handle {
+                        add_separator_item(&state, &list);
+                    } else if handle == edit.handle {
+                        edit_selected(&state, &list);
+                    } else if handle == dup.handle {
+                        duplicate_selected(&state, &list);
+                    } else if handle == remove.handle {
+                        remove_selected(&state, &list, &tree);
+                    } else if handle == up.handle {
+                        move_selected(&state, &list, -1);
+                    } else if handle == down.handle {
+                        move_selected(&state, &list, 1);
+                    } else if handle == save_btn.handle {
+                        do_save(&state);
+                    } else if handle == close_btn.handle {
+                        if state.borrow().dirty && !confirm_discard() {
+                            do_save(&state);
+                        }
+                        nwg::stop_thread_dispatch();
+                    } else if handle == vars_btn.handle {
+                        edit_variables(&state);
+                    } else if handle == trigger_btn.handle {
+                        edit_trigger(&state);
+                    }
+                }
+                E::OnTreeItemSelectionChanged if handle == tree.handle => {
+                    let path = {
+                        let st = state.borrow();
+                        selected_tree_path(&tree, &st.config)
+                    };
+                    state.borrow_mut().current = path.clone();
+                    let cfg = state.borrow().config.clone();
+                    refresh_list(&list, &cfg, &path);
+                }
+                E::OnListViewDoubleClick if handle == list.handle => {
+                    edit_selected(&state, &list);
+                }
+                _ => {}
+            }
+        })
+    };
+
+    Some(EditorUi {
+        _window: window,
+        _handler: handler,
+    })
+}
+
+// ---------- ツリー / リストの再描画 ----------
+
+fn refresh_tree(tree: &nwg::TreeView, cfg: &Config) {
+    tree.clear();
+    let root = tree.insert_item("(root)", None, nwg::TreeInsert::Last);
+    add_submenus(tree, &root, &cfg.items);
+    tree.set_expand_state(&root, nwg::ExpandState::Expand);
+    tree.select_item(&root);
+}
+
+fn add_submenus(tree: &nwg::TreeView, parent: &nwg::TreeItem, items: &[Item]) {
+    for item in items {
+        if let Item::Submenu { name, items: sub } = item {
+            let node = tree.insert_item(name, Some(parent), nwg::TreeInsert::Last);
+            add_submenus(tree, &node, sub);
+        }
+    }
+}
+
+/// 選択中のツリーノードに対応する添字の並びを求める。
+///
+/// ツリーには submenu しか出していない。ルートから辿ったラベルの並びを、
+/// 各階層で「その名前の submenu が何番目か」に読み替えて添字にする。
+fn selected_tree_path(tree: &nwg::TreeView, cfg: &Config) -> ItemPath {
+    let Some(selected) = tree.selected_item() else {
+        return Vec::new();
+    };
+
+    // ルート直前までラベルを集める (ルート自身は "(root)" なので含めない)
+    let mut labels: Vec<String> = Vec::new();
+    let mut node = Some(selected);
+    while let Some(n) = node {
+        let parent = tree.parent(&n);
+        if parent.is_none() {
+            break; // ルートに到達したので打ち切る
+        }
+        if let Some(text) = tree.item_text(&n) {
+            labels.push(text);
+        }
+        node = parent;
+    }
+    labels.reverse();
+
+    // ラベル列を添字列に直す
+    let mut path = Vec::new();
+    let mut items: &Vec<Item> = &cfg.items;
+    for label in labels {
+        let Some(idx) = items
+            .iter()
+            .position(|it| matches!(it, Item::Submenu { name, .. } if *name == label))
+        else {
+            break;
+        };
+        path.push(idx);
+        match &items[idx] {
+            Item::Submenu { items: sub, .. } => items = sub,
+            _ => break,
+        }
+    }
+    path
+}
+
+fn refresh_list(list: &nwg::ListView, cfg: &Config, path: &[usize]) {
+    list.clear();
+    let Some(items) = items_at(cfg, path) else {
+        return;
+    };
+    for (i, item) in items.iter().enumerate() {
+        let (name, kind, detail) = describe(item);
+        list.insert_item(nwg::InsertListViewItem {
+            index: Some(i as i32),
+            column_index: 0,
+            text: Some(name),
+        });
+        list.insert_item(nwg::InsertListViewItem {
+            index: Some(i as i32),
+            column_index: 1,
+            text: Some(kind),
+        });
+        list.insert_item(nwg::InsertListViewItem {
+            index: Some(i as i32),
+            column_index: 2,
+            text: Some(detail),
+        });
+    }
+}
+
+fn describe(item: &Item) -> (String, String, String) {
+    match item {
+        Item::Folder { name, path, .. } => (name.clone(), "folder".into(), path.clone()),
+        Item::SpecialFolder {
+            name, known_folder, ..
+        } => (name.clone(), "special".into(), known_folder.clone()),
+        Item::Submenu { name, items } => (
+            name.clone(),
+            "submenu".into(),
+            format!("{} item(s)", items.len()),
+        ),
+        Item::Separator { name } => (
+            name.clone().unwrap_or_default(),
+            "separator".into(),
+            String::new(),
+        ),
+    }
+}
+
+// ---------- 編集操作 ----------
+
+fn selected_index(list: &nwg::ListView) -> Option<usize> {
+    list.selected_item()
+}
+
+fn add_folder_item(state: &Rc<RefCell<EditorState>>, list: &nwg::ListView, _tree: &nwg::TreeView) {
+    // フォルダ選択ダイアログ (FR-6.4)
+    let Some(dir) = pick_folder() else { return };
+    let name = std::path::Path::new(&dir)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| dir.clone());
+
+    let mut st = state.borrow_mut();
+    let current = st.current.clone();
+    if let Some(items) = items_at_mut(&mut st.config, &current) {
+        items.push(Item::Folder {
+            name,
+            path: dir,
+            open: None,
+            icon: None,
+        });
+        st.dirty = true;
+    }
+    let cfg = st.config.clone();
+    drop(st);
+    refresh_list(list, &cfg, &current);
+}
+
+fn add_submenu_item(state: &Rc<RefCell<EditorState>>, list: &nwg::ListView, tree: &nwg::TreeView) {
+    let Some(name) = prompt_text("New submenu", "Name:", "") else {
+        return;
+    };
+    let mut st = state.borrow_mut();
+    let current = st.current.clone();
+    if let Some(items) = items_at_mut(&mut st.config, &current) {
+        items.push(Item::Submenu {
+            name,
+            items: Vec::new(),
+        });
+        st.dirty = true;
+    }
+    let cfg = st.config.clone();
+    drop(st);
+    refresh_list(list, &cfg, &current);
+    refresh_tree(tree, &cfg);
+}
+
+fn add_separator_item(state: &Rc<RefCell<EditorState>>, list: &nwg::ListView) {
+    let name = prompt_text("New separator", "Heading (empty = plain line):", "");
+    let mut st = state.borrow_mut();
+    let current = st.current.clone();
+    if let Some(items) = items_at_mut(&mut st.config, &current) {
+        items.push(Item::Separator {
+            name: name.filter(|s| !s.is_empty()),
+        });
+        st.dirty = true;
+    }
+    let cfg = st.config.clone();
+    drop(st);
+    refresh_list(list, &cfg, &current);
+}
+
+fn edit_selected(state: &Rc<RefCell<EditorState>>, list: &nwg::ListView) {
+    let Some(idx) = selected_index(list) else {
+        return;
+    };
+    let mut st = state.borrow_mut();
+    let current = st.current.clone();
+    let Some(items) = items_at_mut(&mut st.config, &current) else {
+        return;
+    };
+    let Some(item) = items.get_mut(idx) else {
+        return;
+    };
+
+    let changed = match item {
+        Item::Folder { name, path, .. } => match prompt_text("Edit folder", "Name:", name) {
+            Some(new_name) => {
+                *name = new_name;
+                if let Some(new_path) = prompt_text("Edit folder", "Path:", path) {
+                    *path = new_path;
+                }
+                true
+            }
+            None => false,
+        },
+        Item::SpecialFolder {
+            name, known_folder, ..
+        } => match prompt_text("Edit special folder", "Name:", name) {
+            Some(new_name) => {
+                *name = new_name;
+                if let Some(kf) = prompt_text(
+                    "Edit special folder",
+                    "Known folder (Desktop / Downloads / …):",
+                    known_folder,
+                ) {
+                    *known_folder = kf;
+                }
+                true
+            }
+            None => false,
+        },
+        Item::Submenu { name, .. } => match prompt_text("Edit submenu", "Name:", name) {
+            Some(n) => {
+                *name = n;
+                true
+            }
+            None => false,
+        },
+        Item::Separator { name } => {
+            let cur = name.clone().unwrap_or_default();
+            match prompt_text("Edit separator", "Heading:", &cur) {
+                Some(n) => {
+                    *name = (!n.is_empty()).then_some(n);
+                    true
+                }
+                None => false,
+            }
+        }
+    };
+
+    if changed {
+        st.dirty = true;
+    }
+    let cfg = st.config.clone();
+    drop(st);
+    refresh_list(list, &cfg, &current);
+}
+
+fn duplicate_selected(state: &Rc<RefCell<EditorState>>, list: &nwg::ListView) {
+    let Some(idx) = selected_index(list) else {
+        return;
+    };
+    let mut st = state.borrow_mut();
+    let current = st.current.clone();
+    if let Some(items) = items_at_mut(&mut st.config, &current)
+        && let Some(item) = items.get(idx).cloned()
+    {
+        items.insert(idx + 1, item);
+        st.dirty = true;
+    }
+    let cfg = st.config.clone();
+    drop(st);
+    refresh_list(list, &cfg, &current);
+}
+
+fn remove_selected(state: &Rc<RefCell<EditorState>>, list: &nwg::ListView, tree: &nwg::TreeView) {
+    let Some(idx) = selected_index(list) else {
+        return;
+    };
+    let mut st = state.borrow_mut();
+    let current = st.current.clone();
+    if let Some(items) = items_at_mut(&mut st.config, &current)
+        && idx < items.len()
+    {
+        items.remove(idx);
+        st.dirty = true;
+    }
+    let cfg = st.config.clone();
+    drop(st);
+    refresh_list(list, &cfg, &current);
+    refresh_tree(tree, &cfg);
+}
+
+/// 上下に 1 つ動かす (FR-6.3) 。
+fn move_selected(state: &Rc<RefCell<EditorState>>, list: &nwg::ListView, delta: i32) {
+    let Some(idx) = selected_index(list) else {
+        return;
+    };
+    let mut st = state.borrow_mut();
+    let current = st.current.clone();
+    let mut moved_to = idx;
+    if let Some(items) = items_at_mut(&mut st.config, &current) {
+        let target = idx as i32 + delta;
+        if target >= 0 && (target as usize) < items.len() {
+            items.swap(idx, target as usize);
+            moved_to = target as usize;
+            st.dirty = true;
+        }
+    }
+    let cfg = st.config.clone();
+    drop(st);
+    refresh_list(list, &cfg, &current);
+    list.select_item(moved_to, true);
+}
+
+fn do_save(state: &Rc<RefCell<EditorState>>) {
+    let mut st = state.borrow_mut();
+    match crate::config::save(&st.config) {
+        Ok(()) => {
+            st.dirty = false;
+            st.saved = true;
+        }
+        Err(e) => {
+            message_box("Save failed", &e.to_string());
+        }
+    }
+}
+
+fn edit_variables(state: &Rc<RefCell<EditorState>>) {
+    // 変数は数が少ないので 1 行 1 定義のテキストで編集する (FR-6.7)
+    let current = {
+        let st = state.borrow();
+        st.config
+            .variables
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("\r\n")
+    };
+    let Some(text) = prompt_text("Variables", "One per line:  Name=Value", &current) else {
+        return;
+    };
+
+    let mut st = state.borrow_mut();
+    st.config.variables.clear();
+    for line in text.lines() {
+        if let Some((k, v)) = line.split_once('=') {
+            let (k, v) = (k.trim(), v.trim());
+            if !k.is_empty() {
+                st.config.variables.insert(k.to_string(), v.to_string());
+            }
+        }
+    }
+    st.dirty = true;
+}
+
+fn edit_trigger(state: &Rc<RefCell<EditorState>>) {
+    // FR-6.8
+    let (hotkey, excluded) = {
+        let st = state.borrow();
+        (
+            st.config.settings.trigger.hotkey.clone(),
+            st.config.settings.trigger.excluded_processes.join(", "),
+        )
+    };
+
+    if let Some(hk) = prompt_text("Trigger", "Hotkey (e.g. Ctrl+Alt+W):", &hotkey) {
+        let mut st = state.borrow_mut();
+        st.config.settings.trigger.hotkey = hk;
+        st.dirty = true;
+    }
+    if let Some(ex) = prompt_text(
+        "Trigger",
+        "Excluded processes (comma separated):",
+        &excluded,
+    ) {
+        let mut st = state.borrow_mut();
+        st.config.settings.trigger.excluded_processes = ex
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        st.dirty = true;
+    }
+}
+
+// ---------- 小さなダイアログ ----------
+
+fn pick_folder() -> Option<String> {
+    let mut dialog = nwg::FileDialog::default();
+    nwg::FileDialog::builder()
+        .action(nwg::FileDialogAction::OpenDirectory)
+        .title("Select folder")
+        .build(&mut dialog)
+        .ok()?;
+    if dialog.run(None::<&nwg::Window>) {
+        dialog
+            .get_selected_item()
+            .ok()
+            .map(|p| p.to_string_lossy().to_string())
+    } else {
+        None
+    }
+}
+
+fn message_box(title: &str, content: &str) {
+    nwg::modal_info_message(nwg::ControlHandle::NoHandle, title, content);
+}
+
+/// 1 行テキストを聞くだけの小さなモーダル。
+/// nwg に入力ダイアログが無いので自前で組む。
+/// OK なら Some、Cancel と閉じるなら None。
+fn prompt_text(title: &str, label: &str, initial: &str) -> Option<String> {
+    // 複数行を扱う場合 (変数編集) は高さを増やす
+    let multiline = label.contains("per line");
+    let height = if multiline { 300 } else { 150 };
+
+    let mut win = nwg::Window::default();
+    nwg::Window::builder()
+        .size((420, height))
+        .title(title)
+        .flags(nwg::WindowFlags::WINDOW | nwg::WindowFlags::VISIBLE)
+        .build(&mut win)
+        .ok()?;
+    let win = Rc::new(win);
+
+    let mut lbl = nwg::Label::default();
+    nwg::Label::builder()
+        .parent(win.as_ref())
+        .text(label)
+        .position((10, 10))
+        .size((400, 20))
+        .build(&mut lbl)
+        .ok()?;
+
+    let text_h = if multiline { height - 100 } else { 24 };
+    let mut input = nwg::TextBox::default();
+    nwg::TextBox::builder()
+        .parent(win.as_ref())
+        .text(initial)
+        .position((10, 36))
+        .size((392, text_h))
+        .build(&mut input)
+        .ok()?;
+    let input = Rc::new(input);
+
+    let btn_y = height - 60;
+    let mut ok = nwg::Button::default();
+    nwg::Button::builder()
+        .parent(win.as_ref())
+        .text("OK")
+        .position((222, btn_y))
+        .size((85, 28))
+        .build(&mut ok)
+        .ok()?;
+    let ok = Rc::new(ok);
+
+    let mut cancel = nwg::Button::default();
+    nwg::Button::builder()
+        .parent(win.as_ref())
+        .text("Cancel")
+        .position((315, btn_y))
+        .size((85, 28))
+        .build(&mut cancel)
+        .ok()?;
+    let cancel = Rc::new(cancel);
+
+    let result: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+
+    let handler = {
+        let result = result.clone();
+        let input = input.clone();
+        let ok = ok.clone();
+        let cancel = cancel.clone();
+        nwg::full_bind_event_handler(&win.handle, move |evt, _data, handle| match evt {
+            nwg::Event::OnButtonClick => {
+                if handle == ok.handle {
+                    *result.borrow_mut() = Some(input.text());
+                    nwg::stop_thread_dispatch();
+                } else if handle == cancel.handle {
+                    nwg::stop_thread_dispatch();
+                }
+            }
+            nwg::Event::OnWindowClose => nwg::stop_thread_dispatch(),
+            _ => {}
+        })
+    };
+
+    nwg::dispatch_thread_events();
+    nwg::unbind_event_handler(&handler);
+
+    result.borrow().clone()
+}
+
+fn confirm_discard() -> bool {
+    // Yes = 破棄して閉じる / No = 保存してから閉じる
+    matches!(
+        nwg::modal_message(
+            nwg::ControlHandle::NoHandle,
+            &nwg::MessageParams {
+                title: "waypoint",
+                content: "Discard unsaved changes?",
+                buttons: nwg::MessageButtons::YesNo,
+                icons: nwg::MessageIcons::Warning,
+            },
+        ),
+        nwg::MessageChoice::Yes
+    )
+}
