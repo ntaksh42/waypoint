@@ -7,17 +7,19 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use windows::Win32::Foundation::SIZE;
+use windows::Win32::Foundation::{HWND, SIZE};
 use windows::Win32::Graphics::Gdi::{BI_RGB, BITMAPINFO, BITMAPINFOHEADER};
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS, DeleteDC, HBITMAP, HGDIOBJ, SelectObject,
 };
 use windows::Win32::UI::Controls::{IImageList, ILD_TRANSPARENT};
 use windows::Win32::UI::Shell::{
-    SHFILEINFOW, SHGFI_ICON, SHGFI_SMALLICON, SHGFI_SYSICONINDEX, SHGetFileInfoW, SHGetImageList,
-    SHIL_SMALL,
+    SHFILEINFOW, SHGFI_ICON, SHGFI_SMALLICON, SHGFI_SYSICONINDEX, SHGSI_ICON, SHGSI_SMALLICON,
+    SHGetFileInfoW, SHGetImageList, SHGetStockIconInfo, SHIL_SMALL, SHSTOCKICONID, SHSTOCKICONINFO,
 };
-use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, HICON};
+use windows::Win32::UI::WindowsAndMessaging::{
+    DestroyIcon, GCLP_HICON, GCLP_HICONSM, GetClassLongPtrW, HICON,
+};
 use windows::core::HSTRING;
 
 thread_local! {
@@ -40,6 +42,66 @@ pub fn bitmap_for(path: &str) -> Option<HBITMAP> {
             .insert(path.to_string(), bmp.map_or(0, |b| b.0 as isize))
     });
     bmp
+}
+
+/// Windows 標準の操作アイコンをメニュー用ビットマップとして得る。
+pub fn bitmap_for_stock(id: SHSTOCKICONID) -> Option<HBITMAP> {
+    let key = format!("stock-icon:{}", id.0);
+    cached_bitmap(&key, || unsafe {
+        let mut info = SHSTOCKICONINFO {
+            cbSize: size_of::<SHSTOCKICONINFO>() as u32,
+            ..Default::default()
+        };
+        SHGetStockIconInfo(id, SHGSI_ICON | SHGSI_SMALLICON, &mut info).ok()?;
+        let bitmap = icon_to_bitmap(info.hIcon);
+        let _ = DestroyIcon(info.hIcon);
+        bitmap
+    })
+}
+
+/// Current Windows の各項目に、そのウィンドウクラスのアイコンを付ける。
+pub fn bitmap_for_window(hwnd: HWND) -> Option<HBITMAP> {
+    let key = format!("window-icon:{}", hwnd.0 as isize);
+    cached_bitmap(&key, || unsafe {
+        let raw = GetClassLongPtrW(hwnd, GCLP_HICONSM);
+        let raw = if raw == 0 {
+            GetClassLongPtrW(hwnd, GCLP_HICON)
+        } else {
+            raw
+        };
+        (raw != 0)
+            .then_some(HICON(raw as *mut _))
+            .and_then(icon_to_bitmap)
+    })
+}
+
+/// 埋め込み PNG を現在の DPI のメニューサイズへ縮小して使う。
+pub fn bitmap_for_asset(key: &str, png: &[u8]) -> Option<HBITMAP> {
+    cached_bitmap(&format!("asset-icon:{key}"), || {
+        let size = menu_icon_size();
+        let image = image::load_from_memory(png).ok()?.into_rgba8();
+        let image = image::imageops::resize(
+            &image,
+            size.cx as u32,
+            size.cy as u32,
+            image::imageops::FilterType::Lanczos3,
+        );
+        rgba_to_bitmap(image.as_raw(), size)
+    })
+}
+
+fn cached_bitmap(key: &str, load: impl FnOnce() -> Option<HBITMAP>) -> Option<HBITMAP> {
+    let cached = CACHE.with(|cache| cache.borrow().get(key).copied());
+    if let Some(raw) = cached {
+        return (raw != 0).then_some(HBITMAP(raw as *mut _));
+    }
+    let bitmap = load();
+    CACHE.with(|cache| {
+        cache
+            .borrow_mut()
+            .insert(key.to_string(), bitmap.map_or(0, |value| value.0 as isize))
+    });
+    bitmap
 }
 
 /// キャッシュを捨てる。テーマ変更や設定再読み込みで呼ぶ。
@@ -138,6 +200,34 @@ fn icon_to_bitmap(icon: HICON) -> Option<HBITMAP> {
         let _ = DeleteDC(hdc);
 
         drawn.is_ok().then_some(bitmap)
+    }
+}
+
+fn rgba_to_bitmap(rgba: &[u8], size: SIZE) -> Option<HBITMAP> {
+    unsafe {
+        let header = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: size.cx,
+                biHeight: -size.cy,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut bits = std::ptr::null_mut();
+        let bitmap = CreateDIBSection(None, &header, DIB_RGB_COLORS, &mut bits, None, 0).ok()?;
+        let pixels = std::slice::from_raw_parts_mut(bits.cast::<u8>(), rgba.len());
+        for (source, target) in rgba.chunks_exact(4).zip(pixels.chunks_exact_mut(4)) {
+            let alpha = u16::from(source[3]);
+            target[0] = (u16::from(source[2]) * alpha / 255) as u8;
+            target[1] = (u16::from(source[1]) * alpha / 255) as u8;
+            target[2] = (u16::from(source[0]) * alpha / 255) as u8;
+            target[3] = source[3];
+        }
+        Some(bitmap)
     }
 }
 
