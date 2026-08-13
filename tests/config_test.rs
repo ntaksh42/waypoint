@@ -118,7 +118,7 @@ fn missing_optional_fields_use_defaults() {
     assert!(cfg.settings.quick_launch.include_recent_folders);
     assert!(cfg.settings.quick_launch.include_frequent_folders);
     assert!(!cfg.settings.quick_launch.search_paths);
-    assert_eq!(cfg.settings.quick_launch.visible_results, 10);
+    assert_eq!(cfg.settings.quick_launch.visible_results, 12);
 }
 
 #[test]

@@ -6,6 +6,9 @@ use eframe::egui;
 use waypoint::config::{Config, Item, LoadOutcome, OpenMode};
 
 fn main() -> eframe::Result<()> {
+    // 設定画面も GUI サブシステム。panic を握り潰さずログへ残す
+    waypoint::panic_log::install();
+
     let add_special_folder = std::env::args().any(|arg| arg == "--add-special-folder");
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -181,6 +184,7 @@ impl SettingsApp {
                     path: path.display().to_string(),
                     open: None,
                     icon: None,
+                    show_branch: false,
                 });
                 self.selected_item = Some(items.len() - 1);
                 self.dirty = true;
@@ -583,6 +587,10 @@ impl SettingsApp {
                         }
                     });
                     show_open_mode(ui, &mut draft.open);
+                    ui.checkbox(&mut draft.show_branch, "Show Git branch name")
+                        .on_hover_text(
+                            "Appends [branch] to the menu label when the path is inside a Git work tree.",
+                        );
                 }
                 DraftKind::SpecialFolder => {
                     ui.label("Name");
@@ -731,7 +739,7 @@ impl SettingsApp {
                 ui.checkbox(&mut draft.search_paths, "Search folder paths");
                 ui.horizontal(|ui| {
                     ui.label("Visible results");
-                    ui.add(egui::DragValue::new(&mut draft.visible_results).range(5..=20));
+                    ui.add(egui::DragValue::new(&mut draft.visible_results).range(12..=24));
                 });
                 ui.separator();
                 ui.label("Excluded processes (one per line)");
@@ -779,7 +787,7 @@ impl SettingsApp {
                     draft.include_frequent_folders;
                 self.config.settings.quick_launch.search_paths = draft.search_paths;
                 self.config.settings.quick_launch.visible_results =
-                    draft.visible_results.clamp(5, 20);
+                    draft.visible_results.clamp(12, 24);
                 self.trigger_draft = None;
                 self.dirty = true;
                 self.status = None;
@@ -1016,6 +1024,7 @@ struct ItemDraft {
     known_folder: String,
     open: OpenMode,
     icon: Option<String>,
+    show_branch: bool,
     submenu_items: Vec<Item>,
     error: Option<String>,
 }
@@ -1072,6 +1081,7 @@ impl ItemDraft {
             known_folder: waypoint::known_folder::NAMES[0].to_string(),
             open: OpenMode::default(),
             icon: None,
+            show_branch: false,
             submenu_items: Vec::new(),
             error: None,
         }
@@ -1084,12 +1094,14 @@ impl ItemDraft {
                 path,
                 open,
                 icon,
+                show_branch,
             } => Self {
                 kind: DraftKind::Folder,
                 name: name.clone(),
                 path: path.clone(),
                 open: open.unwrap_or_default(),
                 icon: icon.clone(),
+                show_branch: *show_branch,
                 ..Self::new(DraftKind::Folder)
             },
             Item::SpecialFolder {
@@ -1142,6 +1154,7 @@ impl ItemDraft {
                 path: self.path,
                 open,
                 icon: self.icon,
+                show_branch: self.show_branch,
             },
             DraftKind::SpecialFolder => Item::SpecialFolder {
                 name: self.name,

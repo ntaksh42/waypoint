@@ -36,6 +36,7 @@ windows = { version = "0.62", features = [
   "Win32_System_ProcessStatus",      # 同上
   "Win32_System_Registry",           # 自動起動 (FR-8.4)
   "Win32_Graphics_Gdi",              # アイコン描画
+  "Win32_Graphics_Dwm",              # Quick Launch のダークタイトルバー・角丸
   "Win32_UI_Controls",               # IImageList (アイコン取得)
   "Win32_Storage_FileSystem",        # SHGetFileInfoW の引数型
 ] }

@@ -198,11 +198,21 @@ unsafe fn build_level(items: &[Item], ctx: &mut BuildCtx) -> Result<HMENU> {
                     }
                 }
                 Item::Folder {
-                    name, path, open, ..
+                    name,
+                    path,
+                    open,
+                    show_branch,
+                    ..
                 } => {
                     accel += 1;
                     let resolved = crate::config::expand(path, ctx.vars);
-                    append_leaf(menu, ctx, name, resolved, open.unwrap_or_default(), accel)?;
+                    // ブランチ名の付与は構築時に済ませる。表示経路では読まない (FR-2.15)
+                    let branch = resolved
+                        .as_deref()
+                        .filter(|_| *show_branch)
+                        .and_then(crate::git::branch_of);
+                    let label = with_branch(name, branch.as_deref());
+                    append_leaf(menu, ctx, &label, resolved, open.unwrap_or_default(), accel)?;
                 }
                 Item::SpecialFolder {
                     name,
@@ -533,6 +543,15 @@ unsafe fn set_last_item_bitmap(menu: HMENU, bmp: HBITMAP) {
     }
 }
 
+/// ブランチ名があれば項目名の後ろに `[名前]` を付す (FR-2.14) 。
+/// リポジトリでない項目は名前のみ。
+fn with_branch(name: &str, branch: Option<&str>) -> String {
+    match branch {
+        Some(branch) => format!("{name}  [{branch}]"),
+        None => name.to_string(),
+    }
+}
+
 /// 上位 9 件に `&1 ` のようなアクセラレータを前置する (FR-2.4) 。
 fn decorate(name: &str, numeric: bool, accel: usize) -> String {
     if numeric && (1..=9).contains(&accel) {
@@ -540,5 +559,33 @@ fn decorate(name: &str, numeric: bool, accel: usize) -> String {
     } else {
         // 項目名の & はリテラルの & として出すためエスケープする
         name.replace('&', "&&")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decorate, with_branch};
+
+    #[test]
+    fn appends_branch_when_present() {
+        assert_eq!(with_branch("waypoint", Some("main")), "waypoint  [main]");
+    }
+
+    #[test]
+    fn leaves_name_alone_outside_repository() {
+        assert_eq!(with_branch("Downloads", None), "Downloads");
+    }
+
+    #[test]
+    fn branch_survives_accelerator_decoration() {
+        let label = with_branch("waypoint", Some("feature/x"));
+        assert_eq!(decorate(&label, true, 1), "&1  waypoint  [feature/x]");
+    }
+
+    /// 項目名の & はエスケープされる。アクセラレータ無効時も同じ規則。
+    #[test]
+    fn ampersand_in_name_is_escaped_without_accelerator() {
+        let label = with_branch("R&D", Some("main"));
+        assert_eq!(decorate(&label, false, 1), "R&&D  [main]");
     }
 }

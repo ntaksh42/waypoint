@@ -3,7 +3,7 @@
 // コンソールウィンドウを出さない
 #![windows_subsystem = "windows"]
 
-use waypoint::{autostart, shell, single, theme, tray, trigger};
+use waypoint::{autostart, panic_log, shell, single, theme, tray, trigger};
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::HiDpi::{
@@ -14,6 +14,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 fn main() {
+    // GUI サブシステムでは panic の出力先が無い。最初に登録して
+    // 以降の panic をログに残す
+    panic_log::install();
+
     // インストーラーが初回インストール時のみ渡す一度きりのフラグ。
     // 常駐は開始せず、自動起動 (FR-8.4) を有効にして即終了する。
     // トレイの手動トグルと同じ関数を呼ぶことで管理主体をアプリ側に一本化し、
