@@ -290,6 +290,11 @@ fn show_launcher(hwnd: HWND, at: POINT, origin: Option<HWND>) {
             shell::activate_window(HWND(hwnd as *mut _));
             refresh_dynamic();
         }
+        Some(Selection::Action(Action::OpenShell { target })) => {
+            let _ = shell::open_shell_item(&target);
+            refresh_dynamic();
+        }
+        Some(Selection::AddSpecialFolder) => open_settings(Some("--add-special-folder")),
         Some(Selection::Settings) => open_config_in_editor(),
         Some(Selection::Reload) => reload(hwnd),
         Some(Selection::Close) | None => refresh_dynamic(),
@@ -327,9 +332,17 @@ fn show_tray_menu(hwnd: HWND) {
 }
 
 fn open_config_in_editor() {
+    open_settings(None);
+}
+
+fn open_settings(argument: Option<&str>) {
     if let Ok(exe) = std::env::current_exe() {
         let editor = exe.with_file_name("waypoint-settings.exe");
-        let _ = std::process::Command::new(editor).spawn();
+        let mut command = std::process::Command::new(editor);
+        if let Some(argument) = argument {
+            command.arg(argument);
+        }
+        let _ = command.spawn();
     }
 }
 
