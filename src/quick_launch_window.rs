@@ -8,11 +8,11 @@ use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute,
 };
 use windows::Win32::Graphics::Gdi::{
-    AC_SRC_ALPHA, AC_SRC_OVER, AlphaBlend, BITMAP, BLENDFUNCTION, BeginPaint, CLEARTYPE_QUALITY,
+    AC_SRC_ALPHA, AC_SRC_OVER, AlphaBlend, BLENDFUNCTION, BeginPaint, CLEARTYPE_QUALITY,
     CLIP_DEFAULT_PRECIS, CreateCompatibleDC, CreateFontW, CreatePen, CreateSolidBrush,
     DEFAULT_CHARSET, DEFAULT_PITCH, DT_END_ELLIPSIS, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER,
     DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint, FW_NORMAL, FW_SEMIBOLD, FillRect,
-    GetMonitorInfoW, GetObjectW, HBITMAP, HBRUSH, HDC, HFONT, InvalidateRect, LineTo,
+    GetMonitorInfoW, HBITMAP, HBRUSH, HDC, HFONT, InvalidateRect, LineTo,
     MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow, MoveToEx, OUT_DEFAULT_PRECIS,
     PAINTSTRUCT, PS_SOLID, RoundRect, SelectObject, SetBkColor, SetBkMode, SetTextColor,
     TRANSPARENT,
@@ -818,35 +818,33 @@ unsafe fn draw_text(hdc: HDC, text: &str, rect: &mut RECT) {
 }
 
 unsafe fn draw_path_icon(hdc: HDC, path: &str, rect: RECT, dpi: u32) {
-    let Some(bitmap) = crate::icon::bitmap_for(path) else {
+    let size = scale(18, dpi);
+    let Some(bitmap) = crate::icon::bitmap_for_sized(path, size) else {
         return;
     };
-    unsafe { draw_icon_bitmap(hdc, bitmap, rect, dpi) };
+    unsafe { draw_icon_bitmap(hdc, bitmap, rect, dpi, size) };
 }
 
 unsafe fn draw_window_icon(hdc: HDC, hwnd: HWND, rect: RECT, dpi: u32) {
-    let Some(bitmap) = crate::icon::bitmap_for_window(hwnd) else {
+    let size = scale(18, dpi);
+    let Some(bitmap) = crate::icon::bitmap_for_window_sized(hwnd, size) else {
         return;
     };
-    unsafe { draw_icon_bitmap(hdc, bitmap, rect, dpi) };
+    unsafe { draw_icon_bitmap(hdc, bitmap, rect, dpi, size) };
 }
 
-unsafe fn draw_icon_bitmap(hdc: HDC, bitmap: HBITMAP, rect: RECT, dpi: u32) {
+/// `bitmap` は既に `size` 四方で生成済みの前提で等倍コピーする。
+///
+/// 寸法違いのビットマップを AlphaBlend で拡大縮小すると輪郭がにじむため、
+/// 呼び出し側 (`icon::bitmap_for_sized` / `bitmap_for_window_sized`) で
+/// 要求寸法どおりのビットマップを取得させ、ここでは伸縮させない。
+unsafe fn draw_icon_bitmap(hdc: HDC, bitmap: HBITMAP, rect: RECT, dpi: u32, size: i32) {
     unsafe {
         let source = CreateCompatibleDC(Some(hdc));
         if source.is_invalid() {
             return;
         }
         let old = SelectObject(source, bitmap.into());
-        let size = scale(18, dpi);
-        let mut bitmap_info = BITMAP::default();
-        let read = GetObjectW(
-            bitmap.into(),
-            size_of::<BITMAP>() as i32,
-            Some(std::ptr::from_mut(&mut bitmap_info).cast()),
-        );
-        let source_width = if read > 0 { bitmap_info.bmWidth } else { 16 };
-        let source_height = if read > 0 { bitmap_info.bmHeight } else { 16 };
         let _ = AlphaBlend(
             hdc,
             rect.left + scale(11, dpi),
@@ -856,8 +854,8 @@ unsafe fn draw_icon_bitmap(hdc: HDC, bitmap: HBITMAP, rect: RECT, dpi: u32) {
             source,
             0,
             0,
-            source_width,
-            source_height,
+            size,
+            size,
             BLENDFUNCTION {
                 BlendOp: AC_SRC_OVER as u8,
                 BlendFlags: 0,
