@@ -4,7 +4,7 @@
 //! `SetMenuItemInfo` に渡す。取得はパス単位でキャッシュする
 //! (同じフォルダを何度も引かない)。
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use windows::Win32::Foundation::{HWND, SIZE};
@@ -15,8 +15,9 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::UI::Controls::{IImageList, ILD_TRANSPARENT};
 use windows::Win32::UI::Shell::{
-    ExtractIconExW, SHFILEINFOW, SHGFI_ICON, SHGFI_PIDL, SHGFI_SMALLICON, SHGFI_SYSICONINDEX,
-    SHGSI_ICON, SHGSI_SMALLICON, SHGetFileInfoW, SHGetImageList, SHGetStockIconInfo, SHIL_SMALL,
+    ExtractIconExW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGFI_PIDL, SHGFI_SMALLICON,
+    SHGFI_SYSICONINDEX, SHGSI_ICON, SHGSI_LARGEICON, SHGSI_SMALLICON, SHGetFileInfoW,
+    SHGetImageList, SHGetStockIconInfo, SHIL_EXTRALARGE, SHIL_JUMBO, SHIL_LARGE, SHIL_SMALL,
     SHParseDisplayName, SHSTOCKICONID, SHSTOCKICONINFO,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -27,6 +28,41 @@ use windows::core::{HSTRING, PCWSTR};
 thread_local! {
     /// パス -> ビットマップ。メニュー再構築のたびに引き直さない。
     static CACHE: RefCell<HashMap<String, isize>> = RefCell::new(HashMap::new());
+    /// 設定 (`settings.menu.iconSize`) の論理サイズ。0 ならシステム既定。
+    static ICON_SIZE: Cell<u32> = const { Cell::new(0) };
+}
+
+/// メニューアイコンの論理サイズを設定から取り込む。
+///
+/// 寸法が変わると既存のビットマップは使えないので、
+/// 実際に変わったときだけキャッシュを捨てる。
+pub fn set_icon_size(size: u32) {
+    let changed = ICON_SIZE.with(|current| current.replace(size) != size);
+    if changed {
+        clear_cache();
+    }
+}
+
+/// メニューに描くアイコンの寸法。オーナードローの採寸に使う。
+pub fn icon_extent() -> SIZE {
+    menu_icon_size()
+}
+
+/// 描画寸法に見合うシステムイメージリストを選ぶ。
+///
+/// 16px のアイコンを 32px へ引き伸ばすと輪郭がにじむ。要求寸法以上で
+/// 最も近いリストから取れば、拡大ではなく縮小になり輪郭が保たれる。
+fn image_list_for(size: i32) -> i32 {
+    let list = if size <= 16 {
+        SHIL_SMALL
+    } else if size <= 32 {
+        SHIL_LARGE
+    } else if size <= 48 {
+        SHIL_EXTRALARGE
+    } else {
+        SHIL_JUMBO
+    };
+    list as i32
 }
 
 /// 設定 (歯車) アイコンの在り処。
@@ -66,7 +102,13 @@ pub fn bitmap_for_stock(id: SHSTOCKICONID) -> Option<HBITMAP> {
             cbSize: size_of::<SHSTOCKICONINFO>() as u32,
             ..Default::default()
         };
-        SHGetStockIconInfo(id, SHGSI_ICON | SHGSI_SMALLICON, &mut info).ok()?;
+        // 32px 描画で小アイコンを引き伸ばすとにじむので寸法に合わせて要求する
+        let size_flag = if menu_icon_size().cx <= 16 {
+            SHGSI_SMALLICON
+        } else {
+            SHGSI_LARGEICON
+        };
+        SHGetStockIconInfo(id, SHGSI_ICON | size_flag, &mut info).ok()?;
         let bitmap = icon_to_bitmap(info.hIcon);
         let _ = DestroyIcon(info.hIcon);
         bitmap
@@ -83,14 +125,24 @@ pub fn bitmap_for_dll_icon(dll: &str, index: i32) -> Option<HBITMAP> {
     let key = format!("dll-icon:{dll}:{index}");
     cached_bitmap(&key, || unsafe {
         let path = HSTRING::from(dll);
+        let mut large = HICON::default();
         let mut small = HICON::default();
-        // 小アイコンのみ要求する。メニューは 16px 相当で描く
-        let extracted = ExtractIconExW(&path, index, None, Some(&mut small), 1);
-        if extracted == 0 || small.is_invalid() {
+        // 大小の両方を取り、描画寸法に近いほうを使う。16px を引き伸ばすとにじむ
+        let extracted = ExtractIconExW(&path, index, Some(&mut large), Some(&mut small), 1);
+        if extracted == 0 {
             return None;
         }
-        let bitmap = icon_to_bitmap(small);
-        let _ = DestroyIcon(small);
+        let prefer_large = menu_icon_size().cx > 16 && !large.is_invalid();
+        let chosen = if prefer_large { large } else { small };
+        let bitmap = (!chosen.is_invalid())
+            .then(|| icon_to_bitmap(chosen))
+            .flatten();
+        if !large.is_invalid() {
+            let _ = DestroyIcon(large);
+        }
+        if !small.is_invalid() {
+            let _ = DestroyIcon(small);
+        }
         bitmap
     })
 }
@@ -99,9 +151,15 @@ pub fn bitmap_for_dll_icon(dll: &str, index: i32) -> Option<HBITMAP> {
 pub fn bitmap_for_window(hwnd: HWND) -> Option<HBITMAP> {
     let key = format!("window-icon:{}", hwnd.0 as isize);
     cached_bitmap(&key, || unsafe {
-        let raw = GetClassLongPtrW(hwnd, GCLP_HICONSM);
+        // 32px 描画では大アイコンを先に探す。小アイコンの引き伸ばしを避ける
+        let (first, second) = if menu_icon_size().cx > 16 {
+            (GCLP_HICON, GCLP_HICONSM)
+        } else {
+            (GCLP_HICONSM, GCLP_HICON)
+        };
+        let raw = GetClassLongPtrW(hwnd, first);
         let raw = if raw == 0 {
-            GetClassLongPtrW(hwnd, GCLP_HICON)
+            GetClassLongPtrW(hwnd, second)
         } else {
             raw
         };
@@ -177,8 +235,9 @@ fn load_bitmap(path: &str) -> Option<HBITMAP> {
     bmp
 }
 
-/// シェルが返す小アイコンを取得する。
+/// シェルが返すアイコンを、描画寸法に見合う解像度で取得する。
 fn system_icon(path: &str) -> Option<HICON> {
+    let wanted = menu_icon_size().cx;
     unsafe {
         let wide = HSTRING::from(path);
         let mut info = SHFILEINFOW::default();
@@ -193,8 +252,9 @@ fn system_icon(path: &str) -> Option<HICON> {
             size_of::<SHFILEINFOW>() as u32,
             flags,
         );
+        // 添字はリスト間で共通なので、欲しい寸法のリストから引き直す
         if ok != 0
-            && let Ok(list) = SHGetImageList::<IImageList>(SHIL_SMALL as i32)
+            && let Ok(list) = SHGetImageList::<IImageList>(image_list_for(wanted))
             && let Ok(icon) = list.GetIcon(info.iIcon, ILD_TRANSPARENT.0)
         {
             return Some(icon);
@@ -207,9 +267,18 @@ fn system_icon(path: &str) -> Option<HICON> {
             Default::default(),
             Some(&mut info),
             size_of::<SHFILEINFOW>() as u32,
-            SHGFI_ICON | SHGFI_SMALLICON,
+            SHGFI_ICON | icon_size_flag(wanted),
         );
         (ok != 0 && !info.hIcon.is_invalid()).then_some(info.hIcon)
+    }
+}
+
+/// `SHGetFileInfo` に渡す寸法フラグ。16px を超えるなら大アイコンを要求する。
+fn icon_size_flag(size: i32) -> windows::Win32::UI::Shell::SHGFI_FLAGS {
+    if size <= 16 {
+        SHGFI_SMALLICON
+    } else {
+        SHGFI_LARGEICON
     }
 }
 
@@ -229,7 +298,7 @@ fn shell_icon(target: &str) -> Option<HICON> {
             flags,
         );
         let icon = if ok != 0 {
-            SHGetImageList::<IImageList>(SHIL_SMALL as i32)
+            SHGetImageList::<IImageList>(image_list_for(menu_icon_size().cx))
                 .ok()
                 .and_then(|list| list.GetIcon(info.iIcon, ILD_TRANSPARENT.0).ok())
         } else {
@@ -318,7 +387,25 @@ fn rgba_to_bitmap(rgba: &[u8], size: SIZE) -> Option<HBITMAP> {
 }
 
 /// メニューのアイコン寸法。DPI に追従させる。
+///
+/// 設定値 (`settings.menu.iconSize`) は 96dpi 基準の論理サイズ。
+/// `SM_CXSMICON` は DPI 適用済みの値が返るので、これを基準寸法で
+/// 割った比を倍率として使い、設定値へ同じ拡大を掛ける。
 fn menu_icon_size() -> SIZE {
+    let system = system_small_icon_size();
+    let configured = ICON_SIZE.with(Cell::get);
+    if configured == 0 {
+        return system;
+    }
+    let scaled = scale_icon_size(configured, system.cx);
+    SIZE {
+        cx: scaled,
+        cy: scaled,
+    }
+}
+
+/// システムが定める小アイコンの寸法。DPI 適用済みの値が返る。
+fn system_small_icon_size() -> SIZE {
     unsafe {
         let cx = windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(
             windows::Win32::UI::WindowsAndMessaging::SM_CXSMICON,
@@ -327,8 +414,46 @@ fn menu_icon_size() -> SIZE {
             windows::Win32::UI::WindowsAndMessaging::SM_CYSMICON,
         );
         SIZE {
-            cx: if cx > 0 { cx } else { 16 },
-            cy: if cy > 0 { cy } else { 16 },
+            cx: if cx > 0 { cx } else { BASE_ICON_SIZE },
+            cy: if cy > 0 { cy } else { BASE_ICON_SIZE },
         }
+    }
+}
+
+/// 96dpi でのメニューアイコン寸法。DPI 倍率はこれを基準に求める。
+const BASE_ICON_SIZE: i32 = 16;
+
+/// 論理サイズへ DPI 倍率を掛ける。倍率は `system / 16`。
+///
+/// 100% 表示なら設定値がそのまま出る。極端な値でメニューが
+/// 壊れないよう上下を留める。
+fn scale_icon_size(configured: u32, system_cx: i32) -> i32 {
+    let configured = configured.clamp(16, 64) as i32;
+    let scaled = configured * system_cx.max(BASE_ICON_SIZE) / BASE_ICON_SIZE;
+    scaled.clamp(BASE_ICON_SIZE, 256)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BASE_ICON_SIZE, scale_icon_size};
+
+    /// 100% 表示 (SM_CXSMICON が 16) では設定値がそのまま出る。
+    #[test]
+    fn uses_the_configured_size_at_100_percent() {
+        assert_eq!(scale_icon_size(32, BASE_ICON_SIZE), 32);
+        assert_eq!(scale_icon_size(16, BASE_ICON_SIZE), 16);
+    }
+
+    /// 150% 表示 (SM_CXSMICON が 24) では設定値も 1.5 倍になる。
+    #[test]
+    fn scales_with_the_system_metric() {
+        assert_eq!(scale_icon_size(32, 24), 48);
+    }
+
+    /// 設定値が範囲外でもメニューが壊れる寸法にはしない。
+    #[test]
+    fn keeps_out_of_range_values_usable() {
+        assert_eq!(scale_icon_size(0, BASE_ICON_SIZE), 16);
+        assert_eq!(scale_icon_size(4096, BASE_ICON_SIZE), 64);
     }
 }

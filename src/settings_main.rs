@@ -4,6 +4,7 @@
 
 use eframe::egui;
 use waypoint::config::{Config, Item, LoadOutcome, OpenMode};
+use waypoint::hotkey_capture;
 
 fn main() -> eframe::Result<()> {
     // 設定画面も GUI サブシステム。panic を握り潰さずログへ残す
@@ -854,6 +855,7 @@ impl SettingsApp {
         let Some(draft) = self.trigger_draft.as_mut() else {
             return;
         };
+        poll_hotkey_capture(ctx, draft);
         let mut apply = false;
         let mut cancel = false;
         egui::Window::new("Trigger")
@@ -864,12 +866,12 @@ impl SettingsApp {
             .show(ctx, |ui| {
                 ui.checkbox(&mut draft.middle_click, "Enable middle click");
                 ui.label("Hotkey");
-                ui.text_edit_singleline(&mut draft.hotkey);
+                hotkey_row(ui, draft, HotkeyField::Menu);
                 ui.weak("Example: Win+W");
                 ui.separator();
                 ui.strong("Quick Launch");
                 ui.label("Hotkey");
-                ui.text_edit_singleline(&mut draft.quick_launch_hotkey);
+                hotkey_row(ui, draft, HotkeyField::QuickLaunch);
                 ui.checkbox(&mut draft.include_recent_folders, "Include Recent Folders");
                 ui.checkbox(
                     &mut draft.include_frequent_folders,
@@ -897,6 +899,11 @@ impl SettingsApp {
                 });
             });
 
+        if apply || cancel {
+            // 画面を閉じるならフックを残さない
+            hotkey_capture::stop();
+            draft.recording = None;
+        }
         if apply {
             if waypoint::trigger::parse_hotkey(draft.hotkey.trim()).is_none() {
                 draft.error = Some("Hotkey is invalid.".to_string());
@@ -1173,6 +1180,59 @@ struct VariablesDraft {
     error: Option<String>,
 }
 
+/// ホットキー 1 欄。直接入力と、実際のキー入力からの記録 (FR-6.8.1) 。
+fn hotkey_row(ui: &mut egui::Ui, draft: &mut TriggerDraft, field: HotkeyField) {
+    let recording = draft.recording == Some(field);
+    ui.horizontal(|ui| {
+        ui.add_enabled(
+            !recording,
+            egui::TextEdit::singleline(draft.field_mut(field)).desired_width(200.0),
+        );
+        let label = if recording { "Press keys..." } else { "Record" };
+        if ui.button(label).clicked() {
+            if recording {
+                hotkey_capture::stop();
+                draft.recording = None;
+            } else if hotkey_capture::start() {
+                draft.recording = Some(field);
+                draft.error = None;
+            } else {
+                draft.error = Some("Could not capture keys. Type the hotkey instead.".to_string());
+            }
+        }
+        if recording {
+            ui.weak("Esc to cancel");
+        }
+    });
+}
+
+/// 記録中は毎フレーム結果を拾う。ウィンドウがフォーカスを失ったら、
+/// 打鍵を握り潰したままにしないよう記録を打ち切る。
+fn poll_hotkey_capture(ctx: &egui::Context, draft: &mut TriggerDraft) {
+    let Some(field) = draft.recording else {
+        return;
+    };
+    if !ctx.input(|i| i.viewport().focused.unwrap_or(true)) {
+        hotkey_capture::stop();
+        draft.recording = None;
+        return;
+    }
+    // フックの結果は egui のイベントで届かないので、記録中は描画を回し続ける
+    ctx.request_repaint();
+    match hotkey_capture::poll() {
+        Some(hotkey_capture::Captured::Spec(spec)) => {
+            *draft.field_mut(field) = spec;
+            draft.recording = None;
+        }
+        Some(hotkey_capture::Captured::Cancelled) => draft.recording = None,
+        Some(hotkey_capture::Captured::Unsupported) => {
+            draft.error = Some("That key cannot be used. Use A-Z, 0-9 or F1-F24.".to_string());
+            draft.recording = None;
+        }
+        None => {}
+    }
+}
+
 struct TriggerDraft {
     middle_click: bool,
     hotkey: String,
@@ -1183,6 +1243,15 @@ struct TriggerDraft {
     search_paths: bool,
     visible_results: usize,
     error: Option<String>,
+    /// キー入力から記録中の欄 (FR-6.8.1) 。
+    recording: Option<HotkeyField>,
+}
+
+/// ホットキーを持つ欄。記録先の指定に使う。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HotkeyField {
+    Menu,
+    QuickLaunch,
 }
 
 struct ImportDraft {
@@ -1206,6 +1275,16 @@ impl TriggerDraft {
             search_paths: quick_launch.search_paths,
             visible_results: quick_launch.visible_results,
             error: None,
+            recording: None,
+        }
+    }
+}
+
+impl TriggerDraft {
+    fn field_mut(&mut self, field: HotkeyField) -> &mut String {
+        match field {
+            HotkeyField::Menu => &mut self.hotkey,
+            HotkeyField::QuickLaunch => &mut self.quick_launch_hotkey,
         }
     }
 }

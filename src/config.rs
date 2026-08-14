@@ -185,8 +185,9 @@ fn default_true() -> bool {
 fn default_version() -> u32 {
     1
 }
+/// QAP の既定と同じ 32px。16px はメニューが窮屈で視認性が落ちる
 fn default_icon_size() -> u32 {
-    16
+    32
 }
 
 fn default_quick_launch_hotkey() -> String {
@@ -201,7 +202,7 @@ fn default_visible_results() -> usize {
 /// 仕様書 (`docs/spec.md` FR-1.2) 通り `Win+W`。ただし Windows 11 では
 /// Widgets が予約済みで `RegisterHotKey` が「既に登録されています」で
 /// 失敗する環境がある (`Win+Q` も検索に予約済み、実測で確認済み)。
-/// その場合はトレイメニューに警告が出るので、設定画面で変更する。
+/// その場合は低レベルキーボードフックで横取りする (FR-1.2.1)。
 fn default_hotkey() -> String {
     "Win+W".to_string()
 }

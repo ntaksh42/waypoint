@@ -113,7 +113,8 @@ fn missing_optional_fields_use_defaults() {
             .excluded_processes
             .contains(&"chrome.exe".to_string())
     );
-    assert_eq!(cfg.settings.menu.icon_size, 16);
+    // QAP の既定と同じ 32px (FR-2.3)
+    assert_eq!(cfg.settings.menu.icon_size, 32);
     assert_eq!(cfg.settings.quick_launch.hotkey, "Ctrl+Shift+Q");
     assert!(cfg.settings.quick_launch.include_recent_folders);
     assert!(cfg.settings.quick_launch.include_frequent_folders);

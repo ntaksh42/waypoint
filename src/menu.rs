@@ -12,12 +12,12 @@ use windows::Win32::UI::Shell::{
     SIID_STACK,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, DestroyMenu, GetMenuItemCount, HMENU, MENUITEMINFOW, MF_DISABLED,
-    MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, MIIM_BITMAP, SetForegroundWindow,
-    SetMenuItemInfoW, TPM_LEFTALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, TPM_TOPALIGN,
-    TrackPopupMenuEx,
+    CreatePopupMenu, DestroyMenu, GetMenuItemCount, HMENU, InsertMenuItemW, MENU_ITEM_FLAGS,
+    MENUITEMINFOW, MF_DISABLED, MF_GRAYED, MF_POPUP, MF_STRING, MFS_DISABLED, MFT_OWNERDRAW,
+    MFT_SEPARATOR, MIIM_DATA, MIIM_FTYPE, MIIM_ID, MIIM_STATE, MIIM_SUBMENU, SetForegroundWindow,
+    TPM_LEFTALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, TPM_TOPALIGN, TrackPopupMenuEx,
 };
-use windows::core::{HSTRING, PCWSTR, Result, w};
+use windows::core::Result;
 
 use crate::config::{Config, Item, OpenMode};
 use crate::dynamic::{Menus as DynamicMenus, PathEntry, WindowEntry};
@@ -130,6 +130,10 @@ impl Drop for BuiltMenu {
 /// 変数展開は構築時に一度だけ行う (FR-5.3) 。解決できない項目は
 /// グレー表示にし、選んでも何も起きないようにする (FR-2.6 / FR-5.4) 。
 pub fn build(cfg: &Config, dynamic: &DynamicMenus) -> Result<BuiltMenu> {
+    // アイコン取得より前に反映する。寸法が変わればキャッシュも捨てられる
+    crate::icon::set_icon_size(cfg.settings.menu.icon_size);
+    // 前回の描画内容は使わない。ID を振り直すので必ず捨てる
+    crate::menu_draw::clear();
     let mut ctx = BuildCtx {
         vars: &cfg.variables,
         numeric: cfg.settings.menu.numeric_accelerators,
@@ -174,27 +178,31 @@ unsafe fn build_level(items: &[Item], ctx: &mut BuildCtx) -> Result<HMENU> {
         for item in items {
             match item {
                 Item::Separator { name: None } => {
-                    AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
+                    append_separator(menu)?;
                 }
                 // 名前つき区切りは見出し。選択不可にする
                 Item::Separator { name: Some(text) } => {
-                    AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
-                    let label = HSTRING::from(format!("— {text} —"));
-                    AppendMenuW(
+                    append_separator(menu)?;
+                    append_owner_drawn(
                         menu,
                         MF_STRING | MF_DISABLED | MF_GRAYED,
                         0,
-                        PCWSTR(label.as_ptr()),
+                        &format!("— {text} —"),
+                        None,
+                        false,
                     )?;
                 }
                 Item::Submenu { name, items } => {
                     let sub = build_level(items, ctx)?;
                     accel += 1;
-                    let label = HSTRING::from(decorate(name, ctx.numeric, accel));
-                    AppendMenuW(menu, MF_POPUP, sub.0 as usize, PCWSTR(label.as_ptr()))?;
-                    if let Some(bitmap) = crate::icon::bitmap_for_stock(SIID_FOLDER) {
-                        set_last_item_bitmap(menu, bitmap);
-                    }
+                    append_owner_drawn(
+                        menu,
+                        MF_POPUP,
+                        sub.0 as usize,
+                        &decorate(name, ctx.numeric, accel),
+                        crate::icon::bitmap_for_stock(SIID_FOLDER),
+                        true,
+                    )?;
                 }
                 Item::Folder {
                     name,
@@ -239,25 +247,25 @@ unsafe fn append_leaf(
     accel: usize,
 ) -> Result<()> {
     unsafe {
-        let label = HSTRING::from(decorate(name, ctx.numeric, accel));
+        let label = decorate(name, ctx.numeric, accel);
         match resolved {
             Some(path) => {
                 let id = ctx.next_id;
                 ctx.next_id += 1;
-                AppendMenuW(menu, MF_STRING, id, PCWSTR(label.as_ptr()))?;
                 // アイコンは付かなくても致命的ではないので失敗を無視する
-                if let Some(bmp) = crate::icon::bitmap_for(&path) {
-                    set_item_bitmap(menu, id, bmp);
-                }
+                let bitmap = crate::icon::bitmap_for(&path);
+                append_owner_drawn(menu, MF_STRING, id, &label, bitmap, false)?;
                 ctx.actions.insert(id, Action::Open { path, open });
             }
             None => {
                 // 解決できない項目は選べないようにする (FR-2.6)
-                AppendMenuW(
+                append_owner_drawn(
                     menu,
                     MF_STRING | MF_DISABLED | MF_GRAYED,
                     0,
-                    PCWSTR(label.as_ptr()),
+                    &label,
+                    None,
+                    false,
                 )?;
             }
         }
@@ -272,32 +280,35 @@ unsafe fn append_in_the_works(
     ctx: &mut BuildCtx,
 ) -> Result<()> {
     unsafe {
-        AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
+        append_separator(menu)?;
         let submenu = CreatePopupMenu()?;
         append_path_menu(submenu, "Recent Folders", &dynamic.recent_folders, ctx)?;
         append_path_menu(submenu, "Recent Files", &dynamic.recent_files, ctx)?;
-        AppendMenuW(submenu, MF_SEPARATOR, 0, PCWSTR::null())?;
+        append_separator(submenu)?;
         append_path_menu(submenu, "Frequent Folders", &dynamic.frequent_folders, ctx)?;
         append_path_menu(submenu, "Frequent Files", &dynamic.frequent_files, ctx)?;
-        AppendMenuW(submenu, MF_SEPARATOR, 0, PCWSTR::null())?;
+        append_separator(submenu)?;
         append_window_menu(submenu, "Current Windows", &dynamic.current_windows, ctx)?;
-        AppendMenuW(submenu, MF_SEPARATOR, 0, PCWSTR::null())?;
-        AppendMenuW(
+        append_separator(submenu)?;
+        // Customize も設定画面への入口。Settings... と同じ歯車で揃える
+        append_owner_drawn(
             submenu,
             MF_STRING,
             ID_SETTINGS,
-            w!("Customize this menu (or group)"),
+            "Customize this menu (or group)",
+            crate::icon::bitmap_for_settings(),
+            false,
         )?;
-        // Customize も設定画面への入口。Settings... と同じ歯車で揃える
-        if let Some(bitmap) = crate::icon::bitmap_for_settings() {
-            set_item_bitmap(submenu, ID_SETTINGS, bitmap);
-        }
 
-        AppendMenuW(menu, MF_POPUP, submenu.0 as usize, w!("In the Works"))?;
         // 作業中の項目が積み重なっている絵。フォルダ系と区別する
-        if let Some(bitmap) = crate::icon::bitmap_for_stock(SIID_STACK) {
-            set_last_item_bitmap(menu, bitmap);
-        }
+        append_owner_drawn(
+            menu,
+            MF_POPUP,
+            submenu.0 as usize,
+            "In the Works",
+            crate::icon::bitmap_for_stock(SIID_STACK),
+            true,
+        )?;
         Ok(())
     }
 }
@@ -306,17 +317,16 @@ unsafe fn append_in_the_works(
 unsafe fn append_special_folders(menu: HMENU, ctx: &mut BuildCtx) -> Result<()> {
     unsafe {
         let submenu = CreatePopupMenu()?;
-        AppendMenuW(
+        // 追加の操作なので開いたフォルダ。閉じたフォルダの項目と見分けられる
+        append_owner_drawn(
             submenu,
             MF_STRING,
             ID_ADD_SPECIAL_FOLDER,
-            w!("Add Favorite - Special Folder..."),
+            "Add Favorite - Special Folder...",
+            crate::icon::bitmap_for_stock(SIID_FOLDEROPEN),
+            false,
         )?;
-        // 追加の操作なので開いたフォルダ。閉じたフォルダの項目と見分けられる
-        if let Some(bitmap) = crate::icon::bitmap_for_stock(SIID_FOLDEROPEN) {
-            set_item_bitmap(submenu, ID_ADD_SPECIAL_FOLDER, bitmap);
-        }
-        AppendMenuW(submenu, MF_SEPARATOR, 0, PCWSTR::null())?;
+        append_separator(submenu)?;
 
         for (index, (label, known_folder)) in [
             ("Desktop", "Desktop"),
@@ -337,7 +347,7 @@ unsafe fn append_special_folders(menu: HMENU, ctx: &mut BuildCtx) -> Result<()> 
             )?;
         }
 
-        AppendMenuW(submenu, MF_SEPARATOR, 0, PCWSTR::null())?;
+        append_separator(submenu)?;
         for (index, (label, target)) in [
             ("This PC", "shell:MyComputerFolder"),
             ("Network", "shell:NetworkPlacesFolder"),
@@ -349,11 +359,14 @@ unsafe fn append_special_folders(menu: HMENU, ctx: &mut BuildCtx) -> Result<()> 
         {
             let id = ctx.next_id;
             ctx.next_id += 1;
-            let label = HSTRING::from(decorate(label, ctx.numeric, index + 5));
-            AppendMenuW(submenu, MF_STRING, id, PCWSTR(label.as_ptr()))?;
-            if let Some(bitmap) = crate::icon::bitmap_for_shell(target) {
-                set_item_bitmap(submenu, id, bitmap);
-            }
+            append_owner_drawn(
+                submenu,
+                MF_STRING,
+                id,
+                &decorate(label, ctx.numeric, index + 5),
+                crate::icon::bitmap_for_shell(target),
+                false,
+            )?;
             ctx.actions.insert(
                 id,
                 Action::OpenShell {
@@ -362,22 +375,25 @@ unsafe fn append_special_folders(menu: HMENU, ctx: &mut BuildCtx) -> Result<()> 
             );
         }
 
-        AppendMenuW(submenu, MF_SEPARATOR, 0, PCWSTR::null())?;
-        AppendMenuW(
+        append_separator(submenu)?;
+        // Customize も設定画面への入口。Settings... と同じ歯車で揃える
+        append_owner_drawn(
             submenu,
             MF_STRING,
             ID_SETTINGS,
-            w!("Customize this menu (or group)"),
+            "Customize this menu (or group)",
+            crate::icon::bitmap_for_settings(),
+            false,
         )?;
-        // Customize も設定画面への入口。Settings... と同じ歯車で揃える
-        if let Some(bitmap) = crate::icon::bitmap_for_settings() {
-            set_item_bitmap(submenu, ID_SETTINGS, bitmap);
-        }
-        AppendMenuW(menu, MF_POPUP, submenu.0 as usize, w!("My Special Folders"))?;
         // Windows 標準の場所をまとめた入口なので PC のアイコン
-        if let Some(bitmap) = crate::icon::bitmap_for_stock(SIID_DESKTOPPC) {
-            set_last_item_bitmap(menu, bitmap);
-        }
+        append_owner_drawn(
+            menu,
+            MF_POPUP,
+            submenu.0 as usize,
+            "My Special Folders",
+            crate::icon::bitmap_for_stock(SIID_DESKTOPPC),
+            true,
+        )?;
         Ok(())
     }
 }
@@ -391,21 +407,26 @@ unsafe fn append_path_menu(
     unsafe {
         let submenu = CreatePopupMenu()?;
         if entries.is_empty() {
-            AppendMenuW(
+            append_owner_drawn(
                 submenu,
                 MF_STRING | MF_DISABLED | MF_GRAYED,
                 0,
-                w!("(Empty)"),
+                "(Empty)",
+                None,
+                false,
             )?;
         } else {
             for (index, entry) in entries.iter().enumerate() {
                 let id = ctx.next_id;
                 ctx.next_id += 1;
-                let label = HSTRING::from(decorate(&entry.name, ctx.numeric, index + 1));
-                AppendMenuW(submenu, MF_STRING, id, PCWSTR(label.as_ptr()))?;
-                if let Some(bitmap) = crate::icon::bitmap_for(&entry.path) {
-                    set_item_bitmap(submenu, id, bitmap);
-                }
+                append_owner_drawn(
+                    submenu,
+                    MF_STRING,
+                    id,
+                    &decorate(&entry.name, ctx.numeric, index + 1),
+                    crate::icon::bitmap_for(&entry.path),
+                    false,
+                )?;
                 ctx.actions.insert(
                     id,
                     Action::Open {
@@ -416,13 +437,16 @@ unsafe fn append_path_menu(
             }
         }
         append_close(submenu)?;
-        let label = HSTRING::from(name);
-        AppendMenuW(parent, MF_POPUP, submenu.0 as usize, PCWSTR(label.as_ptr()))?;
         // 先頭項目のアイコンを借りると中身次第で毎回変わり、
         // Recent と Frequent が見分けられない。メニュー種別で固定する
-        if let Some(bitmap) = crate::icon::bitmap_for_stock(path_menu_icon(name)) {
-            set_last_item_bitmap(parent, bitmap);
-        }
+        append_owner_drawn(
+            parent,
+            MF_POPUP,
+            submenu.0 as usize,
+            name,
+            crate::icon::bitmap_for_stock(path_menu_icon(name)),
+            true,
+        )?;
         Ok(())
     }
 }
@@ -436,44 +460,56 @@ unsafe fn append_window_menu(
     unsafe {
         let submenu = CreatePopupMenu()?;
         if entries.is_empty() {
-            AppendMenuW(
+            append_owner_drawn(
                 submenu,
                 MF_STRING | MF_DISABLED | MF_GRAYED,
                 0,
-                w!("(Empty)"),
+                "(Empty)",
+                None,
+                false,
             )?;
         } else {
             for (index, entry) in entries.iter().enumerate() {
                 let id = ctx.next_id;
                 ctx.next_id += 1;
-                let label = HSTRING::from(decorate(&entry.title, ctx.numeric, index + 1));
-                AppendMenuW(submenu, MF_STRING, id, PCWSTR(label.as_ptr()))?;
-                if let Some(bitmap) = crate::icon::bitmap_for_window(HWND(entry.hwnd as *mut _))
-                    .or_else(|| crate::icon::bitmap_for_asset("window", ICON_WINDOW))
-                {
-                    set_item_bitmap(submenu, id, bitmap);
-                }
+                let bitmap = crate::icon::bitmap_for_window(HWND(entry.hwnd as *mut _))
+                    .or_else(|| crate::icon::bitmap_for_asset("window", ICON_WINDOW));
+                append_owner_drawn(
+                    submenu,
+                    MF_STRING,
+                    id,
+                    &decorate(&entry.title, ctx.numeric, index + 1),
+                    bitmap,
+                    false,
+                )?;
                 ctx.actions
                     .insert(id, Action::ActivateWindow { hwnd: entry.hwnd });
             }
         }
         append_close(submenu)?;
-        let label = HSTRING::from(name);
-        AppendMenuW(parent, MF_POPUP, submenu.0 as usize, PCWSTR(label.as_ptr()))?;
-        if let Some(bitmap) = crate::icon::bitmap_for_asset("window", ICON_WINDOW) {
-            set_last_item_bitmap(parent, bitmap);
-        }
+        append_owner_drawn(
+            parent,
+            MF_POPUP,
+            submenu.0 as usize,
+            name,
+            crate::icon::bitmap_for_asset("window", ICON_WINDOW),
+            true,
+        )?;
         Ok(())
     }
 }
 
 unsafe fn append_close(menu: HMENU) -> Result<()> {
     unsafe {
-        AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
-        AppendMenuW(menu, MF_STRING, ID_CLOSE, w!("Close this menu"))?;
-        if let Some(bitmap) = crate::icon::bitmap_for_asset("close", ICON_CLOSE) {
-            set_item_bitmap(menu, ID_CLOSE, bitmap);
-        }
+        append_separator(menu)?;
+        append_owner_drawn(
+            menu,
+            MF_STRING,
+            ID_CLOSE,
+            "Close this menu",
+            crate::icon::bitmap_for_asset("close", ICON_CLOSE),
+            false,
+        )?;
         Ok(())
     }
 }
@@ -481,57 +517,126 @@ unsafe fn append_close(menu: HMENU) -> Result<()> {
 /// QAP と同様に、頻繁に使う管理操作をルートメニューの末尾へ置く。
 unsafe fn append_footer(menu: HMENU) -> Result<()> {
     unsafe {
-        AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
-        let settings = HSTRING::from("Settings...");
-        AppendMenuW(menu, MF_STRING, ID_SETTINGS, PCWSTR(settings.as_ptr()))?;
+        append_separator(menu)?;
         // Windows の歯車アイコン。自前 PNG は線が細く 16px で潰れていた
-        if let Some(bitmap) = crate::icon::bitmap_for_settings() {
-            set_last_item_bitmap(menu, bitmap);
-        }
+        append_owner_drawn(
+            menu,
+            MF_STRING,
+            ID_SETTINGS,
+            "Settings...",
+            crate::icon::bitmap_for_settings(),
+            false,
+        )?;
+        append_owner_drawn(
+            menu,
+            MF_STRING,
+            ID_RELOAD,
+            "Reload config",
+            crate::icon::bitmap_for_asset("reload", ICON_RELOAD),
+            false,
+        )?;
 
-        let reload = HSTRING::from("Reload config");
-        AppendMenuW(menu, MF_STRING, ID_RELOAD, PCWSTR(reload.as_ptr()))?;
-        if let Some(bitmap) = crate::icon::bitmap_for_asset("reload", ICON_RELOAD) {
-            set_item_bitmap(menu, ID_RELOAD, bitmap);
-        }
-
-        AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
-        let close = HSTRING::from("Close this menu");
-        AppendMenuW(menu, MF_STRING, ID_CLOSE, PCWSTR(close.as_ptr()))?;
-        if let Some(bitmap) = crate::icon::bitmap_for_asset("close", ICON_CLOSE) {
-            set_last_item_bitmap(menu, bitmap);
-        }
+        append_separator(menu)?;
+        append_owner_drawn(
+            menu,
+            MF_STRING,
+            ID_CLOSE,
+            "Close this menu",
+            crate::icon::bitmap_for_asset("close", ICON_CLOSE),
+            false,
+        )?;
         Ok(())
     }
 }
 
-/// 項目にアイコンを設定する (FR-2.3) 。
-unsafe fn set_item_bitmap(menu: HMENU, id: usize, bmp: HBITMAP) {
+/// オーナードロー項目として追加する。
+///
+/// `TrackPopupMenuEx` は `MIIM_BITMAP` のアイコンを行の高さに反映しない
+/// (実測) 。行の高さを制御するにはオーナードローしかないので、
+/// 文字列項目はすべてこの経路で追加する。`itemData` に描画内容の ID を
+/// 入れ、`WM_MEASUREITEM` / `WM_DRAWITEM` から引く。
+unsafe fn append_owner_drawn(
+    menu: HMENU,
+    flags: MENU_ITEM_FLAGS,
+    id: usize,
+    label: &str,
+    bitmap: Option<HBITMAP>,
+    submenu: bool,
+) -> Result<()> {
     unsafe {
-        let info = MENUITEMINFOW {
+        let disabled = flags.0 & (MF_DISABLED.0 | MF_GRAYED.0) != 0;
+        let data = crate::menu_draw::register(crate::menu_draw::OwnerDrawItem {
+            // アクセラレータの & は描画では出さない
+            text: strip_accelerator(label),
+            bitmap: bitmap.map(|b| b.0 as isize),
+            submenu,
+            disabled,
+            separator: false,
+        });
+
+        // itemData は MIIM_DATA でしか渡せない。AppendMenuW の
+        // lpnewitem に入れても文字列として扱われる
+        let mut info = MENUITEMINFOW {
             cbSize: size_of::<MENUITEMINFOW>() as u32,
-            fMask: MIIM_BITMAP,
-            hbmpItem: bmp,
+            fMask: MIIM_FTYPE | MIIM_DATA | MIIM_STATE,
+            fType: MFT_OWNERDRAW,
+            dwItemData: data,
             ..Default::default()
         };
-        let _ = SetMenuItemInfoW(menu, id as u32, false, &info);
+        if disabled {
+            info.fState = MFS_DISABLED;
+        }
+        if submenu {
+            info.fMask |= MIIM_SUBMENU;
+            info.hSubMenu = HMENU(id as *mut _);
+        } else if id != 0 {
+            info.fMask |= MIIM_ID;
+            info.wID = id as u32;
+        }
+        let position = GetMenuItemCount(Some(menu)).max(0) as u32;
+        InsertMenuItemW(menu, position, true, &info)?;
+        Ok(())
     }
 }
 
-unsafe fn set_last_item_bitmap(menu: HMENU, bmp: HBITMAP) {
+/// 区切り線を追加する。
+///
+/// `MF_SEPARATOR` のままだとシステム色で描かれ、ダーク表示 (FR-2.7) で
+/// 白い線が残る。項目と同じくオーナードローにして自前で引く。
+unsafe fn append_separator(menu: HMENU) -> Result<()> {
     unsafe {
-        let position = GetMenuItemCount(Some(menu)) - 1;
-        if position < 0 {
-            return;
-        }
+        let data = crate::menu_draw::register(crate::menu_draw::OwnerDrawItem::separator());
         let info = MENUITEMINFOW {
             cbSize: size_of::<MENUITEMINFOW>() as u32,
-            fMask: MIIM_BITMAP,
-            hbmpItem: bmp,
+            fMask: MIIM_FTYPE | MIIM_DATA | MIIM_STATE,
+            // 区切りとしての性質は残したまま描画だけ奪う
+            fType: MFT_OWNERDRAW | MFT_SEPARATOR,
+            fState: MFS_DISABLED,
+            dwItemData: data,
             ..Default::default()
         };
-        let _ = SetMenuItemInfoW(menu, position as u32, true, &info);
+        let position = GetMenuItemCount(Some(menu)).max(0) as u32;
+        InsertMenuItemW(menu, position, true, &info)?;
+        Ok(())
     }
+}
+
+/// `&1  名前` の装飾を描画用の文字列へ直す。
+///
+/// オーナードローでは `&` を自分で解釈しないので、
+/// 単独の `&` は落とし、`&&` はリテラルの `&` に戻す。
+fn strip_accelerator(label: &str) -> String {
+    let mut out = String::with_capacity(label.len());
+    let mut chars = label.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '&' {
+            out.push(ch);
+        } else if chars.clone().next() == Some('&') {
+            chars.next();
+            out.push('&');
+        }
+    }
+    out
 }
 
 /// Recent / Frequent の各サブメニューに割り当てるアイコン。
@@ -569,7 +674,7 @@ fn decorate(name: &str, numeric: bool, accel: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{decorate, path_menu_icon, with_branch};
+    use super::{decorate, path_menu_icon, strip_accelerator, with_branch};
 
     /// Recent / Frequent × フォルダ / ファイルの 4 つが別アイコンになること。
     /// 同じだと In the Works の中で見分けが付かない。
@@ -612,5 +717,18 @@ mod tests {
     fn ampersand_in_name_is_escaped_without_accelerator() {
         let label = with_branch("R&D", Some("main"));
         assert_eq!(decorate(&label, false, 1), "R&&D  [main]");
+    }
+
+    /// オーナードローでは & を自分で解釈しないので描画前に落とす。
+    #[test]
+    fn accelerator_marker_is_removed_for_drawing() {
+        assert_eq!(strip_accelerator("&1  Downloads"), "1  Downloads");
+    }
+
+    /// エスケープされた && はリテラルの & に戻す。
+    #[test]
+    fn escaped_ampersand_becomes_literal() {
+        assert_eq!(strip_accelerator("R&&D"), "R&D");
+        assert_eq!(strip_accelerator("&1  R&&D"), "1  R&D");
     }
 }

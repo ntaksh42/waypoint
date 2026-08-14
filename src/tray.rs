@@ -20,8 +20,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowW, GetCursorPos, HMENU, IDI_APPLICATION, LoadIconW, MENUITEMINFOW, MF_CHECKED,
     MF_SEPARATOR, MF_STRING, MIIM_BITMAP, PostMessageW, PostQuitMessage, RegisterClassW,
     SetForegroundWindow, SetMenuItemInfoW, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON,
-    TrackPopupMenuEx, WM_APP, WM_COMMAND, WM_DESTROY, WM_HOTKEY, WM_LBUTTONUP, WM_RBUTTONUP,
-    WM_SETTINGCHANGE, WM_THEMECHANGED, WNDCLASSW, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
+    TrackPopupMenuEx, WM_APP, WM_COMMAND, WM_DESTROY, WM_DRAWITEM, WM_HOTKEY, WM_LBUTTONUP,
+    WM_MEASUREITEM, WM_RBUTTONUP, WM_SETTINGCHANGE, WM_THEMECHANGED, WNDCLASSW, WS_EX_TOOLWINDOW,
+    WS_OVERLAPPED,
 };
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
@@ -30,7 +31,7 @@ use crate::menu::{Action, BuiltMenu, Selection};
 use crate::process;
 use crate::quick_launch_window::{self, WM_QUICK_LAUNCH_EXECUTE};
 use crate::shell;
-use crate::trigger::{self, WM_TRIGGER_MENU};
+use crate::trigger::{self, Registration, WM_TRIGGER_MENU};
 
 /// トレイアイコンからの通知。WM_APP 以降はアプリが自由に使える。
 const WM_TRAY: u32 = WM_APP + 1;
@@ -109,30 +110,27 @@ pub fn reload(hwnd: HWND) {
     // 古いビットマップを使い回さないよう捨ててから組み直す
     crate::icon::clear_cache();
     load_state();
-    let ok = register_hotkey_from_config(hwnd);
-    set_hotkey_failed(!ok);
-    let quick_ok = register_quick_launch_hotkey_from_config(hwnd);
-    set_quick_launch_hotkey_failed(!quick_ok);
+    let reg = register_hotkey_from_config(hwnd);
+    set_hotkey_failed(!reg.is_active());
+    let quick_reg = register_quick_launch_hotkey_from_config(hwnd);
+    set_quick_launch_hotkey_failed(!quick_reg.is_active());
 }
 
 /// 読み込み済みの設定でホットキーを登録する。
-/// 戻り値が false なら他のアプリに取られている (Win+W など) 。
-pub fn register_hotkey_from_config(hwnd: HWND) -> bool {
+/// 他アプリに取られていた場合はフックで横取りする (FR-1.2.1) 。
+pub fn register_hotkey_from_config(hwnd: HWND) -> Registration {
     STATE.with(|s| match s.borrow().as_ref() {
-        Some(state) => {
-            trigger::register_hotkey(hwnd, &state.config.settings.trigger.hotkey).is_ok()
-        }
-        None => false,
+        Some(state) => trigger::register_hotkey(hwnd, &state.config.settings.trigger.hotkey),
+        None => Registration::Failed,
     })
 }
 
-pub fn register_quick_launch_hotkey_from_config(hwnd: HWND) -> bool {
+pub fn register_quick_launch_hotkey_from_config(hwnd: HWND) -> Registration {
     STATE.with(|s| match s.borrow().as_ref() {
         Some(state) => {
             trigger::register_quick_launch_hotkey(hwnd, &state.config.settings.quick_launch.hotkey)
-                .is_ok()
         }
-        None => false,
+        None => Registration::Failed,
     })
 }
 
@@ -328,9 +326,26 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         // 古いビットマップを捨て、次回表示で引き直す
         WM_SETTINGCHANGE | WM_THEMECHANGED => {
             crate::icon::clear_cache();
+            // メニューフォントとテーマの色も変わる。掴んだまま使わない
+            crate::menu_draw::reset_font();
             crate::theme::enable_dark_menus();
             rebuild_menu();
             unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+        }
+        // オーナードロー項目の採寸と描画 (FR-2.3)
+        WM_MEASUREITEM => {
+            if crate::menu_draw::measure(wparam, lparam) {
+                LRESULT(1)
+            } else {
+                unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+            }
+        }
+        WM_DRAWITEM => {
+            if crate::menu_draw::draw(wparam, lparam) {
+                LRESULT(1)
+            } else {
+                unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+            }
         }
         WM_COMMAND => LRESULT(0),
         WM_DESTROY => {
@@ -498,15 +513,16 @@ unsafe fn build_tray_items(menu: HMENU) -> Result<()> {
                     warnings.push(e.clone());
                 }
                 if st.hotkey_failed {
-                    // 他アプリに取られている。無言で効かないと原因が分からない
+                    // 他アプリに取られただけならフックで横取りする (FR-1.2.1) 。
+                    // ここまで来るのは指定が不正な場合。無言で効かないと原因が分からない
                     warnings.push(format!(
-                        "hotkey \"{}\" is taken by another app",
+                        "hotkey \"{}\" could not be registered",
                         st.config.settings.trigger.hotkey
                     ));
                 }
                 if st.quick_launch_hotkey_failed {
                     warnings.push(format!(
-                        "Quick Launch hotkey \"{}\" is taken by another app",
+                        "Quick Launch hotkey \"{}\" could not be registered",
                         st.config.settings.quick_launch.hotkey
                     ));
                 }

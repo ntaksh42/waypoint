@@ -62,14 +62,14 @@ fn main() {
     };
 
     // 設定は tray::load_state() で読み込み済み。ここで再読み込みしない
-    let hotkey_ok = tray::register_hotkey_from_config(hwnd);
-    let quick_launch_hotkey_ok = tray::register_quick_launch_hotkey_from_config(hwnd);
-    tray::set_hotkey_failed(!hotkey_ok);
-    tray::set_quick_launch_hotkey_failed(!quick_launch_hotkey_ok);
+    let hotkey = tray::register_hotkey_from_config(hwnd);
+    let quick_launch_hotkey = tray::register_quick_launch_hotkey_from_config(hwnd);
+    tray::set_hotkey_failed(!hotkey.is_active());
+    tray::set_quick_launch_hotkey_failed(!quick_launch_hotkey.is_active());
     let hook = trigger::install_mouse_hook(hwnd).ok();
 
     if selftest {
-        write_selftest_result(&selftest_report(hwnd, hotkey_ok, hook.is_some()));
+        write_selftest_result(&selftest_report(hwnd, hotkey, hook.is_some()));
         cleanup(hwnd, hook);
         return;
     }
@@ -102,12 +102,13 @@ fn run_message_loop() {
 
 /// GUI サブシステムのためコンソールに出力できない。
 /// 常駐せずに結果をファイルへ書いて終了する自己診断モード。
-fn selftest_report(hwnd: HWND, hotkey_ok: bool, hook_ok: bool) -> String {
+fn selftest_report(hwnd: HWND, hotkey: trigger::Registration, hook_ok: bool) -> String {
     let items = tray::item_count();
     let actions = tray::action_count();
     let spec = tray::hotkey_spec();
-    // メニューが組み立てられ、トリガーが両方張れていれば PASS
-    let all_ok = hotkey_ok && hook_ok && actions > 0;
+    // メニューが組み立てられ、トリガーが両方張れていれば PASS。
+    // ホットキーは native (RegisterHotKey) と hook (横取り) のどちらでも可
+    let all_ok = hotkey.is_active() && hook_ok && actions > 0;
     let mut out = format!(
         "{}: window={:?} items={} actions={} hotkey=\"{}\":{} mouse_hook={} autostart={}",
         if all_ok { "PASS" } else { "FAIL" },
@@ -115,7 +116,7 @@ fn selftest_report(hwnd: HWND, hotkey_ok: bool, hook_ok: bool) -> String {
         items,
         actions,
         spec,
-        hotkey_ok,
+        hotkey.label(),
         hook_ok,
         autostart::is_enabled(),
     );

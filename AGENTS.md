@@ -106,10 +106,96 @@ abandoned 状態で残り、次の起動が待たされて無応答になる。�
 
 ### Win+W は環境によって RegisterHotKey が失敗する
 Windows 11 では Widgets が予約済みで `RegisterHotKey` が「既に登録されています」で
-失敗する環境がある (`Win+Q` も検索が予約) 。実測で確認済み。既定は仕様書
-(`docs/spec.md` FR-1.2) 通り `Win+W` にしているが、登録に失敗した場合は
-トレイメニューに警告を出す (無言で効かないと原因が分からない) 。失敗する環境では
-設定画面でホットキーを変更する。
+失敗する環境がある (`Win+Q` も検索が予約) 。実測で確認済み。
+
+**失敗した場合は `WH_KEYBOARD_LL` で横取りする** (FR-1.2.1、`src/trigger.rs`) 。
+低レベルフックは OS のホットキー処理より手前で打鍵を受け取るため、既に他が
+握っているキーでも上書きできる。`--selftest` の `hotkey="..":native|hook|failed`
+でどちらの経路か分かる。`failed` はキー指定が不正な場合だけで、そのときは
+トレイメニューに警告を出す (無言で効かないと原因が分からない) 。
+
+フックで横取りするときの注意:
+
+- **Win 修飾の打鍵を握り潰すとスタートメニューが開く。** シェルが「Win 単独押下」
+  と解釈するため。無害な Ctrl の打鍵を `SendInput` で挟んで連鎖を切る
+- **合成入力を `LLKHF_INJECTED` で一律に外さない。** 自分が注入した Ctrl は
+  `dwExtraInfo` の目印 (`OWN_INPUT_TAG`) で見分ける。フラグで外すと
+  キーリマッパーや自動化ツール経由の打鍵まで拾えなくなる
+- **押下を消費したら対になる解放も消費する。** 解放だけがアプリへ届く状態を作らない
+- 同じキーをフックで奪い合う常駐アプリ (QAP など) が居る場合、**後から
+  フックを張った側が勝つ**。実測で waypoint が QAP より優先されることを確認済み
+
+### メニューの行高はアイコンサイズでは変わらない
+`MIIM_BITMAP` で 32px のアイコンを付けても、`TrackPopupMenuEx` の行高は
+システムの `SM_CYMENU` のまま。**アイコンだけが大きくなり行は詰まったまま**になる。
+実測で確認済み。
+
+行の高さを制御する手段はオーナードローしかない (`src/menu_draw.rs`) 。
+`MFT_OWNERDRAW` で追加し、`WM_MEASUREITEM` で高さを返し `WM_DRAWITEM` で描く。
+フォントは `SPI_GETNONCLIENTMETRICS` の `lfMenuFont` をそのまま使うので
+文字サイズは変わらない (QAP も同じ方針で、メニューフォントは変更できない) 。
+
+- **`itemData` は `MIIM_DATA` でしか渡せない。** `AppendMenuW` の `lpnewitem` に
+  入れても文字列として解釈される。`InsertMenuItemW` + `MENUITEMINFOW` を使う
+- **オーナードローでは `&` を自分で解釈しない。** `&1` のアクセラレータ装飾は
+  描画前に落とす (`strip_accelerator`) 。`&&` はリテラルの `&` へ戻す
+
+### オーナードローにするとダークメニューが白くなる
+`theme::enable_dark_menus()` は uxtheme にダーク描画を指示するもので、
+**`GetSysColor` の戻り値は変えない**。オーナードローで背景と文字色を
+`COLOR_MENU` / `COLOR_MENUTEXT` から取ると、ライトの色で塗ってしまい
+FR-2.7 に反する (実測でメニューが白背景になった) 。
+
+色は uxtheme のメニューテーマから引く:
+`OpenThemeData(None, w!("Menu"))` → `DrawThemeBackground` (背景) /
+`GetThemeColor(..., TMT_TEXTCOLOR)` (文字色) 。ダーク指定がそのまま乗る。
+
+- `MENU_POPUPBACKGROUND` で地を敷いてから `MENU_POPUPITEM` を状態付きで重ねる
+- 状態は `MPI_NORMAL` / `MPI_HOT` / `MPI_DISABLED` を項目の状態に対応させる
+- **`DrawFrameControl` はシステム色固定。** サブメニュー矢印に使うと
+  ダークで沈んで見えない。設定済みの文字色で `▶` を描く
+- **`MF_SEPARATOR` も残さない。** 項目だけオーナードローにすると、
+  区切り線は Windows がシステム色で描き**白い線として浮く**(実測)。
+  `MFT_OWNERDRAW | MFT_SEPARATOR` にして自前で引く
+- **通常項目の背景色はテーマから取れない。** 実測で
+  `MENU_POPUPBACKGROUND` と `MPI_NORMAL` の `TMT_FILLCOLOR` は
+  `0x80070490` (要素なし) を返し、`MPI_NORMAL` の項目自体も透明。
+  `DrawThemeBackground` に任せると明るい地が出る。地は自前で塗り、
+  ダーク判定は `MPI_NORMAL` の**文字色**が明るいか (白=ダーク) で行う
+- テーマハンドルは掴んだままにせず、`WM_THEMECHANGED` で捨てて開き直す
+
+### ポップアップの外枠は暗くできない (未解決・対応しない)
+
+項目と区切り線をダークにしても、**ポップアップを囲む 1 px の外枠だけは
+明るいまま残る**。ここは非クライアント領域でオーナードローが届かない。
+三手試して全て駄目だったので、**v1.0 では受け入れる**。再挑戦するなら
+以下は試済みなので繰り返さないこと:
+
+| 試した手 | 結果 |
+|---|---|
+| `DWMWA_BORDER_COLOR` を設定 | `Ok(())` が返るのに色が変わらない。メニュー (`#32768`) は DWM の枠管理外 |
+| `GWLP_WNDPROC` を差し替えて `WM_NCPAINT` で塗り直す | 差し替えは成功する (戻り値が非ゼロ) のに、以後の `WM_NCPAINT` が届かない。描画ログが 1 回しか出ない |
+| `SetWindowRgn` で領域を 1 px 内側へ縮める | 見た目が変わらない |
+
+途中で分かった周辺事実:
+
+- `WindowFromDC` は 0 を返す。`WM_DRAWITEM` の DC はウィンドウに
+  紐づかないメモリ DC なので、そこからハンドルは辿れない
+- `WM_DRAWITEM` の時点ではポップアップがまだ非表示。項目を測って
+  描いてから表示される順序なので `IsWindowVisible` では拾えない
+- `FrameRect` は right / bottom を含まない。幅・高さをそのまま渡すと
+  右辺と下辺が 1 px 残る
+
+**判定には等倍のスクリーンショットを使うこと。** 全画面を縮小した画像では
+1 px の枠が潰れて周囲に溶け、直っていないのに直ったように見える。
+実際にこれで何度も誤認した。
+
+### アイコンは要求寸法以上のイメージリストから引く
+`SHGFI_SMALLICON` / `SHIL_SMALL` は 16px を返す。これを 32px へ引き伸ばすと
+輪郭がにじむ。**QAP のアイコンがきれいなのは最初から必要な解像度で取っているから。**
+`SHIL_LARGE` (32) / `SHIL_EXTRALARGE` (48) / `SHIL_JUMBO` (256) を寸法で選び分け、
+拡大ではなく縮小になるようにする (`image_list_for`) 。添字はリスト間で共通なので、
+`SHGetFileInfo` で得た `iIcon` をそのまま別のリストへ渡せる。
 
 ### その他
 - `TrackPopupMenuEx` の座標は**物理ピクセル**。Per-Monitor V2 を宣言済み (`main.rs`)、DPI 変換は 1 箇所に閉じ込める。
