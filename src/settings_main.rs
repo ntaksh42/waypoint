@@ -47,6 +47,74 @@ struct DragRow {
     index: usize,
 }
 
+/// `Modifiers` を厳密に見て打鍵を 1 つ取り出す。
+///
+/// egui の `consume_key` は `matches_logically` で照合するため、指定していない
+/// Shift / Alt を無視する。素の `Enter` を待っているつもりが `Shift+Enter` まで
+/// 拾ってしまうので、ここでは `matches_exact` で見る。
+fn consume_key_exact(ctx: &egui::Context, modifiers: egui::Modifiers, key: egui::Key) -> bool {
+    ctx.input_mut(|input| {
+        let mut hit = false;
+        input.events.retain(|event| {
+            let is_match = matches!(
+                event,
+                egui::Event::Key {
+                    key: event_key,
+                    modifiers: event_modifiers,
+                    pressed: true,
+                    ..
+                } if *event_key == key && event_modifiers.matches_exact(modifiers)
+            );
+            hit |= is_match;
+            !is_match
+        });
+        hit
+    })
+}
+
+/// ダイアログの背後へフォーカスが漏れないようにする。
+///
+/// `egui::Window` は既定でモーダルではない。開いたまま `Tab` を押すと、
+/// フォーカスは画面全体を対象に探され、背後の一覧の行へ抜けてしまう。
+/// 実機で確認済み: 削除確認を開いたまま Tab → Enter で、
+/// 確認ボタンを押さずに (背後で選択されていた) 別の項目が削除された。
+///
+/// `Memory::set_modal_layer` はこのレイヤーより下のフォーカス要求を
+/// 一律で断る。次のフレームから効くので、毎フレーム呼び続けること。
+fn lock_modal_focus<R>(ctx: &egui::Context, window: &Option<egui::InnerResponse<R>>) {
+    if let Some(window) = window {
+        ctx.memory_mut(|memory| memory.set_modal_layer(window.response.layer_id));
+    }
+}
+
+/// フォーカス中のウィジェットが `Enter` を自分の起動に使うか。
+///
+/// egui はフォーカス中のクリック可能なウィジェットを `Enter` で押す。
+/// そこへ画面側の既定動作を重ねると、Cancel にフォーカスがある状態の
+/// `Enter` が「取り消し」と「確定」の両方を起こしてしまう。
+fn focus_takes_enter(ctx: &egui::Context) -> bool {
+    let Some(id) = ctx.memory(|memory| memory.focused()) else {
+        return false;
+    };
+    ctx.read_response(id)
+        .is_some_and(|response| response.sense.senses_click())
+}
+
+/// ダイアログの既定キー。`Enter` で確定、`Esc` で取り消す。
+///
+/// **ウィンドウを描いた後に呼ぶこと。** 先に消費すると、フォーカス中のボタンへ
+/// `Enter` が届かなくなる (egui はイベントを残したまま `key_pressed` で判定する) 。
+///
+/// `accept` は複数行の入力欄を持つダイアログで `false` にする。そこでは
+/// `Enter` が改行であり、確定に使うと文字が打てなくなる。
+fn dialog_keys(ctx: &egui::Context, accept: bool) -> (bool, bool) {
+    let ok = accept
+        && !focus_takes_enter(ctx)
+        && consume_key_exact(ctx, egui::Modifiers::NONE, egui::Key::Enter);
+    let cancel = consume_key_exact(ctx, egui::Modifiers::NONE, egui::Key::Escape);
+    (ok, cancel)
+}
+
 /// 挿入位置を示す線を引く。`after` なら行の下端、そうでなければ上端。
 fn draw_insert_line(ui: &egui::Ui, rect: egui::Rect, after: bool) {
     let y = if after { rect.bottom() } else { rect.top() };
@@ -81,6 +149,14 @@ struct SettingsApp {
     dirty: bool,
     load_error: Option<String>,
     status: Option<String>,
+    /// この描画で一覧の行がキーボードフォーカスを持っているか。
+    /// `Enter` / `Delete` を一覧の操作として扱ってよいかの判定に使う。
+    focused_row: Option<usize>,
+    /// 前の描画での `focused_row`。フォーカスが移った瞬間を見るために持つ。
+    previous_focused_row: Option<usize>,
+    /// 次の描画で選択行へフォーカスを移すか。
+    /// 起動直後と、キーボードで選択を動かした直後に立てる。
+    focus_selected_row: bool,
 }
 
 impl SettingsApp {
@@ -105,6 +181,10 @@ impl SettingsApp {
             dirty: false,
             load_error,
             status: None,
+            focused_row: None,
+            previous_focused_row: None,
+            // 起動直後から矢印キーで一覧をたどれるように、選択行へフォーカスを置く
+            focus_selected_row: true,
         }
     }
 
@@ -304,6 +384,13 @@ impl SettingsApp {
         }
     }
 
+    /// 画面全体のショートカット。
+    ///
+    /// **一覧を描いた後に呼ぶこと。** egui はフォーカス中のウィジェットを
+    /// `Enter` で起動するが、その判定は `key_pressed` でイベントを読むだけなので、
+    /// 描画前に `consume_key` すると打鍵がウィジェットへ届かなくなる。
+    /// 先に消費していたため、Tab で送ったフォーカス先のボタンが Enter で
+    /// 押せなくなっていた。
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         if self.draft.is_some()
             || self.variables_draft.is_some()
@@ -316,35 +403,47 @@ impl SettingsApp {
         {
             return;
         }
-        if ctx.input_mut(|input| {
-            input.consume_shortcut(&egui::KeyboardShortcut::new(
-                egui::Modifiers::CTRL,
-                egui::Key::S,
-            ))
-        }) {
+        if consume_key_exact(ctx, egui::Modifiers::CTRL, egui::Key::S) {
             self.save();
         }
-        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
-            self.begin_edit();
-        }
-        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Delete))
-            && self.selected_item.is_some()
+
+        // どこにもフォーカスが無いと矢印キーは何も起こさない。egui は
+        // フォーカス中のウィジェットを基準に次を探すため。Esc を押した後
+        // (egui はフォーカスを外す) に一覧が反応しなくなるので、
+        // 選択行へフォーカスを戻して続きから動かせるようにする
+        let nothing_focused = ctx.memory(|memory| memory.focused().is_none());
+        if nothing_focused
+            && (consume_key_exact(ctx, egui::Modifiers::NONE, egui::Key::ArrowDown)
+                || consume_key_exact(ctx, egui::Modifiers::NONE, egui::Key::ArrowUp))
         {
-            self.delete_pending = true;
+            self.focus_selected_row = true;
         }
-        if ctx.input_mut(|input| {
-            input.consume_shortcut(&egui::KeyboardShortcut::new(
-                egui::Modifiers::CTRL,
-                egui::Key::D,
-            ))
-        }) {
+
+        // Enter / Delete は一覧に対する操作。ボタンやコンボにフォーカスが
+        // あるときはそちらの打鍵なので横取りしない
+        let list_has_keys = self.focused_row.is_some() || !focus_takes_enter(ctx);
+        if list_has_keys {
+            if consume_key_exact(ctx, egui::Modifiers::NONE, egui::Key::Enter) {
+                self.begin_edit();
+            }
+            if consume_key_exact(ctx, egui::Modifiers::NONE, egui::Key::Delete)
+                && self.selected_item.is_some()
+            {
+                self.delete_pending = true;
+            }
+        }
+
+        if consume_key_exact(ctx, egui::Modifiers::CTRL, egui::Key::D) {
             self.duplicate_selected();
+            self.focus_selected_row = true;
         }
-        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::ALT, egui::Key::ArrowUp)) {
+        if consume_key_exact(ctx, egui::Modifiers::ALT, egui::Key::ArrowUp) {
             self.move_selected(-1);
+            self.focus_selected_row = true;
         }
-        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::ALT, egui::Key::ArrowDown)) {
+        if consume_key_exact(ctx, egui::Modifiers::ALT, egui::Key::ArrowDown) {
             self.move_selected(1);
+            self.focus_selected_row = true;
         }
     }
 
@@ -609,6 +708,9 @@ impl SettingsApp {
         });
         ui.separator();
 
+        // フォーカスは毎回描画から拾い直す
+        self.focused_row = None;
+
         // ドラッグ中に「何番目の手前へ入るか」。行の上半分/下半分で決める
         let mut insert_at: Option<usize> = None;
         let mut dropped: Option<(usize, usize)> = None;
@@ -617,9 +719,21 @@ impl SettingsApp {
             let id = egui::Id::new(("item_row", &self.selected_menu, index));
             let response = ui
                 .dnd_drag_source(id, DragRow { index }, |ui| {
-                    self.show_item_row(ui, index, item);
+                    self.show_item_row(ui, index, item, id);
                 })
                 .response;
+
+            // 行全体 (ドラッグ元) をキーボードフォーカスの単位にする。
+            // `dnd_drag_source` は `Sense::drag()` で掴むが、これは
+            // `FOCUSABLE` を含むのでフォーカス候補になる。矢印キーは
+            // この矩形を基準に隣の行を探す
+            if response.has_focus() {
+                self.focused_row = Some(index);
+            }
+            if self.focus_selected_row && self.selected_item == Some(index) {
+                response.request_focus();
+                self.focus_selected_row = false;
+            }
 
             // 掴んでいる行の上半分なら手前、下半分なら後ろへ挿入する
             if let Some(pointer) = ui.ctx().pointer_interact_pos()
@@ -653,13 +767,27 @@ impl SettingsApp {
             dropped = Some((payload.index, rows.len()));
         }
 
+        // 矢印キーは egui のフォーカスを行から行へ動かす。選択を追従させないと
+        // 網掛けも右側のボタン (Edit / Remove など) も付いてこない。
+        //
+        // `gained_focus()` は使えない。egui は矢印での移動を `end_pass` で
+        // 差し替えるため、次の描画では「前フレームから持っていた」扱いになり
+        // 一度も立たない (`memory/mod.rs` の `end_pass`) 。自前で変化を見る
+        if self.focused_row.is_some() && self.focused_row != self.previous_focused_row {
+            self.selected_item = self.focused_row;
+        }
+        self.previous_focused_row = self.focused_row;
+
         if let Some((from, at)) = dropped {
             self.reorder(from, at);
         }
     }
 
     /// 1 行分のセルを描く。列幅は見出しと揃える。
-    fn show_item_row(&mut self, ui: &mut egui::Ui, index: usize, item: &Item) {
+    ///
+    /// `row_id` は行 (ドラッグ元) の ID。名前セルもフォーカスを取れてしまうため、
+    /// フォーカスが来たら行へ渡し直す。
+    fn show_item_row(&mut self, ui: &mut egui::Ui, index: usize, item: &Item, row_id: egui::Id) {
         ui.horizontal(|ui| {
             // 掴む場所が分かるようにグリップを置く
             ui.add_space(2.0);
@@ -671,10 +799,18 @@ impl SettingsApp {
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| ui.selectable_label(selected, item.label().unwrap_or("----------------")),
             );
-            if response.inner.clicked() {
+            let label = response.inner;
+            // 名前セルもフォーカスを取れる。行と 2 つ並ぶと矢印キーが行の中で
+            // 足踏みし、そのまま一覧の外のボタンへ抜けてしまう。
+            // フォーカスは行へ寄せて、1 行 1 つに保つ
+            if label.has_focus() {
+                ui.memory_mut(|memory| memory.request_focus(row_id));
+                ui.ctx().request_repaint();
+            }
+            if label.clicked() {
                 self.selected_item = Some(index);
             }
-            if response.inner.double_clicked() {
+            if label.double_clicked() {
                 self.selected_item = Some(index);
                 self.begin_edit();
             }
@@ -699,7 +835,7 @@ impl SettingsApp {
         };
         let mut apply = false;
         let mut cancel = false;
-        egui::Window::new(if draft.editing.is_some() {
+        let window = egui::Window::new(if draft.editing.is_some() {
             "Edit item"
         } else {
             "Add item"
@@ -768,14 +904,17 @@ impl SettingsApp {
                 cancel = ui.button("Cancel").clicked();
             });
         });
+        lock_modal_focus(ctx, &window);
 
-        if apply {
+        // 単一行の入力欄しか無いので Enter を確定に使える
+        let (accept, dismiss) = dialog_keys(ctx, true);
+        if apply || accept {
             if let Some(error) = draft.validate() {
                 draft.error = Some(error);
             } else {
                 self.apply_draft();
             }
-        } else if cancel {
+        } else if cancel || dismiss {
             self.draft = None;
         }
     }
@@ -787,7 +926,7 @@ impl SettingsApp {
         let mut apply = false;
         let mut cancel = false;
         let mut remove = None;
-        egui::Window::new("Variables")
+        let window = egui::Window::new("Variables")
             .collapsible(false)
             .resizable(true)
             .default_width(520.0)
@@ -820,11 +959,15 @@ impl SettingsApp {
                     cancel = ui.button("Cancel").clicked();
                 });
             });
+        lock_modal_focus(ctx, &window);
 
         if let Some(index) = remove {
             draft.entries.remove(index);
         }
-        if apply {
+        // 名前と値はどちらも単一行なので Enter を確定に使える
+        let (accept, dismiss) = dialog_keys(ctx, true);
+        let cancel = cancel || dismiss;
+        if apply || accept {
             let mut variables = std::collections::BTreeMap::new();
             let mut error = None;
             for (name, value) in &draft.entries {
@@ -858,7 +1001,7 @@ impl SettingsApp {
         poll_hotkey_capture(ctx, draft);
         let mut apply = false;
         let mut cancel = false;
-        egui::Window::new("Trigger")
+        let window = egui::Window::new("Trigger")
             .collapsible(false)
             .resizable(false)
             .default_width(440.0)
@@ -899,7 +1042,12 @@ impl SettingsApp {
                     cancel = ui.button("Cancel").clicked();
                 });
             });
+        lock_modal_focus(ctx, &window);
 
+        // 除外プロセス欄が複数行なので Enter は改行に譲り、Esc だけ受ける。
+        // 記録中の打鍵はフックが握り潰すため、ここには Esc は届かない
+        let (_, dismiss) = dialog_keys(ctx, false);
+        let cancel = cancel || dismiss;
         if apply || cancel {
             // 画面を閉じるならフックを残さない
             hotkey_capture::stop();
@@ -953,7 +1101,7 @@ impl SettingsApp {
         let mut apply = false;
         let mut cancel = false;
 
-        egui::Window::new("Import folder structure")
+        let window = egui::Window::new("Import folder structure")
             .collapsible(false)
             .resizable(true)
             .default_size([620.0, 520.0])
@@ -1008,6 +1156,7 @@ impl SettingsApp {
                     cancel = ui.button("Cancel").clicked();
                 });
             });
+        lock_modal_focus(ctx, &window);
 
         if refresh {
             let root = std::path::Path::new(draft.root.trim());
@@ -1023,6 +1172,15 @@ impl SettingsApp {
             }
         }
 
+        // 取り込みは Preview が済んでいるときだけ Enter で確定できる
+        let (accept, dismiss) = dialog_keys(ctx, true);
+        let apply = apply
+            || (accept
+                && draft
+                    .preview
+                    .as_ref()
+                    .is_some_and(|preview| preview.included_count() > 0));
+        let cancel = cancel || dismiss;
         if apply {
             let item = self
                 .import_draft
@@ -1045,7 +1203,7 @@ impl SettingsApp {
 
     fn show_confirmations(&mut self, ctx: &egui::Context) {
         if self.add_pending {
-            egui::Window::new("Add favorite")
+            let window = egui::Window::new("Add favorite")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -1074,10 +1232,16 @@ impl SettingsApp {
                         self.add_pending = false;
                     }
                 });
+            lock_modal_focus(ctx, &window);
+            // 種類を選ぶ画面で既定の 1 つは決められない。Esc の取り消しだけ受ける
+            let (_, dismiss) = dialog_keys(ctx, false);
+            if dismiss {
+                self.add_pending = false;
+            }
         }
 
         if self.move_pending {
-            egui::Window::new("Move favorite")
+            let window = egui::Window::new("Move favorite")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -1096,10 +1260,16 @@ impl SettingsApp {
                         }
                     });
                 });
+            lock_modal_focus(ctx, &window);
+            // 上下どちらも既定にはできない。Esc の取り消しだけ受ける
+            let (_, dismiss) = dialog_keys(ctx, false);
+            if dismiss {
+                self.move_pending = false;
+            }
         }
 
         if self.delete_pending {
-            egui::Window::new("Remove item?")
+            let window = egui::Window::new("Remove item?")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -1115,10 +1285,19 @@ impl SettingsApp {
                         }
                     });
                 });
+            lock_modal_focus(ctx, &window);
+            // Delete で出した確認なので Enter は削除に割り当てる
+            let (accept, dismiss) = dialog_keys(ctx, true);
+            if accept {
+                self.remove_selected();
+                self.delete_pending = false;
+            } else if dismiss {
+                self.delete_pending = false;
+            }
         }
 
         if self.close_pending {
-            egui::Window::new("Discard changes?")
+            let window = egui::Window::new("Discard changes?")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -1134,6 +1313,12 @@ impl SettingsApp {
                         }
                     });
                 });
+            lock_modal_focus(ctx, &window);
+            // 破棄は取り返しがつかない。Enter には割り当てず、Esc で編集へ戻す
+            let (_, dismiss) = dialog_keys(ctx, false);
+            if dismiss {
+                self.close_pending = false;
+            }
         }
     }
 }
@@ -1146,8 +1331,10 @@ impl eframe::App for SettingsApp {
             self.close_pending = true;
         }
         self.add_dropped_folders(&ctx);
-        self.handle_shortcuts(&ctx);
+        // ショートカットは一覧を描いた後に見る。先に打鍵を消費すると、
+        // フォーカス中のウィジェットが Enter で起動できなくなる
         self.show_items(ui);
+        self.handle_shortcuts(&ctx);
         self.show_item_editor(&ctx);
         self.show_variables_editor(&ctx);
         self.show_trigger_editor(&ctx);
