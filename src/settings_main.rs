@@ -877,6 +877,7 @@ impl SettingsApp {
                     &mut draft.include_frequent_folders,
                     "Include Frequent Folders",
                 );
+                ui.checkbox(&mut draft.include_open_windows, "Include Open Windows");
                 ui.checkbox(&mut draft.search_paths, "Search folder paths");
                 ui.horizontal(|ui| {
                     ui.label("Visible results");
@@ -931,6 +932,7 @@ impl SettingsApp {
                     draft.include_recent_folders;
                 self.config.settings.quick_launch.include_frequent_folders =
                     draft.include_frequent_folders;
+                self.config.settings.quick_launch.include_open_windows = draft.include_open_windows;
                 self.config.settings.quick_launch.search_paths = draft.search_paths;
                 self.config.settings.quick_launch.visible_results =
                     draft.visible_results.clamp(12, 24);
@@ -1240,6 +1242,7 @@ struct TriggerDraft {
     quick_launch_hotkey: String,
     include_recent_folders: bool,
     include_frequent_folders: bool,
+    include_open_windows: bool,
     search_paths: bool,
     visible_results: usize,
     error: Option<String>,
@@ -1272,6 +1275,7 @@ impl TriggerDraft {
             quick_launch_hotkey: quick_launch.hotkey.clone(),
             include_recent_folders: quick_launch.include_recent_folders,
             include_frequent_folders: quick_launch.include_frequent_folders,
+            include_open_windows: quick_launch.include_open_windows,
             search_paths: quick_launch.search_paths,
             visible_results: quick_launch.visible_results,
             error: None,

@@ -12,7 +12,7 @@ use windows::Win32::Graphics::Gdi::{
     CLIP_DEFAULT_PRECIS, CreateCompatibleDC, CreateFontW, CreatePen, CreateSolidBrush,
     DEFAULT_CHARSET, DEFAULT_PITCH, DT_END_ELLIPSIS, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER,
     DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint, FW_NORMAL, FW_SEMIBOLD, FillRect,
-    GetMonitorInfoW, GetObjectW, HBRUSH, HDC, HFONT, InvalidateRect, LineTo,
+    GetMonitorInfoW, GetObjectW, HBITMAP, HBRUSH, HDC, HFONT, InvalidateRect, LineTo,
     MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow, MoveToEx, OUT_DEFAULT_PRECIS,
     PAINTSTRUCT, PS_SOLID, RoundRect, SelectObject, SetBkColor, SetBkMode, SetTextColor,
     TRANSPARENT,
@@ -37,7 +37,7 @@ use windows::core::{HSTRING, PCWSTR, Result, w};
 
 use crate::config::{Config, OpenMode};
 use crate::dynamic::Menus;
-use crate::quick_launch::{Entry, Index};
+use crate::quick_launch::{Action, Entry, Index};
 
 const EDIT_ID: isize = 1001;
 const LIST_ID: isize = 1002;
@@ -69,7 +69,7 @@ struct State {
     origin: Option<HWND>,
     index: Index,
     results: Vec<Entry>,
-    pending: Option<(Entry, OpenMode)>,
+    pending: Option<Entry>,
     visible_results: usize,
     dpi: u32,
     edit_font: Option<HFONT>,
@@ -122,14 +122,11 @@ pub fn show(owner: HWND, origin: Option<HWND>) -> Result<()> {
     Ok(())
 }
 
-pub fn take_pending() -> Option<(Entry, OpenMode, Option<HWND>)> {
+pub fn take_pending() -> Option<(Entry, Option<HWND>)> {
     STATE.with(|state| {
         let mut state = state.borrow_mut();
         let origin = state.origin;
-        state
-            .pending
-            .take()
-            .map(|(entry, mode)| (entry, mode, origin))
+        state.pending.take().map(|entry| (entry, origin))
     })
 }
 
@@ -409,14 +406,7 @@ fn update_results(state: &RefCell<State>) {
         let labels: Vec<HSTRING> = state
             .results
             .iter()
-            .map(|entry| {
-                let context = if entry.breadcrumb.is_empty() {
-                    entry.path.clone()
-                } else {
-                    format!("{}  —  {}", entry.breadcrumb, entry.path)
-                };
-                HSTRING::from(format!("{}    {}", entry.name, context))
-            })
+            .map(|entry| HSTRING::from(format!("{}    {}", entry.name, entry_context(entry))))
             .collect();
         (state.list, labels, !state.results.is_empty())
     }; // ← ここで借用が切れる。以降の再入は borrow() できる
@@ -506,19 +496,19 @@ fn queue_selected() {
 
     let queued = STATE.with(|state| {
         let mut state = state.borrow_mut();
-        let entry = selected
+        let mut entry = selected
             .and_then(|index| state.results.get(index))
             .cloned()?;
-        let shift = unsafe { GetKeyState(VK_SHIFT.0 as i32) } < 0;
-        let control = unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0;
-        let mode = if shift {
-            OpenMode::NewWindow
-        } else if control {
-            OpenMode::Reuse
-        } else {
-            entry.open
-        };
-        state.pending = Some((entry, mode));
+        if let Action::OpenFolder(mode) = &mut entry.action {
+            let shift = unsafe { GetKeyState(VK_SHIFT.0 as i32) } < 0;
+            let control = unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0;
+            if shift {
+                *mode = OpenMode::NewWindow;
+            } else if control {
+                *mode = OpenMode::Reuse;
+            }
+        }
+        state.pending = Some(entry);
         Some((state.window, state.owner))
     });
     let Some((window, owner)) = queued else {
@@ -764,7 +754,12 @@ unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
             let _ = DeleteObject(accent.into());
         }
 
-        draw_entry_icon(draw.hDC, &entry.path, draw.rcItem, dpi);
+        match entry.action {
+            Action::OpenFolder(_) => draw_path_icon(draw.hDC, &entry.path, draw.rcItem, dpi),
+            Action::FocusWindow(hwnd) => {
+                draw_window_icon(draw.hDC, HWND(hwnd as *mut _), draw.rcItem, dpi)
+            }
+        }
         SetBkMode(draw.hDC, TRANSPARENT);
         let text_left = draw.rcItem.left + scale(40, dpi);
         let text_right = draw.rcItem.right - scale(8, dpi);
@@ -785,11 +780,7 @@ unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
         if let Some(font) = detail_font {
             let old = SelectObject(draw.hDC, font.into());
             SetTextColor(draw.hDC, TEXT_SECONDARY);
-            let detail = if entry.breadcrumb.is_empty() {
-                entry.path.clone()
-            } else {
-                format!("{}  •  {}", entry.breadcrumb, entry.path)
-            };
+            let detail = entry_context(&entry);
             let mut rect = RECT {
                 left: text_left,
                 top: draw.rcItem.top + scale(20, dpi),
@@ -799,6 +790,18 @@ unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
             draw_text(draw.hDC, &detail, &mut rect);
             SelectObject(draw.hDC, old);
         }
+    }
+}
+
+/// リスト・詳細行に出す補足テキスト。パスが無い (ウィンドウ項目) 場合は
+/// breadcrumb だけを出す。
+fn entry_context(entry: &Entry) -> String {
+    if entry.path.is_empty() {
+        entry.breadcrumb.clone()
+    } else if entry.breadcrumb.is_empty() {
+        entry.path.clone()
+    } else {
+        format!("{}  —  {}", entry.breadcrumb, entry.path)
     }
 }
 
@@ -814,10 +817,21 @@ unsafe fn draw_text(hdc: HDC, text: &str, rect: &mut RECT) {
     }
 }
 
-unsafe fn draw_entry_icon(hdc: HDC, path: &str, rect: RECT, dpi: u32) {
+unsafe fn draw_path_icon(hdc: HDC, path: &str, rect: RECT, dpi: u32) {
     let Some(bitmap) = crate::icon::bitmap_for(path) else {
         return;
     };
+    unsafe { draw_icon_bitmap(hdc, bitmap, rect, dpi) };
+}
+
+unsafe fn draw_window_icon(hdc: HDC, hwnd: HWND, rect: RECT, dpi: u32) {
+    let Some(bitmap) = crate::icon::bitmap_for_window(hwnd) else {
+        return;
+    };
+    unsafe { draw_icon_bitmap(hdc, bitmap, rect, dpi) };
+}
+
+unsafe fn draw_icon_bitmap(hdc: HDC, bitmap: HBITMAP, rect: RECT, dpi: u32) {
     unsafe {
         let source = CreateCompatibleDC(Some(hdc));
         if source.is_invalid() {

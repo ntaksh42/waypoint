@@ -177,13 +177,13 @@ Quick Access Popup の全機能を分解し、本プロジェクトでの扱い�
 ### FR-9 Quick Launch
 
 - **FR-9.1** 設定可能なグローバルホットキー（既定 `Ctrl+Shift+Q`）で検索画面を開く
-- **FR-9.2** 登録済みの `folder` / `specialFolder` と、設定で有効にした Recent / Frequent Folders を検索対象にする
+- **FR-9.2** 登録済みの `folder` / `specialFolder` と、設定で有効にした Recent / Frequent Folders、Current Windows を検索対象にする
 - **FR-9.3** 項目名と所属サブメニューのパンくずを、大文字小文字を区別しない部分一致で検索する。空白区切りの語は AND 条件とする
 - **FR-9.4** パス検索は設定で有効化できる。検索中にパスの存在確認やネットワークアクセスを行わない
 - **FR-9.5** 名前の完全一致、先頭一致、単語境界一致、部分一致、パンくず一致、パス一致の順に候補を並べ、同点ではメニュー順を保つ
 - **FR-9.6** 候補には名前、パンくず、解決済みパスを表示し、同名項目を判別できるようにする
 - **FR-9.7** `Up` / `Down` / `Home` / `End` / `PageUp` / `PageDown` で候補を移動し、`Enter` で実行、`Esc` またはフォーカス喪失で閉じる
-- **FR-9.8** `Shift+Enter` は常に `newWindow`、`Ctrl+Enter` は常に `reuse` として開く
+- **FR-9.8** `Shift+Enter` は常に `newWindow`、`Ctrl+Enter` は常に `reuse` として開く。Current Windows の候補は開き方を持たないため、この修飾は無視して対象ウィンドウへ切り替える
 - **FR-9.9** 検索インデックスは起動時、設定再読み込み時、動的メニュー更新後に構築する。キー入力時はメモリ上の検索だけを行う
 - **FR-9.10** 検索画面は常駐プロセス内の標準 Win32 コントロールで実装し、管理画面プロセスを起動しない
 - **FR-9.11** 検索画面は黒を基調とし、`Segoe UI Variable Text`、Windows 11 の角丸・ダークタイトルバー、青系の選択色を使う。未対応環境では通常の Win32 表示へフォールバックする
@@ -218,6 +218,7 @@ Quick Access Popup の全機能を分解し、本プロジェクトでの扱い�
       "hotkey": "Ctrl+Shift+Q",
       "includeRecentFolders": true,
       "includeFrequentFolders": true,
+      "includeOpenWindows": true,
       "searchPaths": false,
       "visibleResults": 12
     },

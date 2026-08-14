@@ -29,6 +29,7 @@ use windows::core::{HSTRING, PCWSTR, Result, w};
 use crate::config::{Config, LoadOutcome};
 use crate::menu::{Action, BuiltMenu, Selection};
 use crate::process;
+use crate::quick_launch;
 use crate::quick_launch_window::{self, WM_QUICK_LAUNCH_EXECUTE};
 use crate::shell;
 use crate::trigger::{self, Registration, WM_TRIGGER_MENU};
@@ -312,8 +313,15 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
             LRESULT(0)
         }
         WM_QUICK_LAUNCH_EXECUTE => {
-            if let Some((entry, mode, origin)) = quick_launch_window::take_pending() {
-                let _ = shell::open(&entry.path, mode, origin);
+            if let Some((entry, origin)) = quick_launch_window::take_pending() {
+                match entry.action {
+                    quick_launch::Action::OpenFolder(mode) => {
+                        let _ = shell::open(&entry.path, mode, origin);
+                    }
+                    quick_launch::Action::FocusWindow(hwnd) => {
+                        shell::activate_window(HWND(hwnd as *mut _));
+                    }
+                }
                 refresh_dynamic();
             }
             LRESULT(0)

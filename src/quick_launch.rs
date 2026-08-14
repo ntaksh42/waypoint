@@ -5,12 +5,21 @@
 use crate::config::{Config, Item, OpenMode};
 use crate::dynamic::Menus;
 
+/// 検索結果を選んだときに行うアクション。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Action {
+    /// フォルダを開く (新規ウィンドウ / 既存ウィンドウの再利用)。
+    OpenFolder(OpenMode),
+    /// 既に開いているウィンドウにフォーカスを移す。
+    FocusWindow(isize),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     pub name: String,
     pub breadcrumb: String,
     pub path: String,
-    pub open: OpenMode,
+    pub action: Action,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -35,7 +44,7 @@ impl Index {
                 name: item.name.clone(),
                 breadcrumb: "Recent Folders".to_string(),
                 path: item.path.clone(),
-                open: OpenMode::NewWindow,
+                action: Action::OpenFolder(OpenMode::NewWindow),
             }));
         }
         if settings.include_frequent_folders {
@@ -43,7 +52,15 @@ impl Index {
                 name: item.name.clone(),
                 breadcrumb: "Frequent Folders".to_string(),
                 path: item.path.clone(),
-                open: OpenMode::NewWindow,
+                action: Action::OpenFolder(OpenMode::NewWindow),
+            }));
+        }
+        if settings.include_open_windows {
+            entries.extend(dynamic.current_windows.iter().map(|window| Entry {
+                name: window.title.clone(),
+                breadcrumb: "Open Windows".to_string(),
+                path: String::new(),
+                action: Action::FocusWindow(window.hwnd),
             }));
         }
 
@@ -91,7 +108,7 @@ fn collect_items(
                         name: name.clone(),
                         breadcrumb: parents.join(" > "),
                         path,
-                        open: open.unwrap_or_default(),
+                        action: Action::OpenFolder(open.unwrap_or_default()),
                     });
                 }
             }
@@ -105,7 +122,7 @@ fn collect_items(
                         name: name.clone(),
                         breadcrumb: parents.join(" > "),
                         path,
-                        open: open.unwrap_or_default(),
+                        action: Action::OpenFolder(open.unwrap_or_default()),
                     });
                 }
             }
@@ -151,19 +168,19 @@ mod tests {
                     name: "Release".into(),
                     breadcrumb: "Projects > waypoint".into(),
                     path: r"E:\waypoint\target\release".into(),
-                    open: OpenMode::Reuse,
+                    action: Action::OpenFolder(OpenMode::Reuse),
                 },
                 Entry {
                     name: "Waypoint docs".into(),
                     breadcrumb: "Projects".into(),
                     path: r"E:\waypoint\docs".into(),
-                    open: OpenMode::NewWindow,
+                    action: Action::OpenFolder(OpenMode::NewWindow),
                 },
                 Entry {
                     name: "Old waypoint".into(),
                     breadcrumb: "Archive".into(),
                     path: r"E:\archive\waypoint".into(),
-                    open: OpenMode::NewWindow,
+                    action: Action::OpenFolder(OpenMode::NewWindow),
                 },
             ],
             search_paths: false,
@@ -202,5 +219,19 @@ mod tests {
         assert!(index.search("target").is_empty());
         index.search_paths = true;
         assert_eq!(index.search("target")[0].name, "Release");
+    }
+
+    #[test]
+    fn open_window_entries_focus_instead_of_opening_a_folder() {
+        let mut index = index();
+        index.entries.push(Entry {
+            name: "waypoint - Notepad".into(),
+            breadcrumb: "Open Windows".into(),
+            path: String::new(),
+            action: Action::FocusWindow(12345),
+        });
+        let found = index.search("notepad");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].action, Action::FocusWindow(12345));
     }
 }

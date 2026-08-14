@@ -7,7 +7,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
-use windows::Win32::Foundation::{HWND, SIZE};
+use windows::Win32::Foundation::{HWND, LPARAM, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{BI_RGB, BITMAPINFO, BITMAPINFOHEADER};
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS, DeleteDC, HBITMAP, HGDIOBJ, SelectObject,
@@ -21,7 +21,8 @@ use windows::Win32::UI::Shell::{
     SHParseDisplayName, SHSTOCKICONID, SHSTOCKICONINFO,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    DestroyIcon, GCLP_HICON, GCLP_HICONSM, GetClassLongPtrW, HICON,
+    DestroyIcon, GCLP_HICON, GCLP_HICONSM, GetClassLongPtrW, HICON, ICON_BIG, ICON_SMALL,
+    ICON_SMALL2, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_GETICON,
 };
 use windows::core::{HSTRING, PCWSTR};
 
@@ -147,26 +148,72 @@ pub fn bitmap_for_dll_icon(dll: &str, index: i32) -> Option<HBITMAP> {
     })
 }
 
-/// Current Windows の各項目に、そのウィンドウクラスのアイコンを付ける。
+/// Current Windows の各項目にそのウィンドウのアイコンを付ける。
+///
+/// Explorer (`CabinetWClass`) などはクラスアイコンを登録せず、
+/// `WM_GETICON` に応答する形でアイコンを渡す (実測でクラス側は
+/// large=0/small=0 だった) 。`WM_GETICON` を先に試し、無応答なら
+/// クラスアイコンへフォールバックする。
 pub fn bitmap_for_window(hwnd: HWND) -> Option<HBITMAP> {
     let key = format!("window-icon:{}", hwnd.0 as isize);
     cached_bitmap(&key, || unsafe {
-        // 32px 描画では大アイコンを先に探す。小アイコンの引き伸ばしを避ける
-        let (first, second) = if menu_icon_size().cx > 16 {
-            (GCLP_HICON, GCLP_HICONSM)
-        } else {
-            (GCLP_HICONSM, GCLP_HICON)
-        };
+        let large_first = menu_icon_size().cx > 16;
+        let icon = window_icon_via_message(hwnd, large_first)
+            .or_else(|| window_icon_via_class(hwnd, large_first))?;
+        icon_to_bitmap(icon)
+    })
+}
+
+/// `WM_GETICON` でウィンドウ自身が渡すアイコンを取る。
+///
+/// 応答しないウィンドウでハングしないよう `SendMessageTimeoutW` を使う。
+unsafe fn window_icon_via_message(hwnd: HWND, large_first: bool) -> Option<HICON> {
+    let order: [WPARAM; 3] = if large_first {
+        [
+            WPARAM(ICON_BIG as usize),
+            WPARAM(ICON_SMALL2 as usize),
+            WPARAM(ICON_SMALL as usize),
+        ]
+    } else {
+        [
+            WPARAM(ICON_SMALL as usize),
+            WPARAM(ICON_SMALL2 as usize),
+            WPARAM(ICON_BIG as usize),
+        ]
+    };
+    unsafe {
+        order.into_iter().find_map(|which| {
+            let mut result = 0usize;
+            let sent = SendMessageTimeoutW(
+                hwnd,
+                WM_GETICON,
+                which,
+                LPARAM(0),
+                SMTO_ABORTIFHUNG,
+                100,
+                Some(&mut result),
+            );
+            (sent.0 != 0 && result != 0).then_some(HICON(result as *mut _))
+        })
+    }
+}
+
+/// クラスアイコン (`GCLP_HICON` / `GCLP_HICONSM`) へのフォールバック。
+unsafe fn window_icon_via_class(hwnd: HWND, large_first: bool) -> Option<HICON> {
+    let (first, second) = if large_first {
+        (GCLP_HICON, GCLP_HICONSM)
+    } else {
+        (GCLP_HICONSM, GCLP_HICON)
+    };
+    unsafe {
         let raw = GetClassLongPtrW(hwnd, first);
         let raw = if raw == 0 {
             GetClassLongPtrW(hwnd, second)
         } else {
             raw
         };
-        (raw != 0)
-            .then_some(HICON(raw as *mut _))
-            .and_then(icon_to_bitmap)
-    })
+        (raw != 0).then_some(HICON(raw as *mut _))
+    }
 }
 
 /// 埋め込み PNG を現在の DPI のメニューサイズへ縮小して使う。
