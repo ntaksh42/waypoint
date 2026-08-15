@@ -57,6 +57,8 @@ pub struct Entry {
     pub breadcrumb: String,
     pub path: String,
     pub action: Action,
+    /// showBranch が真の Folder 項目のみ。構築時にまとめて読む (FR-2.15) 。
+    pub branch: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -76,6 +78,7 @@ impl Index {
             &config.items,
             &config.variables,
             &mut Vec::new(),
+            false,
             &mut entries,
         );
 
@@ -86,6 +89,7 @@ impl Index {
                 breadcrumb: "Recent Folders".to_string(),
                 path: item.path.clone(),
                 action: Action::OpenFolder(OpenMode::NewWindow),
+                branch: None,
             }));
         }
         if settings.include_frequent_folders {
@@ -94,6 +98,7 @@ impl Index {
                 breadcrumb: "Frequent Folders".to_string(),
                 path: item.path.clone(),
                 action: Action::OpenFolder(OpenMode::NewWindow),
+                branch: None,
             }));
         }
         let windows = if settings.include_open_windows {
@@ -105,6 +110,7 @@ impl Index {
                     breadcrumb: "Open Windows".to_string(),
                     path: String::new(),
                     action: Action::FocusWindow(window.hwnd),
+                    branch: None,
                 })
                 .collect()
         } else {
@@ -119,6 +125,7 @@ impl Index {
                     breadcrumb: bookmark.breadcrumb,
                     path: bookmark.url.clone(),
                     action: Action::OpenUrl(bookmark.url),
+                    branch: None,
                 })
                 .collect()
         } else {
@@ -133,6 +140,7 @@ impl Index {
                     breadcrumb: String::new(),
                     path: app.shortcut_path,
                     action: Action::LaunchApp,
+                    branch: None,
                 })
                 .collect()
         } else {
@@ -195,10 +203,7 @@ fn search_entries<'a>(
         .collect();
     // 文字列一致の質を最優先し、同点内では使用頻度・最近使った順で並べる
     matches.sort_by_key(|(score, usage, order, _)| (*score, *usage, *order));
-    matches
-        .into_iter()
-        .map(|(_, _, _, entry)| entry)
-        .collect()
+    matches.into_iter().map(|(_, _, _, entry)| entry).collect()
 }
 
 /// 同じパスを指す項目 (config の Folder / Recent Folders / Frequent
@@ -218,23 +223,36 @@ fn dedup_by_path(entries: Vec<Entry>) -> Vec<Entry> {
         .collect()
 }
 
+/// `inherited_show_branch` は祖先 Submenu の showBranch が真だったか。
+/// 真なら配下の Folder は自身の showBranch を問わずブランチ名を持たせる
+/// (FR-2.14、menu.rs の build_level と同じ継承規則) 。
 fn collect_items(
     items: &[Item],
     variables: &std::collections::BTreeMap<String, String>,
     parents: &mut Vec<String>,
+    inherited_show_branch: bool,
     entries: &mut Vec<Entry>,
 ) {
     for item in items {
         match item {
             Item::Folder {
-                name, path, open, ..
+                name,
+                path,
+                open,
+                show_branch,
+                ..
             } => {
                 if let Some(path) = crate::config::expand(path, variables) {
+                    // ブランチ名の付与は構築時に済ませる。表示経路では読まない (FR-2.15)
+                    let branch = (inherited_show_branch || *show_branch)
+                        .then(|| crate::git::branch_of(&path))
+                        .flatten();
                     entries.push(Entry {
                         name: name.clone(),
                         breadcrumb: parents.join(" > "),
                         path,
                         action: Action::OpenFolder(open.unwrap_or_default()),
+                        branch,
                     });
                 }
             }
@@ -249,6 +267,7 @@ fn collect_items(
                         breadcrumb: parents.join(" > "),
                         path,
                         action: Action::OpenFolder(open.unwrap_or_default()),
+                        branch: None,
                     });
                 }
             }
@@ -258,11 +277,22 @@ fn collect_items(
                     breadcrumb: parents.join(" > "),
                     path: target.clone(),
                     action: Action::OpenWithDefaultHandler,
+                    branch: None,
                 });
             }
-            Item::Submenu { name, items } => {
+            Item::Submenu {
+                name,
+                items,
+                show_branch,
+            } => {
                 parents.push(name.clone());
-                collect_items(items, variables, parents, entries);
+                collect_items(
+                    items,
+                    variables,
+                    parents,
+                    inherited_show_branch || *show_branch,
+                    entries,
+                );
                 parents.pop();
             }
             Item::Separator { .. } => {}
@@ -303,18 +333,21 @@ mod tests {
                     breadcrumb: "Projects > waypoint".into(),
                     path: r"E:\waypoint\target\release".into(),
                     action: Action::OpenFolder(OpenMode::Reuse),
+                    branch: None,
                 },
                 Entry {
                     name: "Waypoint docs".into(),
                     breadcrumb: "Projects".into(),
                     path: r"E:\waypoint\docs".into(),
                     action: Action::OpenFolder(OpenMode::NewWindow),
+                    branch: None,
                 },
                 Entry {
                     name: "Old waypoint".into(),
                     breadcrumb: "Archive".into(),
                     path: r"E:\archive\waypoint".into(),
                     action: Action::OpenFolder(OpenMode::NewWindow),
+                    branch: None,
                 },
             ],
             bookmarks: vec![
@@ -323,12 +356,14 @@ mod tests {
                     breadcrumb: "Work".into(),
                     path: "https://github.com/".into(),
                     action: Action::OpenUrl("https://github.com/".into()),
+                    branch: None,
                 },
                 Entry {
                     name: "Example".into(),
                     breadcrumb: String::new(),
                     path: "https://example.com/".into(),
                     action: Action::OpenUrl("https://example.com/".into()),
+                    branch: None,
                 },
             ],
             windows: vec![Entry {
@@ -336,6 +371,7 @@ mod tests {
                 breadcrumb: "Open Windows".into(),
                 path: String::new(),
                 action: Action::FocusWindow(12345),
+                branch: None,
             }],
             apps: vec![Entry {
                 name: "Visual Studio Code".into(),
@@ -344,6 +380,7 @@ mod tests {
                     r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Visual Studio Code.lnk"
                         .into(),
                 action: Action::LaunchApp,
+                branch: None,
             }],
             search_paths: false,
             ranking: Ranking::default(),
@@ -385,12 +422,14 @@ mod tests {
             breadcrumb: String::new(),
             path: r"C:\Alpha".into(),
             action: Action::OpenFolder(OpenMode::NewWindow),
+            branch: None,
         };
         let beta = Entry {
             name: "Alpha Utils".into(),
             breadcrumb: String::new(),
             path: r"C:\Beta".into(),
             action: Action::OpenFolder(OpenMode::NewWindow),
+            branch: None,
         };
         let mut idx = Index {
             entries: vec![alpha, beta.clone()],
@@ -527,5 +566,68 @@ mod tests {
         assert_eq!(prefix_badge("f cargo.toml"), Some("FILES"));
         assert_eq!(prefix_badge("plain query"), None);
         assert_eq!(prefix_badge(""), None);
+    }
+
+    /// showBranch が真の Folder は、このリポジトリ自身を指せば
+    /// Entry::branch にブランチ名が入る (FR-2.14 相当) 。
+    #[test]
+    fn folder_with_show_branch_carries_branch_name() {
+        let config = Config {
+            items: vec![Item::Folder {
+                name: "waypoint".to_string(),
+                path: env!("CARGO_MANIFEST_DIR").to_string(),
+                open: None,
+                icon: None,
+                show_branch: true,
+            }],
+            ..Config::default()
+        };
+        let index = Index::build(&config, &Menus::default());
+        let found = index.search("waypoint");
+        assert_eq!(found.len(), 1);
+        assert!(found[0].branch.is_some());
+    }
+
+    /// showBranch が偽なら、同じパスでもブランチ名を読まない (オプトイン) 。
+    #[test]
+    fn folder_without_show_branch_has_no_branch() {
+        let config = Config {
+            items: vec![Item::Folder {
+                name: "waypoint".to_string(),
+                path: env!("CARGO_MANIFEST_DIR").to_string(),
+                open: None,
+                icon: None,
+                show_branch: false,
+            }],
+            ..Config::default()
+        };
+        let index = Index::build(&config, &Menus::default());
+        let found = index.search("waypoint");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].branch, None);
+    }
+
+    /// Submenu の showBranch は配下の Folder (自身は showBranch=false) へ
+    /// 継承される。
+    #[test]
+    fn submenu_show_branch_is_inherited_by_child_folders() {
+        let config = Config {
+            items: vec![Item::Submenu {
+                name: "Repos".to_string(),
+                items: vec![Item::Folder {
+                    name: "waypoint".to_string(),
+                    path: env!("CARGO_MANIFEST_DIR").to_string(),
+                    open: None,
+                    icon: None,
+                    show_branch: false,
+                }],
+                show_branch: true,
+            }],
+            ..Config::default()
+        };
+        let index = Index::build(&config, &Menus::default());
+        let found = index.search("waypoint");
+        assert_eq!(found.len(), 1);
+        assert!(found[0].branch.is_some());
     }
 }

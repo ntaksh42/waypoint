@@ -137,7 +137,7 @@ pub fn build(cfg: &Config, dynamic: &DynamicMenus) -> Result<BuiltMenu> {
         next_id: FIRST_ITEM_ID,
         actions: BTreeMap::new(),
     };
-    let menu = unsafe { build_level(&cfg.items, &mut ctx)? };
+    let menu = unsafe { build_level(&cfg.items, false, &mut ctx)? };
     unsafe {
         append_in_the_works(menu, dynamic, &mut ctx)?;
         append_footer(menu)?;
@@ -164,7 +164,14 @@ struct BuildCtx<'a> {
     actions: BTreeMap<usize, Action>,
 }
 
-unsafe fn build_level(items: &[Item], ctx: &mut BuildCtx) -> Result<HMENU> {
+/// `inherited_show_branch` は親 Submenu (祖先を含む) の showBranch が
+/// 真だったかどうか。真なら配下の Folder は自身の showBranch を問わず
+/// ブランチ名を表示する (FR-2.14) 。
+unsafe fn build_level(
+    items: &[Item],
+    inherited_show_branch: bool,
+    ctx: &mut BuildCtx,
+) -> Result<HMENU> {
     unsafe {
         let menu = CreatePopupMenu()?;
         // 各階層の先頭 9 件に 1〜9 を割り当てる (FR-2.4)
@@ -187,8 +194,12 @@ unsafe fn build_level(items: &[Item], ctx: &mut BuildCtx) -> Result<HMENU> {
                         false,
                     )?;
                 }
-                Item::Submenu { name, items } => {
-                    let sub = build_level(items, ctx)?;
+                Item::Submenu {
+                    name,
+                    items,
+                    show_branch,
+                } => {
+                    let sub = build_level(items, inherited_show_branch || *show_branch, ctx)?;
                     accel += 1;
                     append_owner_drawn(
                         menu,
@@ -211,9 +222,9 @@ unsafe fn build_level(items: &[Item], ctx: &mut BuildCtx) -> Result<HMENU> {
                     // ブランチ名の付与は構築時に済ませる。表示経路では読まない (FR-2.15)
                     let branch = resolved
                         .as_deref()
-                        .filter(|_| *show_branch)
+                        .filter(|_| inherited_show_branch || *show_branch)
                         .and_then(crate::git::branch_of);
-                    let label = with_branch(name, branch.as_deref());
+                    let label = crate::git::with_branch(name, branch.as_deref());
                     append_leaf(menu, ctx, &label, resolved, open.unwrap_or_default(), accel)?;
                 }
                 Item::SpecialFolder {
@@ -582,15 +593,6 @@ fn path_menu_icon(name: &str) -> SHSTOCKICONID {
     }
 }
 
-/// ブランチ名があれば項目名の後ろに `[名前]` を付す (FR-2.14) 。
-/// リポジトリでない項目は名前のみ。
-fn with_branch(name: &str, branch: Option<&str>) -> String {
-    match branch {
-        Some(branch) => format!("{name}  [{branch}]"),
-        None => name.to_string(),
-    }
-}
-
 /// 上位 9 件に `&1 ` のようなアクセラレータを前置する (FR-2.4) 。
 fn decorate(name: &str, numeric: bool, accel: usize) -> String {
     if numeric && (1..=9).contains(&accel) {
@@ -603,7 +605,8 @@ fn decorate(name: &str, numeric: bool, accel: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{decorate, path_menu_icon, strip_accelerator, with_branch};
+    use super::{decorate, path_menu_icon, strip_accelerator};
+    use crate::git::with_branch;
 
     /// Recent / Frequent × フォルダ / ファイルの 4 つが別アイコンになること。
     /// 同じだと In the Works の中で見分けが付かない。
@@ -623,16 +626,6 @@ mod tests {
         unique.sort_unstable();
         unique.dedup();
         assert_eq!(unique.len(), 4, "同じアイコンが割り当てられている: {ids:?}");
-    }
-
-    #[test]
-    fn appends_branch_when_present() {
-        assert_eq!(with_branch("waypoint", Some("main")), "waypoint  [main]");
-    }
-
-    #[test]
-    fn leaves_name_alone_outside_repository() {
-        assert_eq!(with_branch("Downloads", None), "Downloads");
     }
 
     #[test]

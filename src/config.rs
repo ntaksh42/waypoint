@@ -48,6 +48,10 @@ pub enum Item {
         name: String,
         #[serde(default)]
         items: Vec<Item>,
+        /// 配下の Folder 項目すべてに showBranch を継承させる (FR-2.14) 。
+        /// 個々の Folder 側の showBranch との OR。既定は偽
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        show_branch: bool,
     },
     /// 区切り線。name があれば見出しとして描く。
     Separator {
@@ -270,52 +274,61 @@ pub fn load() -> LoadOutcome {
     }
 }
 
+/// QAP と同じ構成の「My Special Folders」サブメニュー。
+///
+/// 初回起動時の既定設定と、設定 UI からのプリセット追加 (FR-6) の
+/// 両方から使うため、項目の並びをここへ集約する。
+pub fn my_special_folders_item() -> Item {
+    Item::Submenu {
+        name: "My Special Folders".to_string(),
+        items: vec![
+            Item::SpecialFolder {
+                name: "Desktop".to_string(),
+                known_folder: "Desktop".to_string(),
+                open: None,
+            },
+            Item::SpecialFolder {
+                name: "Documents".to_string(),
+                known_folder: "Documents".to_string(),
+                open: None,
+            },
+            Item::SpecialFolder {
+                name: "Pictures".to_string(),
+                known_folder: "Pictures".to_string(),
+                open: None,
+            },
+            Item::SpecialFolder {
+                name: "Downloads".to_string(),
+                known_folder: "Downloads".to_string(),
+                open: None,
+            },
+            Item::Separator { name: None },
+            Item::Shell {
+                name: "This PC".to_string(),
+                target: "shell:MyComputerFolder".to_string(),
+            },
+            Item::Shell {
+                name: "Network".to_string(),
+                target: "shell:NetworkPlacesFolder".to_string(),
+            },
+            Item::Shell {
+                name: "All Control Panel Items".to_string(),
+                target: "shell:ControlPanelFolder".to_string(),
+            },
+            Item::Shell {
+                name: "Recycle Bin".to_string(),
+                target: "shell:RecycleBinFolder".to_string(),
+            },
+        ],
+        show_branch: false,
+    }
+}
+
 /// 初回起動時に置く既定の設定。空だと何もできないので数件入れておく。
 fn default_config() -> Config {
     Config {
         items: vec![
-            Item::Submenu {
-                name: "My Special Folders".to_string(),
-                items: vec![
-                    Item::SpecialFolder {
-                        name: "Desktop".to_string(),
-                        known_folder: "Desktop".to_string(),
-                        open: None,
-                    },
-                    Item::SpecialFolder {
-                        name: "Documents".to_string(),
-                        known_folder: "Documents".to_string(),
-                        open: None,
-                    },
-                    Item::SpecialFolder {
-                        name: "Pictures".to_string(),
-                        known_folder: "Pictures".to_string(),
-                        open: None,
-                    },
-                    Item::SpecialFolder {
-                        name: "Downloads".to_string(),
-                        known_folder: "Downloads".to_string(),
-                        open: None,
-                    },
-                    Item::Separator { name: None },
-                    Item::Shell {
-                        name: "This PC".to_string(),
-                        target: "shell:MyComputerFolder".to_string(),
-                    },
-                    Item::Shell {
-                        name: "Network".to_string(),
-                        target: "shell:NetworkPlacesFolder".to_string(),
-                    },
-                    Item::Shell {
-                        name: "All Control Panel Items".to_string(),
-                        target: "shell:ControlPanelFolder".to_string(),
-                    },
-                    Item::Shell {
-                        name: "Recycle Bin".to_string(),
-                        target: "shell:RecycleBinFolder".to_string(),
-                    },
-                ],
-            },
+            my_special_folders_item(),
             Item::Separator { name: None },
             Item::Folder {
                 name: "Profile".to_string(),

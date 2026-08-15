@@ -79,10 +79,10 @@ fn badge_color(badge: &str) -> COLORREF {
 /// モードで絞り込む前 (通常検索の混在リスト) でも種別が一目で分かるようにする。
 fn action_color(action: &Action) -> COLORREF {
     match action {
-        Action::OpenFolder(_) => ACCENT,               // 青 (フォルダ)
+        Action::OpenFolder(_) => ACCENT,                  // 青 (フォルダ)
         Action::FocusWindow(_) => badge_color("WINDOWS"), // シアン
-        Action::OpenUrl(_) => badge_color("BOOKMARKS"), // 紫
-        Action::LaunchApp => badge_color("APPS"),       // オレンジ
+        Action::OpenUrl(_) => badge_color("BOOKMARKS"),   // 紫
+        Action::LaunchApp => badge_color("APPS"),         // オレンジ
         Action::OpenWithDefaultHandler => badge_color("FILES"), // 緑 (Everything のファイル)
     }
 }
@@ -571,6 +571,7 @@ fn handle_everything_results(data: &[u8]) {
                 } else {
                     crate::quick_launch::Action::OpenWithDefaultHandler
                 },
+                branch: None,
             })
             .collect();
         let labels: Vec<HSTRING> = state
@@ -1040,7 +1041,8 @@ unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
                 right: text_right,
                 bottom: draw.rcItem.top + scale(23, dpi),
             };
-            draw_text(draw.hDC, &entry.name, &mut rect);
+            let label = crate::git::with_branch(&entry.name, entry.branch.as_deref());
+            draw_text(draw.hDC, &label, &mut rect);
             SelectObject(draw.hDC, old);
         }
 

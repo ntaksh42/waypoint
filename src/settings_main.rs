@@ -241,6 +241,16 @@ impl SettingsApp {
         self.status = None;
     }
 
+    /// QAP 同等構成の「My Special Folders」をワンショットで挿入する (FR-6) 。
+    fn insert_my_special_folders_preset(&mut self) {
+        if let Some(items) = self.current_items_mut() {
+            items.push(waypoint::config::my_special_folders_item());
+            self.selected_item = Some(items.len() - 1);
+            self.dirty = true;
+            self.status = None;
+        }
+    }
+
     fn duplicate_selected(&mut self) {
         let Some(index) = self.selected_item else {
             return;
@@ -499,6 +509,10 @@ impl SettingsApp {
                     }
                     if ui.button("Import folder structure...").clicked() {
                         self.open_import();
+                        ui.close();
+                    }
+                    if ui.button("Add My Special Folders preset").clicked() {
+                        self.insert_my_special_folders_preset();
                         ui.close();
                     }
                     ui.separator();
@@ -907,6 +921,10 @@ impl SettingsApp {
                 DraftKind::Submenu => {
                     ui.label("Name");
                     ui.text_edit_singleline(&mut draft.name);
+                    ui.checkbox(&mut draft.show_branch, "Show Git branch name for folders inside")
+                        .on_hover_text(
+                            "Applies showBranch to every Folder item nested under this menu, without editing them individually.",
+                        );
                 }
                 DraftKind::Separator => {
                     ui.label("Heading (optional)");
@@ -1266,6 +1284,10 @@ impl SettingsApp {
                         self.open_import();
                         self.add_pending = false;
                     }
+                    if ui.button("My Special Folders preset").clicked() {
+                        self.insert_my_special_folders_preset();
+                        self.add_pending = false;
+                    }
                     if ui.button("Cancel").clicked() {
                         self.add_pending = false;
                     }
@@ -1577,10 +1599,15 @@ impl ItemDraft {
                 target: target.clone(),
                 ..Self::new(DraftKind::Shell)
             },
-            Item::Submenu { name, items } => Self {
+            Item::Submenu {
+                name,
+                items,
+                show_branch,
+            } => Self {
                 kind: DraftKind::Submenu,
                 name: name.clone(),
                 submenu_items: items.clone(),
+                show_branch: *show_branch,
                 ..Self::new(DraftKind::Submenu)
             },
             Item::Separator { name } => Self {
@@ -1636,6 +1663,7 @@ impl ItemDraft {
             DraftKind::Submenu => Item::Submenu {
                 name: self.name,
                 items: self.submenu_items,
+                show_branch: self.show_branch,
             },
             DraftKind::Separator => Item::Separator {
                 name: (!self.name.trim().is_empty()).then_some(self.name),
@@ -1682,6 +1710,7 @@ fn collect_menu_choices(
         let Item::Submenu {
             name,
             items: children,
+            ..
         } = item
         else {
             continue;
@@ -1764,6 +1793,7 @@ mod tests {
             items: vec![Item::Submenu {
                 name: "Tools".to_string(),
                 items: vec![Item::Separator { name: None }],
+                show_branch: false,
             }],
             ..Default::default()
         };
@@ -1782,6 +1812,7 @@ mod tests {
         let original = Item::Submenu {
             name: "Old".to_string(),
             items: vec![Item::Separator { name: None }],
+            show_branch: false,
         };
         let mut draft = ItemDraft::from_item(0, &original);
         draft.name = "New".to_string();
@@ -1791,6 +1822,7 @@ mod tests {
             Item::Submenu {
                 name: "New".to_string(),
                 items: vec![Item::Separator { name: None }],
+                show_branch: false,
             }
         );
     }

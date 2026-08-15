@@ -31,6 +31,7 @@ impl FolderNode {
         Some(Item::Submenu {
             name: self.name.clone(),
             items,
+            show_branch: false,
         })
     }
 

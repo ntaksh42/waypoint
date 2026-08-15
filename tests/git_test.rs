@@ -72,3 +72,32 @@ fn show_branch_round_trips_when_true() {
     let out = serde_json::to_string(&item).unwrap();
     assert!(out.contains(r#""showBranch":true"#), "{out}");
 }
+
+/// Submenu の showBranch も Folder と同じ規則 (既定は偽・省略) で往復する。
+#[test]
+fn submenu_show_branch_defaults_to_false_and_is_omitted() {
+    let json = r#"{"type":"submenu","name":"E:\\","items":[]}"#;
+    let item: Item = serde_json::from_str(json).expect("既存形式を読めること");
+    let Item::Submenu { show_branch, .. } = &item else {
+        panic!("submenu として読めること");
+    };
+    assert!(!show_branch, "既定は偽");
+
+    let out = serde_json::to_string(&item).unwrap();
+    assert!(!out.contains("showBranch"), "偽なら出力しない: {out}");
+}
+
+/// 真のときは camelCase で往復する。配下の Folder への継承は
+/// menu.rs / quick_launch.rs 側のロジックで検証する。
+#[test]
+fn submenu_show_branch_round_trips_when_true() {
+    let json = r#"{"type":"submenu","name":"E:\\","items":[],"showBranch":true}"#;
+    let item: Item = serde_json::from_str(json).unwrap();
+    let Item::Submenu { show_branch, .. } = &item else {
+        panic!("submenu として読めること");
+    };
+    assert!(show_branch);
+
+    let out = serde_json::to_string(&item).unwrap();
+    assert!(out.contains(r#""showBranch":true"#), "{out}");
+}

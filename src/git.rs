@@ -21,6 +21,15 @@ pub fn branch_of(path: &str) -> Option<String> {
     parse_head(&head)
 }
 
+/// ブランチ名があれば項目名の後ろに `[名前]` を付す (FR-2.14) 。
+/// リポジトリでない項目は名前のみ。
+pub fn with_branch(name: &str, branch: Option<&str>) -> String {
+    match branch {
+        Some(branch) => format!("{name}  [{branch}]"),
+        None => name.to_string(),
+    }
+}
+
 /// `.git` を持つ祖先を探す。サブディレクトリを登録していても効くようにする。
 ///
 /// `.git` がファイルの場合はワークツリーかサブモジュールで、中身の
@@ -76,6 +85,16 @@ fn parse_head(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn appends_branch_when_present() {
+        assert_eq!(with_branch("waypoint", Some("main")), "waypoint  [main]");
+    }
+
+    #[test]
+    fn leaves_name_alone_outside_repository() {
+        assert_eq!(with_branch("Downloads", None), "Downloads");
+    }
 
     #[test]
     fn parses_branch_ref() {
