@@ -7,6 +7,8 @@ use crate::dynamic::Menus;
 
 /// ブックマーク検索モードに入るプレフィックス (末尾の半角スペース込み)。
 const BOOKMARK_PREFIX: &str = "b ";
+/// Open Windows 検索モードに入るプレフィックス (末尾の半角スペース込み)。
+const WINDOW_PREFIX: &str = "w ";
 
 /// 検索結果を選んだときに行うアクション。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +33,7 @@ pub struct Entry {
 pub struct Index {
     entries: Vec<Entry>,
     bookmarks: Vec<Entry>,
+    windows: Vec<Entry>,
     search_paths: bool,
 }
 
@@ -61,14 +64,20 @@ impl Index {
                 action: Action::OpenFolder(OpenMode::NewWindow),
             }));
         }
-        if settings.include_open_windows {
-            entries.extend(dynamic.current_windows.iter().map(|window| Entry {
-                name: window.title.clone(),
-                breadcrumb: "Open Windows".to_string(),
-                path: String::new(),
-                action: Action::FocusWindow(window.hwnd),
-            }));
-        }
+        let windows = if settings.include_open_windows {
+            dynamic
+                .current_windows
+                .iter()
+                .map(|window| Entry {
+                    name: window.title.clone(),
+                    breadcrumb: "Open Windows".to_string(),
+                    path: String::new(),
+                    action: Action::FocusWindow(window.hwnd),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         let bookmarks = if settings.include_bookmarks {
             crate::bookmarks::scan()
@@ -87,14 +96,19 @@ impl Index {
         Self {
             entries,
             bookmarks,
+            windows,
             search_paths: settings.search_paths,
         }
     }
 
-    /// `b ` で始まる入力の間はブックマークだけを検索する (FR-9.13)。
+    /// `b ` / `w ` で始まる入力の間は、それぞれブックマーク・Open Windows
+    /// だけを検索する (FR-9.13 / FR-9.15)。
     pub fn search(&self, query: &str) -> Vec<&Entry> {
         if let Some(rest) = query.strip_prefix(BOOKMARK_PREFIX) {
             return search_entries(&self.bookmarks, rest, true);
+        }
+        if let Some(rest) = query.strip_prefix(WINDOW_PREFIX) {
+            return search_entries(&self.windows, rest, false);
         }
         search_entries(&self.entries, query, self.search_paths)
     }
@@ -225,6 +239,12 @@ mod tests {
                     action: Action::OpenUrl("https://example.com/".into()),
                 },
             ],
+            windows: vec![Entry {
+                name: "waypoint - Notepad".into(),
+                breadcrumb: "Open Windows".into(),
+                path: String::new(),
+                action: Action::FocusWindow(12345),
+            }],
             search_paths: false,
         }
     }
@@ -264,17 +284,17 @@ mod tests {
     }
 
     #[test]
-    fn open_window_entries_focus_instead_of_opening_a_folder() {
-        let mut index = index();
-        index.entries.push(Entry {
-            name: "waypoint - Notepad".into(),
-            breadcrumb: "Open Windows".into(),
-            path: String::new(),
-            action: Action::FocusWindow(12345),
-        });
-        let found = index.search("notepad");
+    fn window_prefix_switches_to_window_only_search() {
+        let index = index();
+        let found = index.search("w notepad");
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].action, Action::FocusWindow(12345));
+    }
+
+    #[test]
+    fn without_the_window_prefix_open_windows_are_not_searched() {
+        let index = index();
+        assert!(index.search("notepad").is_empty());
     }
 
     #[test]
