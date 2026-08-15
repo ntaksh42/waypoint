@@ -119,6 +119,10 @@ pub struct QuickLaunchSettings {
     pub include_open_windows: bool,
     #[serde(default = "default_true")]
     pub include_bookmarks: bool,
+    /// Everything 連携 (FR-9.16)。PC 全体のファイル名検索という重い操作
+    /// のため、他のプレフィックス機能と違って既定はオフ
+    #[serde(default)]
+    pub include_everything: bool,
     #[serde(default)]
     pub search_paths: bool,
     #[serde(default = "default_visible_results")]
@@ -133,6 +137,7 @@ impl Default for QuickLaunchSettings {
             include_frequent_folders: true,
             include_open_windows: true,
             include_bookmarks: true,
+            include_everything: false,
             search_paths: false,
             visible_results: default_visible_results(),
         }

@@ -39,6 +39,7 @@ windows = { version = "0.62", features = [
   "Win32_Graphics_Dwm",              # Quick Launch のダークタイトルバー・角丸
   "Win32_UI_Controls",               # IImageList (アイコン取得)
   "Win32_Storage_FileSystem",        # SHGetFileInfoW の引数型
+  "Win32_System_DataExchange",       # WM_COPYDATA (Everything IPC)
 ] }
 serde = { version = "1", features = ["derive"] }
 # preserve_order: 設定ファイルは手編集を想定するため、保存で項目順を入れ替えない

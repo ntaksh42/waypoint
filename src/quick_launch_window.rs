@@ -54,6 +54,11 @@ const TEXT_PRIMARY: COLORREF = rgb(245, 245, 245);
 const TEXT_SECONDARY: COLORREF = rgb(166, 166, 166);
 
 pub const WM_QUICK_LAUNCH_EXECUTE: u32 = WM_APP + 4;
+/// Everything からの検索結果を受け取る `WM_COPYDATA` の `dwData`。
+const WM_EVERYTHING_RESULTS: u32 = WM_APP + 5;
+/// Quick Launch が一度に Everything へ要求する最大件数。
+/// 全件表示はしない (`visible_results` の上限と同じ枠で足りる)。
+const EVERYTHING_MAX_RESULTS: u32 = 24;
 const CLASS_NAME: PCWSTR = w!("WaypointQuickLaunchWindow");
 
 thread_local! {
@@ -77,6 +82,12 @@ struct State {
     detail_font: Option<HFONT>,
     background_brush: Option<HBRUSH>,
     surface_brush: Option<HBRUSH>,
+    everything_enabled: bool,
+    /// `f ` プレフィックスの間だけ立てる。プレフィックスを抜けた後に
+    /// 遅れて届く Everything の応答を、無関係な検索結果へ混ぜないための
+    /// 最小限のガード (クエリ単位の識別子までは Everything IPC が
+    /// 提供しないので、モードの内外だけを見る)。
+    everything_active: bool,
 }
 
 pub fn configure(config: &Config, dynamic: &Menus) {
@@ -86,6 +97,7 @@ pub fn configure(config: &Config, dynamic: &Menus) {
             let mut state = state.borrow_mut();
             state.index = Index::build(config, dynamic);
             state.visible_results = config.settings.quick_launch.visible_results.clamp(12, 24);
+            state.everything_enabled = config.settings.quick_launch.include_everything;
             state.window.is_some()
         };
         if has_window {
@@ -382,6 +394,28 @@ fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT
             hide_window(Some(hwnd));
             LRESULT(0)
         }
+        windows::Win32::UI::WindowsAndMessaging::WM_COPYDATA => {
+            if lparam.0 != 0 {
+                unsafe {
+                    let copy_data =
+                        &*(lparam.0 as *const windows::Win32::System::DataExchange::COPYDATASTRUCT);
+                    if copy_data.dwData == WM_EVERYTHING_RESULTS as usize
+                        && !copy_data.lpData.is_null()
+                        && copy_data.cbData > 0
+                    {
+                        // Everything はこのハンドラから戻ると lpData を解放する。
+                        // 保持するならここでコピーする必要がある (SDK の注記通り)
+                        let bytes = std::slice::from_raw_parts(
+                            copy_data.lpData.cast::<u8>(),
+                            copy_data.cbData as usize,
+                        )
+                        .to_vec();
+                        handle_everything_results(&bytes);
+                    }
+                }
+            }
+            LRESULT(1)
+        }
         _ => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
     }
 }
@@ -400,8 +434,15 @@ fn update_results(state: &RefCell<State>) {
     let edit = state.borrow().edit;
     let query = edit.map(read_text).unwrap_or_default();
 
+    if let Some(rest) = query.strip_prefix(crate::quick_launch::EVERYTHING_PREFIX) {
+        start_everything_query(state, rest);
+        return;
+    }
+
     let (list, labels, has_results) = {
         let mut state = state.borrow_mut();
+        // プレフィックスを外れたら、遅れて届く Everything の応答を無視させる
+        state.everything_active = false;
         state.results = state.index.search(&query).into_iter().cloned().collect();
         let labels: Vec<HSTRING> = state
             .results
@@ -414,6 +455,74 @@ fn update_results(state: &RefCell<State>) {
     let Some(list) = list else {
         return;
     };
+    populate_list(list, &labels, has_results);
+}
+
+/// `f ` プレフィックスに入った。Everything へ非同期クエリを送り、
+/// 結果が届くまでの間はリストを空にする。
+///
+/// Everything 未起動・設定で無効の場合は何も送らず空のまま。
+/// 空の検索語 (`f ` だけ) はクエリを送らない — 全件検索は重く、
+/// タイプの途中で毎回投げると Everything 側の応答待ちが積み上がる。
+fn start_everything_query(state: &RefCell<State>, text: &str) {
+    let (window, list, enabled) = {
+        let mut state = state.borrow_mut();
+        state.everything_active = true;
+        state.results.clear();
+        (state.window, state.list, state.everything_enabled)
+    };
+    if let Some(list) = list {
+        populate_list(list, &[], false);
+    }
+    let (Some(window), true, false) = (window, enabled, text.is_empty()) else {
+        return;
+    };
+    crate::everything::query(window, WM_EVERYTHING_RESULTS, text, EVERYTHING_MAX_RESULTS);
+}
+
+/// Everything から届いた `WM_COPYDATA` を結果リストへ反映する。
+///
+/// `f ` を抜けていれば `update_results` が `everything_active` を
+/// 下ろしているので、届いた結果はここでは扱わず捨てる (プレフィックスが
+/// 外れた後に遅延到着した応答が、無関係な検索結果へ紛れ込むのを防ぐ)。
+fn handle_everything_results(data: &[u8]) {
+    let parsed = crate::everything::parse_results(data);
+    let outcome = STATE.with(|s| {
+        let mut state = s.borrow_mut();
+        if !state.everything_active {
+            return None;
+        }
+        state.results = parsed
+            .into_iter()
+            .map(|item| crate::quick_launch::Entry {
+                name: item.name,
+                breadcrumb: String::new(),
+                path: item.path,
+                action: if item.is_folder {
+                    crate::quick_launch::Action::OpenFolder(OpenMode::NewWindow)
+                } else {
+                    crate::quick_launch::Action::OpenWithDefaultHandler
+                },
+            })
+            .collect();
+        let labels: Vec<HSTRING> = state
+            .results
+            .iter()
+            .map(|entry| HSTRING::from(format!("{}    {}", entry.name, entry_context(entry))))
+            .collect();
+        Some((state.list, labels, !state.results.is_empty()))
+    });
+    let Some((list, labels, has_results)) = outcome else {
+        return;
+    };
+    if let Some(list) = list {
+        populate_list(list, &labels, has_results);
+    }
+}
+
+/// リストボックスの中身を丸ごと差し替える。通常検索と Everything の
+/// 非同期結果受信 (`handle_everything_results`) の双方から使う。
+fn populate_list(list: HWND, labels: &[HSTRING], has_results: bool) {
     unsafe {
         let _ = windows::Win32::UI::WindowsAndMessaging::SendMessageW(
             list,
@@ -421,7 +530,7 @@ fn update_results(state: &RefCell<State>) {
             None,
             None,
         );
-        for label in &labels {
+        for label in labels {
             let _ = windows::Win32::UI::WindowsAndMessaging::SendMessageW(
                 list,
                 LB_ADDSTRING,
@@ -755,7 +864,9 @@ unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
         }
 
         match entry.action {
-            Action::OpenFolder(_) => draw_path_icon(draw.hDC, &entry.path, draw.rcItem, dpi),
+            Action::OpenFolder(_) | Action::OpenWithDefaultHandler => {
+                draw_path_icon(draw.hDC, &entry.path, draw.rcItem, dpi)
+            }
             Action::FocusWindow(hwnd) => {
                 draw_window_icon(draw.hDC, HWND(hwnd as *mut _), draw.rcItem, dpi)
             }

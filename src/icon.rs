@@ -474,7 +474,8 @@ fn resize_bitmap(bitmap: HBITMAP, from: SIZE, to: SIZE) -> Option<HBITMAP> {
         // BGRA・プリマルチプライド済み。image クレートは非プリマルチプライドの
         // RGBA を期待するので、リサイズ前に一度戻す
         let stride = (from.cx as usize) * 4;
-        let pixels = std::slice::from_raw_parts(info.bmBits.cast::<u8>(), stride * from.cy as usize);
+        let pixels =
+            std::slice::from_raw_parts(info.bmBits.cast::<u8>(), stride * from.cy as usize);
         let mut rgba = vec![0u8; pixels.len()];
         for (source, target) in pixels.chunks_exact(4).zip(rgba.chunks_exact_mut(4)) {
             let alpha = source[3];

@@ -1039,6 +1039,10 @@ impl SettingsApp {
                     &mut draft.include_bookmarks,
                     "Include browser bookmarks (type \"b \" to search)",
                 );
+                ui.checkbox(
+                    &mut draft.include_everything,
+                    "Search all files via Everything (type \"f \" to search; requires Everything to be running)",
+                );
                 ui.checkbox(&mut draft.search_paths, "Search folder paths");
                 ui.horizontal(|ui| {
                     ui.label("Visible results");
@@ -1100,6 +1104,7 @@ impl SettingsApp {
                     draft.include_frequent_folders;
                 self.config.settings.quick_launch.include_open_windows = draft.include_open_windows;
                 self.config.settings.quick_launch.include_bookmarks = draft.include_bookmarks;
+                self.config.settings.quick_launch.include_everything = draft.include_everything;
                 self.config.settings.quick_launch.search_paths = draft.search_paths;
                 self.config.settings.quick_launch.visible_results =
                     draft.visible_results.clamp(12, 24);
@@ -1450,6 +1455,7 @@ struct TriggerDraft {
     include_frequent_folders: bool,
     include_open_windows: bool,
     include_bookmarks: bool,
+    include_everything: bool,
     search_paths: bool,
     visible_results: usize,
     error: Option<String>,
@@ -1484,6 +1490,7 @@ impl TriggerDraft {
             include_frequent_folders: quick_launch.include_frequent_folders,
             include_open_windows: quick_launch.include_open_windows,
             include_bookmarks: quick_launch.include_bookmarks,
+            include_everything: quick_launch.include_everything,
             search_paths: quick_launch.search_paths,
             visible_results: quick_launch.visible_results,
             error: None,

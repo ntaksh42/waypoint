@@ -328,6 +328,9 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                     quick_launch::Action::OpenUrl(url) => {
                         let _ = shell::open_shell_item(&url);
                     }
+                    quick_launch::Action::OpenWithDefaultHandler => {
+                        let _ = shell::open_shell_item(&entry.path);
+                    }
                 }
                 refresh_dynamic();
             }

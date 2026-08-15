@@ -9,6 +9,12 @@ use crate::dynamic::Menus;
 const BOOKMARK_PREFIX: &str = "b ";
 /// Open Windows 検索モードに入るプレフィックス (末尾の半角スペース込み)。
 const WINDOW_PREFIX: &str = "w ";
+/// Everything 検索モードに入るプレフィックス (末尾の半角スペース込み)。
+///
+/// Everything の検索は Win32 IPC を挟む非同期処理のため、他のプレフィックス
+/// と違って `Index::search` の同期モデルには乗らない。判定だけここに置き、
+/// クエリの発行と結果の保持は `quick_launch_window.rs` 側が持つ。
+pub const EVERYTHING_PREFIX: &str = "f ";
 
 /// 検索結果を選んだときに行うアクション。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,6 +25,9 @@ pub enum Action {
     FocusWindow(isize),
     /// 既定のブラウザで URL を開く。
     OpenUrl(String),
+    /// Windows の既定ハンドラーでファイル / フォルダを開く (Everything 結果用)。
+    /// `OpenFolder` と違い newWindow / reuse の区別を持たない。
+    OpenWithDefaultHandler,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

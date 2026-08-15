@@ -8,6 +8,7 @@ pub mod autostart;
 pub mod bookmarks;
 pub mod config;
 pub mod dynamic;
+pub mod everything;
 pub mod folder_import;
 pub mod git;
 pub mod hotkey_capture;
