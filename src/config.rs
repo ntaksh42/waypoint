@@ -117,6 +117,8 @@ pub struct QuickLaunchSettings {
     pub include_frequent_folders: bool,
     #[serde(default = "default_true")]
     pub include_open_windows: bool,
+    #[serde(default = "default_true")]
+    pub include_bookmarks: bool,
     #[serde(default)]
     pub search_paths: bool,
     #[serde(default = "default_visible_results")]
@@ -130,6 +132,7 @@ impl Default for QuickLaunchSettings {
             include_recent_folders: true,
             include_frequent_folders: true,
             include_open_windows: true,
+            include_bookmarks: true,
             search_paths: false,
             visible_results: default_visible_results(),
         }

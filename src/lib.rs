@@ -5,6 +5,7 @@
 //! バイナリ側 (main.rs) が持つ。
 
 pub mod autostart;
+pub mod bookmarks;
 pub mod config;
 pub mod dynamic;
 pub mod folder_import;

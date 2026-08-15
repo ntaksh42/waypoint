@@ -23,6 +23,7 @@ use windows::Win32::UI::Controls::{
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_CONTROL, VK_SHIFT};
+use windows::Win32::UI::Shell::SIID_LINK;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, EN_CHANGE, GetClientRect, GetWindowTextLengthW,
     GetWindowTextW, HMENU, LB_ADDSTRING, LB_GETCURSEL, LB_RESETCONTENT, LB_SETCURSEL,
@@ -759,6 +760,7 @@ unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
             Action::FocusWindow(hwnd) => {
                 draw_window_icon(draw.hDC, HWND(hwnd as *mut _), draw.rcItem, dpi)
             }
+            Action::OpenUrl(_) => draw_stock_icon(draw.hDC, SIID_LINK, draw.rcItem, dpi),
         }
         SetBkMode(draw.hDC, TRANSPARENT);
         let text_left = draw.rcItem.left + scale(40, dpi);
@@ -826,6 +828,18 @@ unsafe fn draw_path_icon(hdc: HDC, path: &str, rect: RECT, dpi: u32) {
 
 unsafe fn draw_window_icon(hdc: HDC, hwnd: HWND, rect: RECT, dpi: u32) {
     let Some(bitmap) = crate::icon::bitmap_for_window(hwnd) else {
+        return;
+    };
+    unsafe { draw_icon_bitmap(hdc, bitmap, rect, dpi) };
+}
+
+unsafe fn draw_stock_icon(
+    hdc: HDC,
+    id: windows::Win32::UI::Shell::SHSTOCKICONID,
+    rect: RECT,
+    dpi: u32,
+) {
+    let Some(bitmap) = crate::icon::bitmap_for_stock(id) else {
         return;
     };
     unsafe { draw_icon_bitmap(hdc, bitmap, rect, dpi) };

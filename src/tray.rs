@@ -321,6 +321,9 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                     quick_launch::Action::FocusWindow(hwnd) => {
                         shell::activate_window(HWND(hwnd as *mut _));
                     }
+                    quick_launch::Action::OpenUrl(url) => {
+                        let _ = shell::open_shell_item(&url);
+                    }
                 }
                 refresh_dynamic();
             }

@@ -5,6 +5,9 @@
 use crate::config::{Config, Item, OpenMode};
 use crate::dynamic::Menus;
 
+/// ブックマーク検索モードに入るプレフィックス (末尾の半角スペース込み)。
+const BOOKMARK_PREFIX: &str = "b ";
+
 /// 検索結果を選んだときに行うアクション。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -12,6 +15,8 @@ pub enum Action {
     OpenFolder(OpenMode),
     /// 既に開いているウィンドウにフォーカスを移す。
     FocusWindow(isize),
+    /// 既定のブラウザで URL を開く。
+    OpenUrl(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +30,7 @@ pub struct Entry {
 #[derive(Debug, Clone, Default)]
 pub struct Index {
     entries: Vec<Entry>,
+    bookmarks: Vec<Entry>,
     search_paths: bool,
 }
 
@@ -64,32 +70,54 @@ impl Index {
             }));
         }
 
+        let bookmarks = if settings.include_bookmarks {
+            crate::bookmarks::scan()
+                .into_iter()
+                .map(|bookmark| Entry {
+                    name: bookmark.name,
+                    breadcrumb: bookmark.breadcrumb,
+                    path: bookmark.url.clone(),
+                    action: Action::OpenUrl(bookmark.url),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         Self {
             entries,
+            bookmarks,
             search_paths: settings.search_paths,
         }
     }
 
+    /// `b ` で始まる入力の間はブックマークだけを検索する (FR-9.13)。
     pub fn search(&self, query: &str) -> Vec<&Entry> {
-        let terms: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
-        let mut matches: Vec<(u8, usize, &Entry)> = self
-            .entries
-            .iter()
-            .enumerate()
-            .filter_map(|(order, entry)| {
-                let name = entry.name.to_lowercase();
-                let breadcrumb = entry.breadcrumb.to_lowercase();
-                let path = self.search_paths.then(|| entry.path.to_lowercase());
-                let scores: Option<Vec<u8>> = terms
-                    .iter()
-                    .map(|term| match_score(&name, &breadcrumb, path.as_deref(), term))
-                    .collect();
-                scores.map(|scores| (scores.into_iter().max().unwrap_or(0), order, entry))
-            })
-            .collect();
-        matches.sort_by_key(|(score, order, _)| (*score, *order));
-        matches.into_iter().map(|(_, _, entry)| entry).collect()
+        if let Some(rest) = query.strip_prefix(BOOKMARK_PREFIX) {
+            return search_entries(&self.bookmarks, rest, true);
+        }
+        search_entries(&self.entries, query, self.search_paths)
     }
+}
+
+fn search_entries<'a>(entries: &'a [Entry], query: &str, search_paths: bool) -> Vec<&'a Entry> {
+    let terms: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    let mut matches: Vec<(u8, usize, &Entry)> = entries
+        .iter()
+        .enumerate()
+        .filter_map(|(order, entry)| {
+            let name = entry.name.to_lowercase();
+            let breadcrumb = entry.breadcrumb.to_lowercase();
+            let path = search_paths.then(|| entry.path.to_lowercase());
+            let scores: Option<Vec<u8>> = terms
+                .iter()
+                .map(|term| match_score(&name, &breadcrumb, path.as_deref(), term))
+                .collect();
+            scores.map(|scores| (scores.into_iter().max().unwrap_or(0), order, entry))
+        })
+        .collect();
+    matches.sort_by_key(|(score, order, _)| (*score, *order));
+    matches.into_iter().map(|(_, _, entry)| entry).collect()
 }
 
 fn collect_items(
@@ -183,6 +211,20 @@ mod tests {
                     action: Action::OpenFolder(OpenMode::NewWindow),
                 },
             ],
+            bookmarks: vec![
+                Entry {
+                    name: "GitHub".into(),
+                    breadcrumb: "Work".into(),
+                    path: "https://github.com/".into(),
+                    action: Action::OpenUrl("https://github.com/".into()),
+                },
+                Entry {
+                    name: "Example".into(),
+                    breadcrumb: String::new(),
+                    path: "https://example.com/".into(),
+                    action: Action::OpenUrl("https://example.com/".into()),
+                },
+            ],
             search_paths: false,
         }
     }
@@ -233,5 +275,36 @@ mod tests {
         let found = index.search("notepad");
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].action, Action::FocusWindow(12345));
+    }
+
+    #[test]
+    fn bookmark_prefix_switches_to_bookmark_only_search() {
+        let index = index();
+        let found = index.search("b git");
+        assert_eq!(
+            found
+                .iter()
+                .map(|item| item.name.as_str())
+                .collect::<Vec<_>>(),
+            ["GitHub"]
+        );
+        assert_eq!(
+            found[0].action,
+            Action::OpenUrl("https://github.com/".into())
+        );
+    }
+
+    #[test]
+    fn without_the_bookmark_prefix_bookmarks_are_not_searched() {
+        let index = index();
+        assert!(index.search("github").is_empty());
+    }
+
+    #[test]
+    fn bookmark_search_matches_the_url_too() {
+        let index = index();
+        let found = index.search("b example.com");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "Example");
     }
 }
