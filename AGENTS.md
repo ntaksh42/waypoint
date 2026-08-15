@@ -14,10 +14,10 @@ Full specification: `docs/spec.md`.
 
 ## Product priorities
 
-Weigh every change against these, in order:
+The goal is to be the most capable general launcher on Windows — broader than Flow Launcher / PowerToys Run in what it can search and do, without becoming slower or harder to use than either. Weigh every change against these, in order:
 
-1. **Display latency** — trigger to painted menu within 50ms. This is the whole point of the app; a slow menu is a failed menu. Don't add work to the trigger path.
-2. **Don't grow the scope** — see the scope rule below.
+1. **Display latency** — trigger to painted menu within 50ms. This is non-negotiable regardless of how many features exist; a slow menu is a failed menu. Don't add work to the trigger path. Heavy or optional features (external IPC, network calls, big indexes) must be async/opt-in/lazy so their cost never lands on the hot path — see Everything (`f ` prefix) in `src/everything.rs` for the pattern.
+2. **Follow the scope table, not scope minimalism** — see the scope rule below. Breadth of capability is now a stated goal, not something to resist; the table exists so additions are deliberate and documented, not to keep the feature set small.
 3. **Keyboard-complete operation** — every frequent action reachable without the mouse.
 
 ## Commands
@@ -65,7 +65,7 @@ Get-Content "$env:TEMP\waypoint_selftest.txt"
 
 ## The scope rule
 
-`docs/spec.md` の 02 章に、機能ごとの「採用 / 保留 / 除外」判定表がある。**「除外」の項目は v1.0 では実装しない。** 実装中に思いついても着手しない。
+`docs/spec.md` の 02 章に、機能ごとの「採用 / 保留 / 除外」判定表がある。目標が「最も高機能な汎用ランチャー」になったことで採用の対象は大きく広がったが、**「除外」の項目は実装しない。** 除外は「機能が多すぎるから切った」のではなく、waypoint の設計原則（50ms のトリガー応答、単一ユーザー・非配布、キーストローク送出系のミニ言語を持たない、等）と衝突するために外したもの。実装中に思いついても着手しない。
 
 追加したくなった場合は、**先に `docs/spec.md` の表を書き換えてから**着手する。仕様書を更新せずに機能を足すことを禁止する。この規約が仕様書の存在意義。
 
