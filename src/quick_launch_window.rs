@@ -19,7 +19,8 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
-    DRAWITEMSTRUCT, EM_SETCUEBANNER, EM_SETMARGINS, ODS_SELECTED, SetWindowTheme,
+    DRAWITEMSTRUCT, EM_GETSEL, EM_REPLACESEL, EM_SETCUEBANNER, EM_SETMARGINS, EM_SETSEL,
+    ODS_SELECTED, SetWindowTheme,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_CONTROL, VK_SHIFT};
@@ -205,6 +206,13 @@ pub fn handle_message(message: &windows::Win32::UI::WindowsAndMessaging::MSG) ->
         0x21 => move_selection(-10),
         0x22 => move_selection(10),
         0x0d => queue_selected(),
+        0x08 if unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0 => {
+            let edit = STATE.with(|state| state.borrow().edit);
+            let Some(edit) = edit else {
+                return false;
+            };
+            delete_word_before_cursor(edit);
+        }
         _ => return false,
     }
     true
@@ -623,6 +631,53 @@ fn read_text(hwnd: HWND) -> String {
         let mut text = vec![0u16; length as usize + 1];
         let copied = GetWindowTextW(hwnd, &mut text);
         String::from_utf16_lossy(&text[..copied as usize])
+    }
+}
+
+/// カーソル直前の単語の開始位置を返す。
+/// 「単語」は空白の連続とそれ以外の連続の境界で区切る単純な定義。
+fn word_start_before(text: &[u16], cursor: usize) -> usize {
+    let mut start = cursor;
+    while start > 0 && text[start - 1] == b' ' as u16 {
+        start -= 1;
+    }
+    while start > 0 && text[start - 1] != b' ' as u16 {
+        start -= 1;
+    }
+    start
+}
+
+/// Ctrl+Backspace: カーソル直前の単語を削除する。
+fn delete_word_before_cursor(edit: HWND) {
+    let text: Vec<u16> = read_text(edit).encode_utf16().collect();
+    let mut sel_start = 0u32;
+    let mut sel_end = 0u32;
+    unsafe {
+        windows::Win32::UI::WindowsAndMessaging::SendMessageW(
+            edit,
+            EM_GETSEL,
+            Some(WPARAM(&mut sel_start as *mut u32 as usize)),
+            Some(LPARAM(&mut sel_end as *mut u32 as isize)),
+        );
+    }
+    let cursor = sel_start.min(sel_end) as usize;
+    if cursor == 0 {
+        return;
+    }
+    let start = word_start_before(&text, cursor);
+    unsafe {
+        windows::Win32::UI::WindowsAndMessaging::SendMessageW(
+            edit,
+            EM_SETSEL,
+            Some(WPARAM(start)),
+            Some(LPARAM(cursor as isize)),
+        );
+        windows::Win32::UI::WindowsAndMessaging::SendMessageW(
+            edit,
+            EM_REPLACESEL,
+            Some(WPARAM(1)),
+            Some(LPARAM(w!("").as_ptr() as isize)),
+        );
     }
 }
 
@@ -1206,4 +1261,50 @@ const fn rgb(red: u8, green: u8, blue: u8) -> COLORREF {
 
 fn scale(value: i32, dpi: u32) -> i32 {
     value * dpi.max(96) as i32 / 96
+}
+
+#[cfg(test)]
+mod tests {
+    use super::word_start_before;
+
+    fn to_utf16(s: &str) -> Vec<u16> {
+        s.encode_utf16().collect()
+    }
+
+    #[test]
+    fn deletes_last_word() {
+        let text = to_utf16("hello world test");
+        let cursor = text.len();
+        assert_eq!(
+            word_start_before(&text, cursor),
+            to_utf16("hello world ").len()
+        );
+    }
+
+    #[test]
+    fn skips_trailing_spaces_before_word() {
+        let text = to_utf16("hello world   ");
+        let cursor = text.len();
+        assert_eq!(word_start_before(&text, cursor), to_utf16("hello ").len());
+    }
+
+    #[test]
+    fn stops_at_start_of_text() {
+        let text = to_utf16("hello");
+        let cursor = text.len();
+        assert_eq!(word_start_before(&text, cursor), 0);
+    }
+
+    #[test]
+    fn cursor_in_middle_of_text() {
+        let text = to_utf16("foo bar baz");
+        let cursor = to_utf16("foo bar ").len();
+        assert_eq!(word_start_before(&text, cursor), to_utf16("foo ").len());
+    }
+
+    #[test]
+    fn cursor_at_zero_is_noop_boundary() {
+        let text = to_utf16("hello");
+        assert_eq!(word_start_before(&text, 0), 0);
+    }
 }
