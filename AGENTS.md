@@ -4,7 +4,7 @@ Guidance for AI coding agents working in this repository (read by Claude Code vi
 
 ## What this is
 
-waypoint is a Windows tray-resident popup launcher (Rust). A hotkey or the middle mouse button opens a hierarchical popup menu; selecting an entry jumps to that location in Explorer. It is a re-implementation of Quick Access Popup's core, narrowed to folder navigation.
+waypoint is a Windows tray-resident popup launcher (Rust). A hotkey or the middle mouse button opens a hierarchical popup menu; selecting an entry jumps to a folder, focuses a window, opens a bookmark, or launches an app. It started as a re-implementation of Quick Access Popup's core narrowed to folder navigation, and has since grown into a general launcher — Quick Launch's search box now covers folders, open windows, browser bookmarks (`b ` prefix), and installed apps (`a ` prefix). See `docs/spec.md` 02 for what's in scope and why.
 
 Single developer, not distributed. No installer, no auto-update, no localization.
 
@@ -226,7 +226,8 @@ FR-2.7 に反する (実測でメニューが白背景になった) 。
 ## Current state
 
 **動く。** 中ボタン / ホットキー / トレイ左クリックでメニューが出て、選んだフォルダが
-Windows の既定フォルダーハンドラーで開く。実機で確認済み。
+Windows の既定フォルダーハンドラーで開く。Quick Launch のホットキーからはフォルダ・
+Open Windows・ブックマーク (`b `) ・アプリ (`a `) を横断検索できる。実機で確認済み。
 
 実装済み:
 - FR-1 トリガー (中ボタン・ホットキー・トレイ左クリック・除外プロセス・ドラッグ判定)
@@ -235,6 +236,7 @@ Windows の既定フォルダーハンドラーで開く。実機で確認済み
 - FR-6 管理画面 (項目・ユーザー変数・トリガー設定の編集、保存後の即時反映)
 - FR-7 設定の読み書き (原子的保存・パース失敗時の継続起動)
 - FR-8 常駐 / トレイメニュー / 二重起動抑止 / 自動起動
+- FR-9 Quick Launch (フォルダ・Recent/Frequent・Current Windows・ブックマーク検索)
 
 ### FR-6 管理画面の構成
 
