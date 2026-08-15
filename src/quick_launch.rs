@@ -15,6 +15,24 @@ const WINDOW_PREFIX: &str = "w ";
 /// と違って `Index::search` の同期モデルには乗らない。判定だけここに置き、
 /// クエリの発行と結果の保持は `quick_launch_window.rs` 側が持つ。
 pub const EVERYTHING_PREFIX: &str = "f ";
+/// アプリ検索モードに入るプレフィックス (末尾の半角スペース込み)。
+const APPS_PREFIX: &str = "a ";
+
+/// 入力がいずれかのプレフィックスモードに入っていれば、表示用の短いラベルを返す。
+/// 描画側 (`quick_launch_window.rs`) が検索窓にモードバッジを出すために使う。
+pub fn prefix_badge(query: &str) -> Option<&'static str> {
+    if query.starts_with(BOOKMARK_PREFIX) {
+        Some("BOOKMARKS")
+    } else if query.starts_with(WINDOW_PREFIX) {
+        Some("WINDOWS")
+    } else if query.starts_with(APPS_PREFIX) {
+        Some("APPS")
+    } else if query.starts_with(EVERYTHING_PREFIX) {
+        Some("FILES")
+    } else {
+        None
+    }
+}
 
 /// 検索結果を選んだときに行うアクション。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +46,8 @@ pub enum Action {
     /// Windows の既定ハンドラーでファイル / フォルダを開く (Everything 結果用)。
     /// `OpenFolder` と違い newWindow / reuse の区別を持たない。
     OpenWithDefaultHandler,
+    /// スタートメニューのショートカットを起動する。
+    LaunchApp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +63,7 @@ pub struct Index {
     entries: Vec<Entry>,
     bookmarks: Vec<Entry>,
     windows: Vec<Entry>,
+    apps: Vec<Entry>,
     search_paths: bool,
 }
 
@@ -102,22 +123,40 @@ impl Index {
             Vec::new()
         };
 
+        let apps = if settings.include_apps {
+            crate::apps::scan()
+                .into_iter()
+                .map(|app| Entry {
+                    name: app.name,
+                    breadcrumb: String::new(),
+                    path: app.shortcut_path,
+                    action: Action::LaunchApp,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         Self {
             entries,
             bookmarks,
             windows,
+            apps,
             search_paths: settings.search_paths,
         }
     }
 
-    /// `b ` / `w ` で始まる入力の間は、それぞれブックマーク・Open Windows
-    /// だけを検索する (FR-9.13 / FR-9.15)。
+    /// `b ` / `w ` / `a ` で始まる入力の間は、それぞれブックマーク・
+    /// Open Windows・アプリだけを検索する (FR-9.13 / FR-9.15 / FR-9.14)。
     pub fn search(&self, query: &str) -> Vec<&Entry> {
         if let Some(rest) = query.strip_prefix(BOOKMARK_PREFIX) {
             return search_entries(&self.bookmarks, rest, true);
         }
         if let Some(rest) = query.strip_prefix(WINDOW_PREFIX) {
             return search_entries(&self.windows, rest, false);
+        }
+        if let Some(rest) = query.strip_prefix(APPS_PREFIX) {
+            return search_entries(&self.apps, rest, false);
         }
         search_entries(&self.entries, query, self.search_paths)
     }
@@ -254,6 +293,14 @@ mod tests {
                 path: String::new(),
                 action: Action::FocusWindow(12345),
             }],
+            apps: vec![Entry {
+                name: "Visual Studio Code".into(),
+                breadcrumb: String::new(),
+                path:
+                    r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Visual Studio Code.lnk"
+                        .into(),
+                action: Action::LaunchApp,
+            }],
             search_paths: false,
         }
     }
@@ -307,6 +354,20 @@ mod tests {
     }
 
     #[test]
+    fn apps_prefix_switches_to_apps_only_search() {
+        let index = index();
+        let found = index.search("a code");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].action, Action::LaunchApp);
+    }
+
+    #[test]
+    fn without_the_apps_prefix_apps_are_not_searched() {
+        let index = index();
+        assert!(index.search("code").is_empty());
+    }
+
+    #[test]
     fn bookmark_prefix_switches_to_bookmark_only_search() {
         let index = index();
         let found = index.search("b git");
@@ -335,5 +396,15 @@ mod tests {
         let found = index.search("b example.com");
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "Example");
+    }
+
+    #[test]
+    fn prefix_badge_identifies_each_mode() {
+        assert_eq!(prefix_badge("b git"), Some("BOOKMARKS"));
+        assert_eq!(prefix_badge("w notepad"), Some("WINDOWS"));
+        assert_eq!(prefix_badge("a code"), Some("APPS"));
+        assert_eq!(prefix_badge("f cargo.toml"), Some("FILES"));
+        assert_eq!(prefix_badge("plain query"), None);
+        assert_eq!(prefix_badge(""), None);
     }
 }

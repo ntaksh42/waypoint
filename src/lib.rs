@@ -4,6 +4,7 @@
 //! 統合テストから叩けるようにする。Win32 に触る部分は
 //! バイナリ側 (main.rs) が持つ。
 
+pub mod apps;
 pub mod autostart;
 pub mod bookmarks;
 pub mod config;

@@ -10,11 +10,12 @@ use windows::Win32::Graphics::Dwm::{
 use windows::Win32::Graphics::Gdi::{
     AC_SRC_ALPHA, AC_SRC_OVER, AlphaBlend, BLENDFUNCTION, BeginPaint, CLEARTYPE_QUALITY,
     CLIP_DEFAULT_PRECIS, CreateCompatibleDC, CreateFontW, CreatePen, CreateSolidBrush,
-    DEFAULT_CHARSET, DEFAULT_PITCH, DT_END_ELLIPSIS, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER,
-    DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint, FW_NORMAL, FW_SEMIBOLD, FillRect,
-    GetMonitorInfoW, HBITMAP, HBRUSH, HDC, HFONT, InvalidateRect, LineTo, MONITOR_DEFAULTTONEAREST,
-    MONITORINFO, MonitorFromWindow, MoveToEx, OUT_DEFAULT_PRECIS, PAINTSTRUCT, PS_SOLID, RoundRect,
-    SelectObject, SetBkColor, SetBkMode, SetTextColor, TRANSPARENT,
+    DEFAULT_CHARSET, DEFAULT_PITCH, DT_CENTER, DT_END_ELLIPSIS, DT_NOPREFIX, DT_SINGLELINE,
+    DT_VCENTER, DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint, FW_NORMAL, FW_SEMIBOLD,
+    FillRect, GetMonitorInfoW, HBITMAP, HBRUSH, HDC, HFONT, InvalidateRect, LineTo,
+    MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow, MoveToEx, OUT_DEFAULT_PRECIS,
+    PAINTSTRUCT, PS_SOLID, RoundRect, SelectObject, SetBkColor, SetBkMode, SetTextColor,
+    TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
@@ -45,6 +46,8 @@ const WINDOW_WIDTH: i32 = 720;
 const PADDING: i32 = 10;
 const EDIT_HEIGHT: i32 = 34;
 const ROW_HEIGHT: i32 = 42;
+/// モードバッジ ("BOOKMARKS" 等) 用に検索窓の右側へ確保する幅。
+const BADGE_WIDTH: i32 = 92;
 
 const BACKGROUND: COLORREF = rgb(13, 13, 13);
 const SURFACE: COLORREF = rgb(30, 30, 30);
@@ -52,6 +55,17 @@ const SURFACE_HOVER: COLORREF = rgb(42, 42, 42);
 const ACCENT: COLORREF = rgb(0, 120, 212);
 const TEXT_PRIMARY: COLORREF = rgb(245, 245, 245);
 const TEXT_SECONDARY: COLORREF = rgb(166, 166, 166);
+
+/// モードバッジの背景色。プレフィックスごとに見分けが付くよう変える。
+fn badge_color(badge: &str) -> COLORREF {
+    match badge {
+        "BOOKMARKS" => rgb(191, 90, 242), // 紫
+        "WINDOWS" => rgb(48, 176, 199),   // シアン
+        "APPS" => rgb(255, 159, 10),      // オレンジ
+        "FILES" => rgb(52, 199, 89),      // 緑
+        _ => ACCENT,
+    }
+}
 
 pub const WM_QUICK_LAUNCH_EXECUTE: u32 = WM_APP + 4;
 /// Everything からの検索結果を受け取る `WM_COPYDATA` の `dwData`。
@@ -88,6 +102,9 @@ struct State {
     /// 最小限のガード (クエリ単位の識別子までは Everything IPC が
     /// 提供しないので、モードの内外だけを見る)。
     everything_active: bool,
+    /// 現在の入力が `b `/`w `/`a `/`f ` のいずれかに入っていれば
+    /// そのモード名。検索窓のバッジ表示に使う。
+    badge: Option<&'static str>,
 }
 
 pub fn configure(config: &Config, dynamic: &Menus) {
@@ -314,13 +331,14 @@ fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT
             let padding = scale(PADDING, dpi);
             let edit_height = scale(EDIT_HEIGHT, dpi);
             let search_gutter = scale(32, dpi);
+            let badge_width = scale(BADGE_WIDTH, dpi);
             unsafe {
                 if let Some(edit) = edit {
                     let _ = MoveWindow(
                         edit,
                         padding + search_gutter,
                         padding + scale(6, dpi),
-                        width - padding * 2 - search_gutter - scale(8, dpi),
+                        width - padding * 2 - search_gutter - badge_width - scale(8, dpi),
                         edit_height - scale(12, dpi),
                         true,
                     );
@@ -429,10 +447,40 @@ fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT
 /// `window_proc` は unwind 不可なので abort する)。
 /// 借用中は検索と `results` の更新だけを行い、描画用の値を取り出してから
 /// 借用を解放し、その後で `SendMessageW` を呼ぶ。
+/// 検索窓に出すモードバッジを入力文字列から判定し、変わっていれば
+/// 検索窓部分だけ再描画する。
+fn update_badge(state: &RefCell<State>, query: &str) {
+    let badge = crate::quick_launch::prefix_badge(query);
+    let (window, dpi, changed) = {
+        let mut state = state.borrow_mut();
+        let changed = state.badge != badge;
+        state.badge = badge;
+        (state.window, state.dpi, changed)
+    };
+    if !changed {
+        return;
+    }
+    let Some(window) = window else {
+        return;
+    };
+    unsafe {
+        let mut client = RECT::default();
+        let _ = GetClientRect(window, &mut client);
+        let search_rect = RECT {
+            left: 0,
+            top: 0,
+            right: client.right,
+            bottom: scale(PADDING, dpi) * 2 + scale(EDIT_HEIGHT, dpi),
+        };
+        let _ = InvalidateRect(Some(window), Some(&search_rect), false);
+    }
+}
+
 fn update_results(state: &RefCell<State>) {
     // read_text も Win32 呼び出しなので借用の外で済ませる
     let edit = state.borrow().edit;
     let query = edit.map(read_text).unwrap_or_default();
+    update_badge(state, &query);
 
     if let Some(rest) = query.strip_prefix(crate::quick_launch::EVERYTHING_PREFIX) {
         start_everything_query(state, rest);
@@ -770,9 +818,15 @@ fn paint_window(window: HWND) {
         let hdc = BeginPaint(window, &mut paint);
         let mut client = RECT::default();
         let _ = GetClientRect(window, &mut client);
-        let (dpi, background, surface) = STATE.with(|state| {
+        let (dpi, background, surface, badge, detail_font) = STATE.with(|state| {
             let state = state.borrow();
-            (state.dpi, state.background_brush, state.surface_brush)
+            (
+                state.dpi,
+                state.background_brush,
+                state.surface_brush,
+                state.badge,
+                state.detail_font,
+            )
         });
         if let Some(background) = background {
             FillRect(hdc, &client, background);
@@ -828,8 +882,54 @@ fn paint_window(window: HWND) {
             );
             SelectObject(hdc, old_pen);
             let _ = DeleteObject(icon_pen.into());
+
+            if let Some(badge) = badge {
+                draw_badge(hdc, badge, search, dpi, detail_font);
+            }
         }
         let _ = EndPaint(window, &paint);
+    }
+}
+
+/// 検索窓の右端に、アクティブなプレフィックスモードの名前を丸バッジで描く。
+unsafe fn draw_badge(hdc: HDC, badge: &str, search: RECT, dpi: u32, detail_font: Option<HFONT>) {
+    unsafe {
+        let color = badge_color(badge);
+        let height = scale(20, dpi);
+        let width = scale(BADGE_WIDTH, dpi) - scale(16, dpi);
+        let rect = RECT {
+            left: search.right - scale(10, dpi) - width,
+            top: search.top + (search.bottom - search.top - height) / 2,
+            right: search.right - scale(10, dpi),
+            bottom: search.top + (search.bottom - search.top - height) / 2 + height,
+        };
+        let brush = CreateSolidBrush(color);
+        let radius = height / 2;
+        let old_brush = SelectObject(hdc, brush.into());
+        let pen = CreatePen(PS_SOLID, 1, color);
+        let old_pen = SelectObject(hdc, pen.into());
+        let _ = RoundRect(
+            hdc,
+            rect.left,
+            rect.top,
+            rect.right,
+            rect.bottom,
+            radius,
+            radius,
+        );
+        SelectObject(hdc, old_brush);
+        SelectObject(hdc, old_pen);
+        let _ = DeleteObject(brush.into());
+        let _ = DeleteObject(pen.into());
+
+        if let Some(font) = detail_font {
+            let old_font = SelectObject(hdc, font.into());
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, TEXT_PRIMARY);
+            let mut text_rect = rect;
+            draw_text_centered(hdc, badge, &mut text_rect);
+            SelectObject(hdc, old_font);
+        }
     }
 }
 
@@ -837,34 +937,68 @@ unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
     if draw.itemID == u32::MAX {
         return;
     }
-    let Some((entry, name_font, detail_font, dpi)) = STATE.with(|state| {
+    let Some((entry, name_font, detail_font, dpi, badge)) = STATE.with(|state| {
         let state = state.borrow();
         let entry = state.results.get(draw.itemID as usize)?.clone();
-        Some((entry, state.name_font, state.detail_font, state.dpi))
+        Some((
+            entry,
+            state.name_font,
+            state.detail_font,
+            state.dpi,
+            state.badge,
+        ))
     }) else {
         return;
     };
 
     unsafe {
         let selected = draw.itemState.0 & ODS_SELECTED.0 != 0;
-        let background = CreateSolidBrush(if selected { SURFACE_HOVER } else { BACKGROUND });
+        let background = CreateSolidBrush(BACKGROUND);
         FillRect(draw.hDC, &draw.rcItem, background);
         let _ = DeleteObject(background.into());
 
+        // 選択行はカード風に少し内側へ収め、角を丸めて他の行から浮かせる
         if selected {
-            let accent = CreateSolidBrush(ACCENT);
+            let accent_color = badge.map_or(ACCENT, badge_color);
+            let inset = scale(2, dpi);
+            let card = RECT {
+                left: draw.rcItem.left + inset,
+                top: draw.rcItem.top + scale(1, dpi),
+                right: draw.rcItem.right - inset,
+                bottom: draw.rcItem.bottom - scale(1, dpi),
+            };
+            let card_brush = CreateSolidBrush(SURFACE_HOVER);
+            let card_pen = CreatePen(PS_SOLID, 1, SURFACE_HOVER);
+            let old_brush = SelectObject(draw.hDC, card_brush.into());
+            let old_pen = SelectObject(draw.hDC, card_pen.into());
+            let radius = scale(8, dpi);
+            let _ = RoundRect(
+                draw.hDC,
+                card.left,
+                card.top,
+                card.right,
+                card.bottom,
+                radius,
+                radius,
+            );
+            SelectObject(draw.hDC, old_brush);
+            SelectObject(draw.hDC, old_pen);
+            let _ = DeleteObject(card_brush.into());
+            let _ = DeleteObject(card_pen.into());
+
+            let accent = CreateSolidBrush(accent_color);
             let accent_rect = RECT {
-                left: draw.rcItem.left,
-                top: draw.rcItem.top + scale(5, dpi),
-                right: draw.rcItem.left + scale(3, dpi),
-                bottom: draw.rcItem.bottom - scale(5, dpi),
+                left: card.left,
+                top: card.top + scale(6, dpi),
+                right: card.left + scale(3, dpi),
+                bottom: card.bottom - scale(6, dpi),
             };
             FillRect(draw.hDC, &accent_rect, accent);
             let _ = DeleteObject(accent.into());
         }
 
         match entry.action {
-            Action::OpenFolder(_) | Action::OpenWithDefaultHandler => {
+            Action::OpenFolder(_) | Action::OpenWithDefaultHandler | Action::LaunchApp => {
                 draw_path_icon(draw.hDC, &entry.path, draw.rcItem, dpi)
             }
             Action::FocusWindow(hwnd) => {
@@ -925,6 +1059,19 @@ unsafe fn draw_text(hdc: HDC, text: &str, rect: &mut RECT) {
             &mut wide,
             rect,
             DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX,
+        );
+    }
+}
+
+/// バッジの文字を水平・垂直とも中央揃えで描く。
+unsafe fn draw_text_centered(hdc: HDC, text: &str, rect: &mut RECT) {
+    let mut wide: Vec<u16> = text.encode_utf16().collect();
+    unsafe {
+        DrawTextW(
+            hdc,
+            &mut wide,
+            rect,
+            DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_NOPREFIX,
         );
     }
 }
