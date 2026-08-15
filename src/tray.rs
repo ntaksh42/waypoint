@@ -30,6 +30,7 @@ use crate::config::{Config, LoadOutcome};
 use crate::menu::{Action, BuiltMenu, Selection};
 use crate::process;
 use crate::quick_launch;
+use crate::quick_launch_history;
 use crate::quick_launch_window::{self, WM_QUICK_LAUNCH_EXECUTE};
 use crate::shell;
 use crate::trigger::{self, Registration, WM_TRIGGER_MENU};
@@ -318,6 +319,7 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         }
         WM_QUICK_LAUNCH_EXECUTE => {
             if let Some((entry, origin)) = quick_launch_window::take_pending() {
+                quick_launch_history::record(&entry);
                 match entry.action {
                     quick_launch::Action::OpenFolder(mode) => {
                         let _ = shell::open(&entry.path, mode, origin);
@@ -411,7 +413,6 @@ fn show_launcher(hwnd: HWND, at: POINT, origin: Option<HWND>) {
             let _ = shell::open_shell_item(&target);
             refresh_dynamic();
         }
-        Some(Selection::AddSpecialFolder) => open_settings(Some("--add-special-folder")),
         Some(Selection::Settings) => open_config_in_editor(),
         Some(Selection::Reload) => reload(hwnd),
         Some(Selection::Close) | None => refresh_dynamic(),

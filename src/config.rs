@@ -40,6 +40,9 @@ pub enum Item {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         open: Option<OpenMode>,
     },
+    /// shell 名前空間への入口 (This PC, Network, Control Panel, Recycle Bin など) 。
+    /// `target` は `ShellExecuteW` にそのまま渡す (`shell:MyComputerFolder` 等) 。
+    Shell { name: String, target: String },
     /// 入れ子のメニュー。
     Submenu {
         name: String,
@@ -59,6 +62,7 @@ impl Item {
         match self {
             Item::Folder { name, .. }
             | Item::SpecialFolder { name, .. }
+            | Item::Shell { name, .. }
             | Item::Submenu { name, .. } => Some(name),
             Item::Separator { name } => name.as_deref(),
         }
@@ -270,20 +274,47 @@ pub fn load() -> LoadOutcome {
 fn default_config() -> Config {
     Config {
         items: vec![
-            Item::SpecialFolder {
-                name: "Desktop".to_string(),
-                known_folder: "Desktop".to_string(),
-                open: None,
-            },
-            Item::SpecialFolder {
-                name: "Downloads".to_string(),
-                known_folder: "Downloads".to_string(),
-                open: None,
-            },
-            Item::SpecialFolder {
-                name: "Documents".to_string(),
-                known_folder: "Documents".to_string(),
-                open: None,
+            Item::Submenu {
+                name: "My Special Folders".to_string(),
+                items: vec![
+                    Item::SpecialFolder {
+                        name: "Desktop".to_string(),
+                        known_folder: "Desktop".to_string(),
+                        open: None,
+                    },
+                    Item::SpecialFolder {
+                        name: "Documents".to_string(),
+                        known_folder: "Documents".to_string(),
+                        open: None,
+                    },
+                    Item::SpecialFolder {
+                        name: "Pictures".to_string(),
+                        known_folder: "Pictures".to_string(),
+                        open: None,
+                    },
+                    Item::SpecialFolder {
+                        name: "Downloads".to_string(),
+                        known_folder: "Downloads".to_string(),
+                        open: None,
+                    },
+                    Item::Separator { name: None },
+                    Item::Shell {
+                        name: "This PC".to_string(),
+                        target: "shell:MyComputerFolder".to_string(),
+                    },
+                    Item::Shell {
+                        name: "Network".to_string(),
+                        target: "shell:NetworkPlacesFolder".to_string(),
+                    },
+                    Item::Shell {
+                        name: "All Control Panel Items".to_string(),
+                        target: "shell:ControlPanelFolder".to_string(),
+                    },
+                    Item::Shell {
+                        name: "Recycle Bin".to_string(),
+                        target: "shell:RecycleBinFolder".to_string(),
+                    },
+                ],
             },
             Item::Separator { name: None },
             Item::Folder {

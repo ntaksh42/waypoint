@@ -259,14 +259,20 @@ fn cached_bitmap(key: &str, load: impl FnOnce() -> Option<HBITMAP>) -> Option<HB
 
 /// ファイルパスを持たないシェル名前空間項目のアイコンを得る。
 pub fn bitmap_for_shell(target: &str) -> Option<HBITMAP> {
-    let key = format!("shell-namespace:{target}");
+    bitmap_for_shell_sized(target, menu_icon_size().cx)
+}
+
+/// 指定 ID の標準アイコンを、メニューの iconSize 設定とは独立に
+/// 指定寸法のビットマップとして得る (`bitmap_for_sized` と同じ理由)。
+pub fn bitmap_for_shell_sized(target: &str, size: i32) -> Option<HBITMAP> {
+    let key = format!("shell-namespace:{size}:{target}");
     let cached = CACHE.with(|cache| cache.borrow().get(&key).copied());
     if let Some(raw) = cached {
         return (raw != 0).then_some(HBITMAP(raw as *mut _));
     }
 
-    let bitmap = shell_icon(target).and_then(|icon| {
-        let bitmap = icon_to_bitmap(icon, menu_icon_size());
+    let bitmap = shell_icon(target, size).and_then(|icon| {
+        let bitmap = icon_to_bitmap(icon, SIZE { cx: size, cy: size });
         unsafe {
             let _ = DestroyIcon(icon);
         }
@@ -340,7 +346,7 @@ fn icon_size_flag(size: i32) -> windows::Win32::UI::Shell::SHGFI_FLAGS {
     }
 }
 
-fn shell_icon(target: &str) -> Option<HICON> {
+fn shell_icon(target: &str, size: i32) -> Option<HICON> {
     unsafe {
         let target = HSTRING::from(target);
         let mut pidl = std::ptr::null_mut();
@@ -356,7 +362,7 @@ fn shell_icon(target: &str) -> Option<HICON> {
             flags,
         );
         let icon = if ok != 0 {
-            SHGetImageList::<IImageList>(image_list_for(menu_icon_size().cx))
+            SHGetImageList::<IImageList>(image_list_for(size))
                 .ok()
                 .and_then(|list| list.GetIcon(info.iIcon, ILD_TRANSPARENT.0).ok())
         } else {

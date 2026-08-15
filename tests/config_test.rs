@@ -99,6 +99,25 @@ fn parses_spec_example() {
 }
 
 #[test]
+fn parses_and_round_trips_shell_item() {
+    let json = r#"{ "items": [
+        { "type": "shell", "name": "This PC", "target": "shell:MyComputerFolder" }
+    ] }"#;
+    let cfg: Config = serde_json::from_str(json).unwrap();
+    match &cfg.items[0] {
+        Item::Shell { name, target } => {
+            assert_eq!(name, "This PC");
+            assert_eq!(target, "shell:MyComputerFolder");
+        }
+        other => panic!("expected shell, got {other:?}"),
+    }
+
+    let text = serde_json::to_string(&cfg).unwrap();
+    let again: Config = serde_json::from_str(&text).unwrap();
+    assert_eq!(again.items, cfg.items);
+}
+
+#[test]
 fn missing_optional_fields_use_defaults() {
     // 最小限の JSON でも既定値で埋まること
     let cfg: Config = serde_json::from_str(r#"{ "items": [] }"#).unwrap();

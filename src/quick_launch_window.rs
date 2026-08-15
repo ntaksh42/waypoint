@@ -1129,7 +1129,13 @@ fn backdrop_tint(color: COLORREF) -> COLORREF {
 
 unsafe fn draw_path_icon(hdc: HDC, path: &str, rect: RECT, dpi: u32) {
     let size = scale(ICON_SIZE, dpi);
-    let Some(bitmap) = crate::icon::bitmap_for_sized(path, size) else {
+    // shell:MyComputerFolder 等はファイルパスではないため専用の解決経路を使う
+    let bitmap = if path.starts_with("shell:") {
+        crate::icon::bitmap_for_shell_sized(path, size)
+    } else {
+        crate::icon::bitmap_for_sized(path, size)
+    };
+    let Some(bitmap) = bitmap else {
         return;
     };
     unsafe { draw_icon_bitmap(hdc, bitmap, rect, dpi, size) };

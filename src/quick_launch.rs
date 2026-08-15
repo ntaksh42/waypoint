@@ -4,6 +4,7 @@
 
 use crate::config::{Config, Item, OpenMode};
 use crate::dynamic::Menus;
+use crate::quick_launch_history::Ranking;
 
 /// ブックマーク検索モードに入るプレフィックス (末尾の半角スペース込み)。
 const BOOKMARK_PREFIX: &str = "b ";
@@ -65,6 +66,7 @@ pub struct Index {
     windows: Vec<Entry>,
     apps: Vec<Entry>,
     search_paths: bool,
+    ranking: Ranking,
 }
 
 impl Index {
@@ -138,11 +140,12 @@ impl Index {
         };
 
         Self {
-            entries,
+            entries: dedup_by_path(entries),
             bookmarks,
             windows,
             apps,
             search_paths: settings.search_paths,
+            ranking: Ranking::load(),
         }
     }
 
@@ -150,21 +153,26 @@ impl Index {
     /// Open Windows・アプリだけを検索する (FR-9.13 / FR-9.15 / FR-9.14)。
     pub fn search(&self, query: &str) -> Vec<&Entry> {
         if let Some(rest) = query.strip_prefix(BOOKMARK_PREFIX) {
-            return search_entries(&self.bookmarks, rest, true);
+            return search_entries(&self.bookmarks, rest, true, &self.ranking);
         }
         if let Some(rest) = query.strip_prefix(WINDOW_PREFIX) {
-            return search_entries(&self.windows, rest, false);
+            return search_entries(&self.windows, rest, false, &self.ranking);
         }
         if let Some(rest) = query.strip_prefix(APPS_PREFIX) {
-            return search_entries(&self.apps, rest, false);
+            return search_entries(&self.apps, rest, false, &self.ranking);
         }
-        search_entries(&self.entries, query, self.search_paths)
+        search_entries(&self.entries, query, self.search_paths, &self.ranking)
     }
 }
 
-fn search_entries<'a>(entries: &'a [Entry], query: &str, search_paths: bool) -> Vec<&'a Entry> {
+fn search_entries<'a>(
+    entries: &'a [Entry],
+    query: &str,
+    search_paths: bool,
+    ranking: &Ranking,
+) -> Vec<&'a Entry> {
     let terms: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
-    let mut matches: Vec<(u8, usize, &Entry)> = entries
+    let mut matches: Vec<(u8, (u64, u64), usize, &Entry)> = entries
         .iter()
         .enumerate()
         .filter_map(|(order, entry)| {
@@ -175,11 +183,39 @@ fn search_entries<'a>(entries: &'a [Entry], query: &str, search_paths: bool) -> 
                 .iter()
                 .map(|term| match_score(&name, &breadcrumb, path.as_deref(), term))
                 .collect();
-            scores.map(|scores| (scores.into_iter().max().unwrap_or(0), order, entry))
+            scores.map(|scores| {
+                (
+                    scores.into_iter().max().unwrap_or(0),
+                    ranking.rank(entry),
+                    order,
+                    entry,
+                )
+            })
         })
         .collect();
-    matches.sort_by_key(|(score, order, _)| (*score, *order));
-    matches.into_iter().map(|(_, _, entry)| entry).collect()
+    // 文字列一致の質を最優先し、同点内では使用頻度・最近使った順で並べる
+    matches.sort_by_key(|(score, usage, order, _)| (*score, *usage, *order));
+    matches
+        .into_iter()
+        .map(|(_, _, _, entry)| entry)
+        .collect()
+}
+
+/// 同じパスを指す項目 (config の Folder / Recent Folders / Frequent
+/// Folders など、出所違いで同一フォルダが複数登録され得る) を 1 件へ
+/// たたむ。先に追加された方を残すので、config.items を優先し
+/// Recent > Frequent の順にフォールバックする (呼び出し側の追加順)。
+fn dedup_by_path(entries: Vec<Entry>) -> Vec<Entry> {
+    let mut seen = std::collections::HashSet::new();
+    entries
+        .into_iter()
+        .filter(|entry| {
+            if entry.path.is_empty() {
+                return true;
+            }
+            seen.insert(entry.path.to_lowercase())
+        })
+        .collect()
 }
 
 fn collect_items(
@@ -215,6 +251,14 @@ fn collect_items(
                         action: Action::OpenFolder(open.unwrap_or_default()),
                     });
                 }
+            }
+            Item::Shell { name, target } => {
+                entries.push(Entry {
+                    name: name.clone(),
+                    breadcrumb: parents.join(" > "),
+                    path: target.clone(),
+                    action: Action::OpenWithDefaultHandler,
+                });
             }
             Item::Submenu { name, items } => {
                 parents.push(name.clone());
@@ -302,6 +346,7 @@ mod tests {
                 action: Action::LaunchApp,
             }],
             search_paths: false,
+            ranking: Ranking::default(),
         }
     }
 
@@ -328,6 +373,35 @@ mod tests {
                 .map(|item| item.name.as_str())
                 .collect::<Vec<_>>(),
             ["Waypoint docs", "Old waypoint", "Release"]
+        );
+    }
+
+    #[test]
+    fn previously_selected_entry_ranks_before_same_score_siblings() {
+        // 両方とも prefix 一致で同スコアになる 2 件。並び順 (order) だけなら
+        // Alpha が先に出るはずだが、Beta の選択履歴があれば逆転する
+        let alpha = Entry {
+            name: "Alpha Tools".into(),
+            breadcrumb: String::new(),
+            path: r"C:\Alpha".into(),
+            action: Action::OpenFolder(OpenMode::NewWindow),
+        };
+        let beta = Entry {
+            name: "Alpha Utils".into(),
+            breadcrumb: String::new(),
+            path: r"C:\Beta".into(),
+            action: Action::OpenFolder(OpenMode::NewWindow),
+        };
+        let mut idx = Index {
+            entries: vec![alpha, beta.clone()],
+            ..Index::default()
+        };
+        idx.ranking = Ranking::default().with_selection(&beta, 3, 100);
+
+        let found = idx.search("alpha");
+        assert_eq!(
+            found.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+            ["Alpha Utils", "Alpha Tools"]
         );
     }
 
@@ -396,6 +470,53 @@ mod tests {
         let found = index.search("b example.com");
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "Example");
+    }
+
+    #[test]
+    fn shell_items_are_indexed_and_open_with_default_handler() {
+        let config = Config {
+            items: vec![Item::Shell {
+                name: "This PC".to_string(),
+                target: "shell:MyComputerFolder".to_string(),
+            }],
+            ..Config::default()
+        };
+        let index = Index::build(&config, &Menus::default());
+        let found = index.search("this pc");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].path, "shell:MyComputerFolder");
+        assert_eq!(found[0].action, Action::OpenWithDefaultHandler);
+    }
+
+    #[test]
+    fn same_path_from_config_and_recent_and_frequent_folds_into_one() {
+        use crate::dynamic::PathEntry;
+
+        let config = Config {
+            items: vec![Item::Folder {
+                name: "DevDeck".to_string(),
+                path: r"E:\DevDeck".to_string(),
+                open: None,
+                icon: None,
+                show_branch: false,
+            }],
+            ..Config::default()
+        };
+        let dynamic = Menus {
+            recent_folders: vec![PathEntry {
+                name: "DevDeck".to_string(),
+                path: r"E:\DevDeck".to_string(),
+            }],
+            frequent_folders: vec![PathEntry {
+                name: "DevDeck".to_string(),
+                path: r"e:\devdeck".to_string(), // 大文字小文字違いでも同一視する
+            }],
+            ..Menus::default()
+        };
+        let index = Index::build(&config, &dynamic);
+        let found = index.search("devdeck");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].breadcrumb, ""); // config.items 直下 = breadcrumb なし
     }
 
     #[test]

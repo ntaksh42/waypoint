@@ -8,8 +8,7 @@ use std::collections::BTreeMap;
 use windows::Win32::Foundation::{HWND, POINT};
 use windows::Win32::Graphics::Gdi::HBITMAP;
 use windows::Win32::UI::Shell::{
-    SHSTOCKICONID, SIID_DESKTOPPC, SIID_DOCASSOC, SIID_DOCNOASSOC, SIID_FOLDER, SIID_FOLDEROPEN,
-    SIID_STACK,
+    SHSTOCKICONID, SIID_DOCASSOC, SIID_DOCNOASSOC, SIID_FOLDER, SIID_FOLDEROPEN, SIID_STACK,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreatePopupMenu, DestroyMenu, GetMenuItemCount, HMENU, InsertMenuItemW, MENU_ITEM_FLAGS,
@@ -43,7 +42,6 @@ pub enum Action {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Selection {
     Action(Action),
-    AddSpecialFolder,
     Settings,
     Reload,
     Close,
@@ -108,7 +106,6 @@ impl BuiltMenu {
         }
         match id.0 as usize {
             ID_SETTINGS => Some(Selection::Settings),
-            ID_ADD_SPECIAL_FOLDER => Some(Selection::AddSpecialFolder),
             ID_RELOAD => Some(Selection::Reload),
             ID_CLOSE => Some(Selection::Close),
             id => self.action(id).cloned().map(Selection::Action),
@@ -143,7 +140,6 @@ pub fn build(cfg: &Config, dynamic: &DynamicMenus) -> Result<BuiltMenu> {
     let menu = unsafe { build_level(&cfg.items, &mut ctx)? };
     unsafe {
         append_in_the_works(menu, dynamic, &mut ctx)?;
-        append_special_folders(menu, &mut ctx)?;
         append_footer(menu)?;
     }
     Ok(BuiltMenu {
@@ -157,7 +153,6 @@ const FIRST_ITEM_ID: usize = 1;
 const ID_SETTINGS: usize = 0xe001;
 const ID_RELOAD: usize = 0xe002;
 const ID_CLOSE: usize = 0xe003;
-const ID_ADD_SPECIAL_FOLDER: usize = 0xe004;
 const ICON_RELOAD: &[u8] = include_bytes!("../assets/menu/reload.png");
 const ICON_CLOSE: &[u8] = include_bytes!("../assets/menu/close.png");
 const ICON_WINDOW: &[u8] = include_bytes!("../assets/menu/window.png");
@@ -229,6 +224,25 @@ unsafe fn build_level(items: &[Item], ctx: &mut BuildCtx) -> Result<HMENU> {
                     accel += 1;
                     let resolved = crate::known_folder::resolve(known_folder);
                     append_leaf(menu, ctx, name, resolved, open.unwrap_or_default(), accel)?;
+                }
+                Item::Shell { name, target } => {
+                    accel += 1;
+                    let id = ctx.next_id;
+                    ctx.next_id += 1;
+                    append_owner_drawn(
+                        menu,
+                        MF_STRING,
+                        id,
+                        &decorate(name, ctx.numeric, accel),
+                        crate::icon::bitmap_for_shell(target),
+                        false,
+                    )?;
+                    ctx.actions.insert(
+                        id,
+                        Action::OpenShell {
+                            target: target.clone(),
+                        },
+                    );
                 }
             }
         }
@@ -307,91 +321,6 @@ unsafe fn append_in_the_works(
             submenu.0 as usize,
             "In the Works",
             crate::icon::bitmap_for_stock(SIID_STACK),
-            true,
-        )?;
-        Ok(())
-    }
-}
-
-/// QAP の My Special Folders と同じ、Windows 標準の場所への入口。
-unsafe fn append_special_folders(menu: HMENU, ctx: &mut BuildCtx) -> Result<()> {
-    unsafe {
-        let submenu = CreatePopupMenu()?;
-        // 追加の操作なので開いたフォルダ。閉じたフォルダの項目と見分けられる
-        append_owner_drawn(
-            submenu,
-            MF_STRING,
-            ID_ADD_SPECIAL_FOLDER,
-            "Add Favorite - Special Folder...",
-            crate::icon::bitmap_for_stock(SIID_FOLDEROPEN),
-            false,
-        )?;
-        append_separator(submenu)?;
-
-        for (index, (label, known_folder)) in [
-            ("Desktop", "Desktop"),
-            ("Documents", "Documents"),
-            ("Pictures", "Pictures"),
-            ("Downloads", "Downloads"),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            append_leaf(
-                submenu,
-                ctx,
-                label,
-                crate::known_folder::resolve(known_folder),
-                OpenMode::NewWindow,
-                index + 1,
-            )?;
-        }
-
-        append_separator(submenu)?;
-        for (index, (label, target)) in [
-            ("This PC", "shell:MyComputerFolder"),
-            ("Network", "shell:NetworkPlacesFolder"),
-            ("All Control Panel Items", "shell:ControlPanelFolder"),
-            ("Recycle Bin", "shell:RecycleBinFolder"),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let id = ctx.next_id;
-            ctx.next_id += 1;
-            append_owner_drawn(
-                submenu,
-                MF_STRING,
-                id,
-                &decorate(label, ctx.numeric, index + 5),
-                crate::icon::bitmap_for_shell(target),
-                false,
-            )?;
-            ctx.actions.insert(
-                id,
-                Action::OpenShell {
-                    target: target.to_string(),
-                },
-            );
-        }
-
-        append_separator(submenu)?;
-        // Customize も設定画面への入口。Settings... と同じ歯車で揃える
-        append_owner_drawn(
-            submenu,
-            MF_STRING,
-            ID_SETTINGS,
-            "Customize this menu (or group)",
-            crate::icon::bitmap_for_settings(),
-            false,
-        )?;
-        // Windows 標準の場所をまとめた入口なので PC のアイコン
-        append_owner_drawn(
-            menu,
-            MF_POPUP,
-            submenu.0 as usize,
-            "My Special Folders",
-            crate::icon::bitmap_for_stock(SIID_DESKTOPPC),
             true,
         )?;
         Ok(())

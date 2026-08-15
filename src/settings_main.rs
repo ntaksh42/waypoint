@@ -10,7 +10,6 @@ fn main() -> eframe::Result<()> {
     // 設定画面も GUI サブシステム。panic を握り潰さずログへ残す
     waypoint::panic_log::install();
 
-    let add_special_folder = std::env::args().any(|arg| arg == "--add-special-folder");
     let icon = app_icon();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -25,11 +24,7 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(move |creation| {
             creation.egui_ctx.set_visuals(egui::Visuals::dark());
-            let mut app = SettingsApp::load();
-            if add_special_folder {
-                app.begin_add(DraftKind::SpecialFolder);
-            }
-            Ok(Box::new(app))
+            Ok(Box::new(SettingsApp::load()))
         }),
     )
 }
@@ -490,6 +485,10 @@ impl SettingsApp {
                         self.begin_add(DraftKind::SpecialFolder);
                         ui.close();
                     }
+                    if ui.button("Add shell location").clicked() {
+                        self.begin_add(DraftKind::Shell);
+                        ui.close();
+                    }
                     if ui.button("Add menu").clicked() {
                         self.begin_add(DraftKind::Submenu);
                         ui.close();
@@ -899,6 +898,12 @@ impl SettingsApp {
                         });
                     show_open_mode(ui, &mut draft.open);
                 }
+                DraftKind::Shell => {
+                    ui.label("Name");
+                    ui.text_edit_singleline(&mut draft.name);
+                    ui.label("Target (e.g. shell:MyComputerFolder)");
+                    ui.text_edit_singleline(&mut draft.target);
+                }
                 DraftKind::Submenu => {
                     ui.label("Name");
                     ui.text_edit_singleline(&mut draft.name);
@@ -1245,6 +1250,10 @@ impl SettingsApp {
                         self.begin_add(DraftKind::SpecialFolder);
                         self.add_pending = false;
                     }
+                    if ui.button("Shell location").clicked() {
+                        self.begin_add(DraftKind::Shell);
+                        self.add_pending = false;
+                    }
                     if ui.button("Menu").clicked() {
                         self.begin_add(DraftKind::Submenu);
                         self.add_pending = false;
@@ -1376,6 +1385,7 @@ impl eframe::App for SettingsApp {
 enum DraftKind {
     Folder,
     SpecialFolder,
+    Shell,
     Submenu,
     Separator,
 }
@@ -1386,6 +1396,7 @@ struct ItemDraft {
     name: String,
     path: String,
     known_folder: String,
+    target: String,
     open: OpenMode,
     icon: Option<String>,
     show_branch: bool,
@@ -1523,6 +1534,7 @@ impl ItemDraft {
             name: String::new(),
             path: String::new(),
             known_folder: waypoint::known_folder::NAMES[0].to_string(),
+            target: String::new(),
             open: OpenMode::default(),
             icon: None,
             show_branch: false,
@@ -1559,6 +1571,12 @@ impl ItemDraft {
                 open: open.unwrap_or_default(),
                 ..Self::new(DraftKind::SpecialFolder)
             },
+            Item::Shell { name, target } => Self {
+                kind: DraftKind::Shell,
+                name: name.clone(),
+                target: target.clone(),
+                ..Self::new(DraftKind::Shell)
+            },
             Item::Submenu { name, items } => Self {
                 kind: DraftKind::Submenu,
                 name: name.clone(),
@@ -1586,6 +1604,12 @@ impl ItemDraft {
             DraftKind::SpecialFolder | DraftKind::Submenu if self.name.trim().is_empty() => {
                 Some("Name is required.".to_string())
             }
+            DraftKind::Shell if self.name.trim().is_empty() => {
+                Some("Name is required.".to_string())
+            }
+            DraftKind::Shell if self.target.trim().is_empty() => {
+                Some("Target is required.".to_string())
+            }
             _ => None,
         }
     }
@@ -1604,6 +1628,10 @@ impl ItemDraft {
                 name: self.name,
                 known_folder: self.known_folder,
                 open,
+            },
+            DraftKind::Shell => Item::Shell {
+                name: self.name,
+                target: self.target,
             },
             DraftKind::Submenu => Item::Submenu {
                 name: self.name,
@@ -1674,6 +1702,7 @@ fn item_kind(item: &Item) -> &'static str {
     match item {
         Item::Folder { .. } => "Folder",
         Item::SpecialFolder { .. } => "Special folder",
+        Item::Shell { .. } => "Shell location",
         Item::Submenu { .. } => "Submenu",
         Item::Separator { .. } => "Separator",
     }
@@ -1683,6 +1712,7 @@ fn item_detail(item: &Item) -> &str {
     match item {
         Item::Folder { path, .. } => path,
         Item::SpecialFolder { known_folder, .. } => known_folder,
+        Item::Shell { target, .. } => target,
         Item::Submenu { .. } | Item::Separator { .. } => "",
     }
 }
@@ -1695,7 +1725,7 @@ fn item_open(item: &Item) -> &'static str {
                 OpenMode::Reuse => "Reuse",
             }
         }
-        Item::Submenu { .. } | Item::Separator { .. } => "—",
+        Item::Shell { .. } | Item::Submenu { .. } | Item::Separator { .. } => "—",
     }
 }
 
