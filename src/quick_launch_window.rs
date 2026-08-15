@@ -48,6 +48,14 @@ const EDIT_HEIGHT: i32 = 34;
 const ROW_HEIGHT: i32 = 42;
 /// モードバッジ ("BOOKMARKS" 等) 用に検索窓の右側へ確保する幅。
 const BADGE_WIDTH: i32 = 92;
+/// 候補行のアイコン一辺。行の左端からの余白と種別バッジの半径もこれを基準に決める。
+const ICON_SIZE: i32 = 26;
+/// アイコンの左端 (行の左端からの距離)。
+const ICON_LEFT: i32 = 8;
+/// アイコンからテキストまでの隙間。
+const ICON_TEXT_GAP: i32 = 10;
+/// テキストの開始位置 (行の左端からの距離)。
+const TEXT_LEFT: i32 = ICON_LEFT + ICON_SIZE + ICON_TEXT_GAP;
 
 const BACKGROUND: COLORREF = rgb(13, 13, 13);
 const SURFACE: COLORREF = rgb(30, 30, 30);
@@ -64,6 +72,18 @@ fn badge_color(badge: &str) -> COLORREF {
         "APPS" => rgb(255, 159, 10),      // オレンジ
         "FILES" => rgb(52, 199, 89),      // 緑
         _ => ACCENT,
+    }
+}
+
+/// 候補のアクション種別を表す色。バッジと同じ配色を流用し、
+/// モードで絞り込む前 (通常検索の混在リスト) でも種別が一目で分かるようにする。
+fn action_color(action: &Action) -> COLORREF {
+    match action {
+        Action::OpenFolder(_) => ACCENT,               // 青 (フォルダ)
+        Action::FocusWindow(_) => badge_color("WINDOWS"), // シアン
+        Action::OpenUrl(_) => badge_color("BOOKMARKS"), // 紫
+        Action::LaunchApp => badge_color("APPS"),       // オレンジ
+        Action::OpenWithDefaultHandler => badge_color("FILES"), // 緑 (Everything のファイル)
     }
 }
 
@@ -997,6 +1017,7 @@ unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
             let _ = DeleteObject(accent.into());
         }
 
+        draw_icon_backdrop(draw.hDC, action_color(&entry.action), draw.rcItem, dpi);
         match entry.action {
             Action::OpenFolder(_) | Action::OpenWithDefaultHandler | Action::LaunchApp => {
                 draw_path_icon(draw.hDC, &entry.path, draw.rcItem, dpi)
@@ -1007,7 +1028,7 @@ unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
             Action::OpenUrl(_) => draw_stock_icon(draw.hDC, SIID_LINK, draw.rcItem, dpi),
         }
         SetBkMode(draw.hDC, TRANSPARENT);
-        let text_left = draw.rcItem.left + scale(40, dpi);
+        let text_left = draw.rcItem.left + scale(TEXT_LEFT, dpi);
         let text_right = draw.rcItem.right - scale(8, dpi);
 
         if let Some(font) = name_font {
@@ -1076,8 +1097,38 @@ unsafe fn draw_text_centered(hdc: HDC, text: &str, rect: &mut RECT) {
     }
 }
 
+/// 種別色の丸背景。実アイコンより一回り大きく敷き、透明な余白を持つ
+/// アイコン (フォルダ・URL 等) でも種別が一目で分かるようにする。
+unsafe fn draw_icon_backdrop(hdc: HDC, color: COLORREF, rect: RECT, dpi: u32) {
+    unsafe {
+        let size = scale(ICON_SIZE + 6, dpi);
+        let left = rect.left + scale(ICON_LEFT, dpi) - scale(3, dpi);
+        let top = rect.top + (rect.bottom - rect.top - size) / 2;
+        let brush = CreateSolidBrush(backdrop_tint(color));
+        let pen = CreatePen(PS_SOLID, 1, backdrop_tint(color));
+        let old_brush = SelectObject(hdc, brush.into());
+        let old_pen = SelectObject(hdc, pen.into());
+        let _ = Ellipse(hdc, left, top, left + size, top + size);
+        SelectObject(hdc, old_brush);
+        SelectObject(hdc, old_pen);
+        let _ = DeleteObject(brush.into());
+        let _ = DeleteObject(pen.into());
+    }
+}
+
+/// 種別色をそのまま塗ると強すぎるので、背景 (`BACKGROUND`) に大きく
+/// 寄せた低彩度版にする。
+fn backdrop_tint(color: COLORREF) -> COLORREF {
+    let mix = |channel: u8| -> u8 { ((channel as u32 * 46 + 13 * 210) / 256) as u8 };
+    rgb(
+        mix((color.0 & 0xff) as u8),
+        mix(((color.0 >> 8) & 0xff) as u8),
+        mix(((color.0 >> 16) & 0xff) as u8),
+    )
+}
+
 unsafe fn draw_path_icon(hdc: HDC, path: &str, rect: RECT, dpi: u32) {
-    let size = scale(18, dpi);
+    let size = scale(ICON_SIZE, dpi);
     let Some(bitmap) = crate::icon::bitmap_for_sized(path, size) else {
         return;
     };
@@ -1085,7 +1136,7 @@ unsafe fn draw_path_icon(hdc: HDC, path: &str, rect: RECT, dpi: u32) {
 }
 
 unsafe fn draw_window_icon(hdc: HDC, hwnd: HWND, rect: RECT, dpi: u32) {
-    let size = scale(18, dpi);
+    let size = scale(ICON_SIZE, dpi);
     let Some(bitmap) = crate::icon::bitmap_for_window_sized(hwnd, size) else {
         return;
     };
@@ -1098,7 +1149,7 @@ unsafe fn draw_stock_icon(
     rect: RECT,
     dpi: u32,
 ) {
-    let size = scale(18, dpi);
+    let size = scale(ICON_SIZE, dpi);
     let Some(bitmap) = crate::icon::bitmap_for_stock_sized(id, size) else {
         return;
     };
@@ -1119,7 +1170,7 @@ unsafe fn draw_icon_bitmap(hdc: HDC, bitmap: HBITMAP, rect: RECT, dpi: u32, size
         let old = SelectObject(source, bitmap.into());
         let _ = AlphaBlend(
             hdc,
-            rect.left + scale(11, dpi),
+            rect.left + scale(ICON_LEFT, dpi),
             rect.top + (rect.bottom - rect.top - size) / 2,
             size,
             size,
