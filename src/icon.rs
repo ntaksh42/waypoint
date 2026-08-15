@@ -230,16 +230,45 @@ unsafe fn window_icon_via_class(hwnd: HWND, large_first: bool) -> Option<HICON> 
 
 /// 埋め込み PNG を現在の DPI のメニューサイズへ縮小して使う。
 pub fn bitmap_for_asset(key: &str, png: &[u8]) -> Option<HBITMAP> {
-    cached_bitmap(&format!("asset-icon:{key}"), || {
-        let size = menu_icon_size();
+    let size = menu_icon_size();
+    bitmap_for_asset_sized(key, png, size.cx)
+}
+
+/// 埋め込み PNG を、メニューの iconSize 設定とは独立に指定寸法へ
+/// 縮小して使う (`bitmap_for_sized` と同じ理由)。
+pub fn bitmap_for_asset_sized(key: &str, png: &[u8], size: i32) -> Option<HBITMAP> {
+    cached_bitmap(&format!("asset-icon:{size}:{key}"), || {
+        let target = SIZE { cx: size, cy: size };
         let image = image::load_from_memory(png).ok()?.into_rgba8();
         let image = image::imageops::resize(
             &image,
-            size.cx as u32,
-            size.cy as u32,
+            target.cx as u32,
+            target.cy as u32,
             image::imageops::FilterType::Lanczos3,
         );
-        rgba_to_bitmap(image.as_raw(), size)
+        rgba_to_bitmap(image.as_raw(), target)
+    })
+}
+
+/// ブックマーク URL に対応する favicon を、Chrome/Edge の `Favicons` DB
+/// から得てメニュー用ビットマップにする。見つからなければ None
+/// (呼び出し側が汎用のリンクアイコンへフォールバックする)。
+pub fn bitmap_for_favicon_sized(url: &str, size: i32) -> Option<HBITMAP> {
+    cached_bitmap(&format!("favicon:{size}:{url}"), || {
+        let png = crate::favicons::lookup(url)?;
+        let image = image::load_from_memory(&png).ok()?.into_rgba8();
+        let target = SIZE { cx: size, cy: size };
+        let image = if image.width() as i32 == size && image.height() as i32 == size {
+            image
+        } else {
+            image::imageops::resize(
+                &image,
+                target.cx as u32,
+                target.cy as u32,
+                image::imageops::FilterType::Lanczos3,
+            )
+        };
+        rgba_to_bitmap(image.as_raw(), target)
     })
 }
 
