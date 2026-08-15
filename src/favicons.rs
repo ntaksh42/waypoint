@@ -15,7 +15,9 @@ use rusqlite::Connection;
 /// `page_url` は完全一致 (Chrome はブックマークした時点の URL をそのまま
 /// キーにする)。見つからなければ None。
 pub fn lookup(url: &str) -> Option<Vec<u8>> {
-    profile_paths().into_iter().find_map(|path| query(&path, url))
+    profile_paths()
+        .into_iter()
+        .find_map(|path| query(&path, url))
 }
 
 fn query(db_path: &Path, url: &str) -> Option<Vec<u8>> {
