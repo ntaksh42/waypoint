@@ -5,6 +5,13 @@
 
 fn main() {
     println!("cargo:rerun-if-changed=waypoint.manifest");
+    println!("cargo:rerun-if-changed=assets/waypoint.ico");
+
+    #[cfg(target_os = "windows")]
+    winresource::WindowsResource::new()
+        .set_icon("assets/waypoint.ico")
+        .compile()
+        .expect("アプリアイコンの埋め込みに失敗");
 
     // MSVC リンカにマニフェストを渡す
     #[cfg(target_env = "msvc")]

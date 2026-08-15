@@ -193,10 +193,14 @@ pub fn set_quick_launch_hotkey_failed(failed: bool) {
 pub fn install() -> Result<HWND> {
     unsafe {
         let instance = GetModuleHandleW(None)?;
+        let icon_resource = PCWSTR(std::ptr::without_provenance(1));
+        let app_icon = LoadIconW(Some(instance.into()), icon_resource)
+            .or_else(|_| LoadIconW(None, IDI_APPLICATION))?;
 
         let class = WNDCLASSW {
             lpfnWndProc: Some(wnd_proc),
             hInstance: instance.into(),
+            hIcon: app_icon,
             lpszClassName: CLASS_NAME,
             ..Default::default()
         };
@@ -227,7 +231,7 @@ pub fn install() -> Result<HWND> {
             uID: TRAY_UID,
             uFlags: NIF_MESSAGE | NIF_ICON | NIF_TIP,
             uCallbackMessage: WM_TRAY,
-            hIcon: LoadIconW(None, IDI_APPLICATION)?,
+            hIcon: app_icon,
             ..Default::default()
         };
         write_tip(&mut data.szTip, "waypoint");

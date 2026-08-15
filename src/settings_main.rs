@@ -11,10 +11,12 @@ fn main() -> eframe::Result<()> {
     waypoint::panic_log::install();
 
     let add_special_folder = std::env::args().any(|arg| arg == "--add-special-folder");
+    let icon = app_icon();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([700.0, 560.0])
-            .with_min_inner_size([640.0, 520.0]),
+            .with_min_inner_size([640.0, 520.0])
+            .with_icon(icon),
         ..Default::default()
     };
 
@@ -131,6 +133,18 @@ fn reorder_target(from: usize, insert_at: usize) -> usize {
         insert_at - 1
     } else {
         insert_at
+    }
+}
+
+fn app_icon() -> egui::IconData {
+    let image = image::load_from_memory(include_bytes!("../assets/waypoint.png"))
+        .expect("埋め込みアイコンの読み込みに失敗")
+        .into_rgba8();
+    let (width, height) = image.dimensions();
+    egui::IconData {
+        rgba: image.into_raw(),
+        width,
+        height,
     }
 }
 
