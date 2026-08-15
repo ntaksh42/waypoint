@@ -146,11 +146,21 @@ fn app_icon() -> egui::IconData {
 struct SettingsApp {
     config: Config,
     selected_menu: Vec<usize>,
-    selected_item: Option<usize>,
+    /// 選択中の行の添字集合。複数選択に対応する (FR-6)。
+    selected_items: std::collections::BTreeSet<usize>,
+    /// 直近でフォーカス/クリックした行。Shift 範囲選択の基準にし、
+    /// 単一項目の操作 (Edit 詳細編集など) の対象にも使う。
+    active_item: Option<usize>,
+    /// Shift 範囲選択の起点。Ctrl/Shift を伴わない選択で更新する。
+    selection_anchor: Option<usize>,
     draft: Option<ItemDraft>,
+    batch_draft: Option<BatchDraft>,
+    move_to_menu_draft: Option<MoveToMenuDraft>,
     variables_draft: Option<VariablesDraft>,
     trigger_draft: Option<TriggerDraft>,
     import_draft: Option<ImportDraft>,
+    /// アプリ内クリップボード。Ctrl+C でコピーした項目を保持する。
+    clipboard: Vec<Item>,
     add_pending: bool,
     move_pending: bool,
     delete_pending: bool,
@@ -166,6 +176,9 @@ struct SettingsApp {
     /// 次の描画で選択行へフォーカスを移すか。
     /// 起動直後と、キーボードで選択を動かした直後に立てる。
     focus_selected_row: bool,
+    /// クリックで選択を確定した直後、フォーカス変化検出による
+    /// 単一選択への上書きを 1 回だけ抑止する (Ctrl/Shift クリック用) 。
+    suppress_focus_select: bool,
 }
 
 impl SettingsApp {
@@ -174,15 +187,21 @@ impl SettingsApp {
             LoadOutcome::Loaded(config) | LoadOutcome::Created(config) => (config, None),
             LoadOutcome::Failed(error) => (Config::default(), Some(error)),
         };
-        let selected_item = (!config.items.is_empty()).then_some(0);
+        let active_item = (!config.items.is_empty()).then_some(0);
+        let selected_items = active_item.into_iter().collect();
         Self {
             config,
             selected_menu: Vec::new(),
-            selected_item,
+            selected_items,
+            active_item,
+            selection_anchor: active_item,
             draft: None,
+            batch_draft: None,
+            move_to_menu_draft: None,
             variables_draft: None,
             trigger_draft: None,
             import_draft: None,
+            clipboard: Vec::new(),
             add_pending: false,
             move_pending: false,
             delete_pending: false,
@@ -194,6 +213,62 @@ impl SettingsApp {
             previous_focused_row: None,
             // 起動直後から矢印キーで一覧をたどれるように、選択行へフォーカスを置く
             focus_selected_row: true,
+            suppress_focus_select: false,
+        }
+    }
+
+    /// 単一項目を選択する。クリック (修飾キーなし) やキーボード移動で使う。
+    fn select_single(&mut self, index: usize) {
+        self.selected_items.clear();
+        self.selected_items.insert(index);
+        self.active_item = Some(index);
+        self.selection_anchor = Some(index);
+    }
+
+    /// Ctrl+クリック相当。1 件だけ選択集合へ追加/除外する。
+    fn toggle_selection(&mut self, index: usize) {
+        if !self.selected_items.remove(&index) {
+            self.selected_items.insert(index);
+        }
+        self.active_item = Some(index);
+        self.selection_anchor = Some(index);
+    }
+
+    /// Shift+クリック / Shift+矢印相当。アンカーから index までを選択する。
+    fn extend_selection_to(&mut self, index: usize) {
+        let anchor = self.selection_anchor.unwrap_or(index);
+        let (from, to) = if anchor <= index {
+            (anchor, index)
+        } else {
+            (index, anchor)
+        };
+        self.selected_items.clear();
+        self.selected_items.extend(from..=to);
+        self.active_item = Some(index);
+        // アンカーは動かさない。連続 Shift+矢印で範囲が伸び縮みするようにする
+    }
+
+    fn select_all(&mut self) {
+        let Some(len) = self.current_items().map(Vec::len) else {
+            return;
+        };
+        self.selected_items = (0..len).collect();
+        if self.active_item.is_none() {
+            self.active_item = len.checked_sub(1);
+        }
+    }
+
+    /// 選択集合を添字の昇順で返す。
+    fn selected_indices(&self) -> Vec<usize> {
+        self.selected_items.iter().copied().collect()
+    }
+
+    fn selection_summary(&self) -> String {
+        let count = self.selected_items.len();
+        if count <= 1 {
+            "The selected item".to_string()
+        } else {
+            format!("The {count} selected items")
         }
     }
 
@@ -209,13 +284,25 @@ impl SettingsApp {
         self.draft = Some(ItemDraft::new(kind));
     }
 
+    /// 単一選択なら詳細編集、複数選択ならバッチ編集ダイアログを開く。
     fn begin_edit(&mut self) {
-        let Some(index) = self.selected_item else {
+        if self.selected_items.len() > 1 {
+            self.begin_batch_edit();
+            return;
+        }
+        let Some(index) = self.active_item else {
             return;
         };
         if let Some(item) = self.current_items().and_then(|items| items.get(index)) {
             self.draft = Some(ItemDraft::from_item(index, item));
         }
+    }
+
+    fn begin_batch_edit(&mut self) {
+        if self.selected_items.len() < 2 {
+            return;
+        }
+        self.batch_draft = Some(BatchDraft::default());
     }
 
     fn apply_draft(&mut self) {
@@ -228,14 +315,58 @@ impl SettingsApp {
             return;
         };
 
-        if let Some(index) = editing {
+        let selected = if let Some(index) = editing {
             if let Some(slot) = items.get_mut(index) {
                 *slot = item;
-                self.selected_item = Some(index);
+                Some(index)
+            } else {
+                None
             }
         } else {
             items.push(item);
-            self.selected_item = Some(items.len() - 1);
+            Some(items.len() - 1)
+        };
+        if let Some(index) = selected {
+            self.select_single(index);
+        }
+        self.dirty = true;
+        self.status = None;
+    }
+
+    /// バッチ編集ダイアログの内容を選択中の全項目へ適用する (FR-6) 。
+    fn apply_batch_draft(&mut self) {
+        let Some(draft) = self.batch_draft.take() else {
+            return;
+        };
+        let indices: std::collections::BTreeSet<usize> = self.selected_items.clone();
+        let Some(items) = self.current_items_mut() else {
+            return;
+        };
+        for &index in &indices {
+            let Some(item) = items.get_mut(index) else {
+                continue;
+            };
+            if let Some(mode) = draft.open {
+                match item {
+                    Item::Folder { open, .. } | Item::SpecialFolder { open, .. } => {
+                        *open = Some(mode);
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(show_branch) = draft.show_branch {
+                match item {
+                    Item::Folder {
+                        show_branch: field, ..
+                    }
+                    | Item::Submenu {
+                        show_branch: field, ..
+                    } => {
+                        *field = show_branch;
+                    }
+                    _ => {}
+                }
+            }
         }
         self.dirty = true;
         self.status = None;
@@ -245,60 +376,113 @@ impl SettingsApp {
     fn insert_my_special_folders_preset(&mut self) {
         if let Some(items) = self.current_items_mut() {
             items.push(waypoint::config::my_special_folders_item());
-            self.selected_item = Some(items.len() - 1);
+            let index = items.len() - 1;
+            self.select_single(index);
             self.dirty = true;
             self.status = None;
         }
     }
 
+    /// 選択中の全項目を直後にまとめて複製する。
     fn duplicate_selected(&mut self) {
-        let Some(index) = self.selected_item else {
+        if self.selected_items.is_empty() {
+            return;
+        }
+        let indices = self.selected_indices();
+        let Some(items) = self.current_items_mut() else {
             return;
         };
-        let Some(item) = self
-            .current_items()
-            .and_then(|items| items.get(index))
-            .cloned()
-        else {
-            return;
-        };
-        if let Some(items) = self.current_items_mut() {
+        // 後ろから挿入すると前側の添字がずれない
+        let mut new_selection = std::collections::BTreeSet::new();
+        for &index in indices.iter().rev() {
+            let Some(item) = items.get(index).cloned() else {
+                continue;
+            };
             items.insert(index + 1, item);
-            self.selected_item = Some(index + 1);
-            self.dirty = true;
-            self.status = None;
         }
+        // 複製後の新しい添字を選択する: 各元位置は自身の並びの中で index 個前に
+        // 挿入が起きた分だけ前方にずれるので、元の相対順で1つずつ後ろへ計算し直す
+        for (offset, &index) in indices.iter().enumerate() {
+            new_selection.insert(index + offset + 1);
+        }
+        self.selected_items = new_selection;
+        self.active_item = self.selected_items.iter().next_back().copied();
+        self.selection_anchor = self.active_item;
+        self.dirty = true;
+        self.status = None;
     }
 
+    /// 選択中の全項目をまとめて削除する。
     fn remove_selected(&mut self) {
-        let Some(index) = self.selected_item else {
+        if self.selected_items.is_empty() {
+            return;
+        }
+        let indices = self.selected_indices();
+        let Some(items) = self.current_items_mut() else {
             return;
         };
-        if let Some(items) = self.current_items_mut()
-            && index < items.len()
-        {
-            items.remove(index);
-            self.selected_item = index.checked_sub(1).or((!items.is_empty()).then_some(0));
-            self.dirty = true;
-            self.status = None;
+        for &index in indices.iter().rev() {
+            if index < items.len() {
+                items.remove(index);
+            }
         }
+        let first_removed = indices.first().copied().unwrap_or(0);
+        let next = if first_removed < items.len() {
+            Some(first_removed)
+        } else {
+            first_removed.checked_sub(1).filter(|_| !items.is_empty())
+        };
+        self.selected_items.clear();
+        if let Some(next) = next {
+            self.selected_items.insert(next);
+        }
+        self.active_item = next;
+        self.selection_anchor = next;
+        self.dirty = true;
+        self.status = None;
     }
 
+    /// 選択中の全項目をまとめて上下へ動かす。連続していなくてもよい。
+    ///
+    /// 端 (先頭/末尾) に達した項目が一つでもあれば全体を動かさない。
+    /// バラバラな選択でも相対順序を保ったまま 1 段ずつ動かす。
     fn move_selected(&mut self, delta: isize) {
-        let Some(index) = self.selected_item else {
+        if self.selected_items.is_empty() || delta == 0 {
             return;
-        };
-        let Some(target) = index.checked_add_signed(delta) else {
-            return;
-        };
-        if let Some(items) = self.current_items_mut()
-            && target < items.len()
-        {
-            items.swap(index, target);
-            self.selected_item = Some(target);
-            self.dirty = true;
-            self.status = None;
         }
+        let indices = self.selected_indices();
+        let Some(items) = self.current_items_mut() else {
+            return;
+        };
+        let len = items.len();
+        // 端で止まるかの判定
+        if delta < 0 {
+            if indices.first().is_some_and(|&first| first == 0) {
+                return;
+            }
+        } else if indices.last().is_some_and(|&last| last + 1 >= len) {
+            return;
+        }
+
+        let mut new_selection = std::collections::BTreeSet::new();
+        if delta < 0 {
+            for &index in &indices {
+                items.swap(index, index - 1);
+                new_selection.insert(index - 1);
+            }
+        } else {
+            for &index in indices.iter().rev() {
+                items.swap(index, index + 1);
+                new_selection.insert(index + 1);
+            }
+        }
+        self.selected_items = new_selection;
+        self.active_item = self
+            .active_item
+            .map(|active| active.checked_add_signed(delta).unwrap_or(active));
+        self.selection_anchor = self.active_item;
+        self.dirty = true;
+        self.status = None;
     }
 
     /// ドラッグした行を挿入位置へ移す (FR-6.3) 。
@@ -318,7 +502,7 @@ impl SettingsApp {
         }
         let item = items.remove(from);
         items.insert(target, item);
-        self.selected_item = Some(target);
+        self.select_single(target);
         self.dirty = true;
         self.status = None;
     }
@@ -342,11 +526,94 @@ impl SettingsApp {
                     icon: None,
                     show_branch: false,
                 });
-                self.selected_item = Some(items.len() - 1);
+                let index = items.len() - 1;
+                self.select_single(index);
                 self.dirty = true;
                 self.status = None;
             }
         }
+    }
+
+    /// 選択中の全項目をアプリ内クリップボードへコピーする。
+    fn copy_selected(&mut self) {
+        let Some(items) = self.current_items() else {
+            return;
+        };
+        let copied: Vec<Item> = self
+            .selected_indices()
+            .into_iter()
+            .filter_map(|index| items.get(index).cloned())
+            .collect();
+        if !copied.is_empty() {
+            self.clipboard = copied;
+        }
+    }
+
+    /// クリップボードの内容を現在のメニューの末尾へ貼り付ける。
+    fn paste_clipboard(&mut self) {
+        if self.clipboard.is_empty() {
+            return;
+        }
+        let pasted = self.clipboard.clone();
+        let Some(items) = self.current_items_mut() else {
+            return;
+        };
+        let start = items.len();
+        items.extend(pasted);
+        self.selected_items = (start..items.len()).collect();
+        self.active_item = self.selected_items.iter().next_back().copied();
+        self.selection_anchor = self.active_item;
+        self.dirty = true;
+        self.status = None;
+    }
+
+    /// 選択中の全項目を、選んだ別メニュー (サブメニュー) の末尾へ移動する (FR-6.3) 。
+    ///
+    /// `target` が移動対象のいずれかの配下 (自分自身を含む) を指す場合は
+    /// 移動後に経路が失われるため何もしない。
+    fn move_selected_to_menu(&mut self, target: &[usize]) {
+        if self.selected_items.is_empty() || target == self.selected_menu.as_slice() {
+            return;
+        }
+        let indices = self.selected_indices();
+        if target.len() > self.selected_menu.len()
+            && target[..self.selected_menu.len()] == *self.selected_menu
+            && indices.contains(&target[self.selected_menu.len()])
+        {
+            return;
+        }
+        // target が移動元と同じ階層 (兄弟) を指す場合、削除で後ろの添字が
+        // 詰まる分だけ補正しないとターゲットを取り違える
+        let mut target = target.to_vec();
+        if target.len() > self.selected_menu.len()
+            && target[..self.selected_menu.len()] == *self.selected_menu
+        {
+            let sibling = target[self.selected_menu.len()];
+            let removed_before = indices.iter().filter(|&&i| i < sibling).count();
+            target[self.selected_menu.len()] -= removed_before;
+        }
+
+        let Some(source) = items_at_mut(&mut self.config, &self.selected_menu) else {
+            return;
+        };
+        let mut moving = Vec::with_capacity(indices.len());
+        for &index in indices.iter().rev() {
+            if index < source.len() {
+                moving.insert(0, source.remove(index));
+            }
+        }
+        if moving.is_empty() {
+            return;
+        }
+        let Some(destination) = items_at_mut(&mut self.config, &target) else {
+            return;
+        };
+        destination.extend(moving);
+        self.selected_items.clear();
+        self.active_item = None;
+        self.selection_anchor = None;
+        self.dirty = true;
+        self.status = None;
     }
 
     fn save(&mut self) -> bool {
@@ -403,6 +670,42 @@ impl SettingsApp {
         }
     }
 
+    /// いずれかのダイアログ (モーダル相当) を表示中か。
+    fn any_dialog_open(&self) -> bool {
+        self.draft.is_some()
+            || self.batch_draft.is_some()
+            || self.move_to_menu_draft.is_some()
+            || self.variables_draft.is_some()
+            || self.trigger_draft.is_some()
+            || self.import_draft.is_some()
+            || self.add_pending
+            || self.move_pending
+            || self.delete_pending
+            || self.close_pending
+    }
+
+    /// Shift+矢印での範囲選択伸縮。egui の標準フォーカス移動 (Tab 系) が
+    /// 矢印キーを Shift 修飾ごと横取りする前に、一覧の描画より先に消費する。
+    fn handle_range_selection_keys(&mut self, ctx: &egui::Context) {
+        if self.any_dialog_open() {
+            return;
+        }
+        let item_count = self.current_items().map_or(0, Vec::len);
+        if item_count == 0 {
+            return;
+        }
+        if consume_key_exact(ctx, egui::Modifiers::SHIFT, egui::Key::ArrowUp) {
+            let next = self.active_item.unwrap_or(0).saturating_sub(1);
+            self.extend_selection_to(next);
+            self.focus_selected_row = true;
+        }
+        if consume_key_exact(ctx, egui::Modifiers::SHIFT, egui::Key::ArrowDown) {
+            let next = (self.active_item.unwrap_or(0) + 1).min(item_count - 1);
+            self.extend_selection_to(next);
+            self.focus_selected_row = true;
+        }
+    }
+
     /// 画面全体のショートカット。
     ///
     /// **一覧を描いた後に呼ぶこと。** egui はフォーカス中のウィジェットを
@@ -411,19 +714,22 @@ impl SettingsApp {
     /// 先に消費していたため、Tab で送ったフォーカス先のボタンが Enter で
     /// 押せなくなっていた。
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        if self.draft.is_some()
-            || self.variables_draft.is_some()
-            || self.trigger_draft.is_some()
-            || self.import_draft.is_some()
-            || self.add_pending
-            || self.move_pending
-            || self.delete_pending
-            || self.close_pending
-        {
+        if self.any_dialog_open() {
             return;
         }
         if consume_key_exact(ctx, egui::Modifiers::CTRL, egui::Key::S) {
             self.save();
+        }
+        if consume_key_exact(ctx, egui::Modifiers::CTRL, egui::Key::A) {
+            self.select_all();
+            self.focus_selected_row = true;
+        }
+        if consume_key_exact(ctx, egui::Modifiers::CTRL, egui::Key::C) {
+            self.copy_selected();
+        }
+        if consume_key_exact(ctx, egui::Modifiers::CTRL, egui::Key::V) {
+            self.paste_clipboard();
+            self.focus_selected_row = true;
         }
 
         // どこにもフォーカスが無いと矢印キーは何も起こさない。egui は
@@ -446,7 +752,7 @@ impl SettingsApp {
                 self.begin_edit();
             }
             if consume_key_exact(ctx, egui::Modifiers::NONE, egui::Key::Delete)
-                && self.selected_item.is_some()
+                && !self.selected_items.is_empty()
             {
                 self.delete_pending = true;
             }
@@ -517,10 +823,20 @@ impl SettingsApp {
                     }
                     ui.separator();
                     if ui
-                        .add_enabled(self.selected_item.is_some(), egui::Button::new("Edit"))
+                        .add_enabled(!self.selected_items.is_empty(), egui::Button::new("Edit"))
                         .clicked()
                     {
                         self.begin_edit();
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            !self.selected_items.is_empty(),
+                            egui::Button::new("Move to menu..."),
+                        )
+                        .clicked()
+                    {
+                        self.move_to_menu_draft = Some(MoveToMenuDraft::default());
                         ui.close();
                     }
                 });
@@ -553,8 +869,11 @@ impl SettingsApp {
                             .selectable_label(path == self.selected_menu, name)
                             .clicked()
                         {
-                            self.selected_item = items_at(&self.config, &path)
+                            let first = items_at(&self.config, &path)
                                 .and_then(|items| (!items.is_empty()).then_some(0));
+                            self.selected_items = first.into_iter().collect();
+                            self.active_item = first;
+                            self.selection_anchor = first;
                             self.selected_menu = path;
                         }
                     }
@@ -564,7 +883,7 @@ impl SettingsApp {
             let rows = self.current_items().cloned().unwrap_or_default();
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    let selected = self.selected_item.is_some();
+                    let selected = !self.selected_items.is_empty();
                     if ui
                         .add_enabled(
                             selected,
@@ -621,12 +940,19 @@ impl SettingsApp {
                     {
                         self.open_import();
                     }
-                    let selected = self.selected_item.is_some();
+                    let selected = !self.selected_items.is_empty();
+                    let multi = self.selected_items.len() > 1;
                     if ui
                         .add_enabled(
                             selected,
-                            egui::Button::new("Edit").min_size([74.0, 32.0].into()),
+                            egui::Button::new(if multi { "Edit all..." } else { "Edit" })
+                                .min_size([74.0, 32.0].into()),
                         )
+                        .on_hover_text(if multi {
+                            "Edit shared properties (Open mode, Show Git branch) for all selected items"
+                        } else {
+                            "Edit this item"
+                        })
                         .clicked()
                     {
                         self.begin_edit();
@@ -636,6 +962,7 @@ impl SettingsApp {
                             selected,
                             egui::Button::new("Remove").min_size([74.0, 32.0].into()),
                         )
+                        .on_hover_text("Remove selected items (Delete)")
                         .clicked()
                     {
                         self.delete_pending = true;
@@ -643,8 +970,9 @@ impl SettingsApp {
                     if ui
                         .add_enabled(
                             selected,
-                            egui::Button::new("Copy").min_size([74.0, 32.0].into()),
+                            egui::Button::new("Duplicate").min_size([74.0, 32.0].into()),
                         )
+                        .on_hover_text("Duplicate selected items (Ctrl+D)")
                         .clicked()
                     {
                         self.duplicate_selected();
@@ -652,8 +980,29 @@ impl SettingsApp {
                     if ui
                         .add_enabled(
                             selected,
+                            egui::Button::new("Copy").min_size([74.0, 32.0].into()),
+                        )
+                        .on_hover_text("Copy selected items to clipboard (Ctrl+C)")
+                        .clicked()
+                    {
+                        self.copy_selected();
+                    }
+                    if ui
+                        .add_enabled(
+                            !self.clipboard.is_empty(),
+                            egui::Button::new("Paste").min_size([74.0, 32.0].into()),
+                        )
+                        .on_hover_text("Paste clipboard items here (Ctrl+V)")
+                        .clicked()
+                    {
+                        self.paste_clipboard();
+                    }
+                    if ui
+                        .add_enabled(
+                            selected,
                             egui::Button::new("Move").min_size([74.0, 32.0].into()),
                         )
+                        .on_hover_text("Move up/down or to another menu")
                         .clicked()
                     {
                         self.move_pending = true;
@@ -757,7 +1106,7 @@ impl SettingsApp {
             if response.has_focus() {
                 self.focused_row = Some(index);
             }
-            if self.focus_selected_row && self.selected_item == Some(index) {
+            if self.focus_selected_row && self.active_item == Some(index) {
                 response.request_focus();
                 self.focus_selected_row = false;
             }
@@ -800,8 +1149,14 @@ impl SettingsApp {
         // `gained_focus()` は使えない。egui は矢印での移動を `end_pass` で
         // 差し替えるため、次の描画では「前フレームから持っていた」扱いになり
         // 一度も立たない (`memory/mod.rs` の `end_pass`) 。自前で変化を見る
-        if self.focused_row.is_some() && self.focused_row != self.previous_focused_row {
-            self.selected_item = self.focused_row;
+        if let Some(row) = self.focused_row
+            && self.focused_row != self.previous_focused_row
+        {
+            if self.suppress_focus_select {
+                self.suppress_focus_select = false;
+            } else {
+                self.select_single(row);
+            }
         }
         self.previous_focused_row = self.focused_row;
 
@@ -820,7 +1175,7 @@ impl SettingsApp {
             ui.add_space(2.0);
             ui.weak("⠿");
 
-            let selected = self.selected_item == Some(index);
+            let selected = self.selected_items.contains(&index);
             let response = ui.allocate_ui_with_layout(
                 egui::vec2(COL_NAME, ui.spacing().interact_size.y),
                 egui::Layout::left_to_right(egui::Align::Center),
@@ -835,10 +1190,21 @@ impl SettingsApp {
                 ui.ctx().request_repaint();
             }
             if label.clicked() {
-                self.selected_item = Some(index);
+                // Ctrl/Shift 修飾でトグル選択・範囲選択を切り替える (FR-6)
+                let modifiers = ui.ctx().input(|input| input.modifiers);
+                if modifiers.command {
+                    self.toggle_selection(index);
+                } else if modifiers.shift {
+                    self.extend_selection_to(index);
+                } else {
+                    self.select_single(index);
+                }
+                // クリックによる選択はここで確定済みなので、後続のフォーカス変化
+                // 検出 (矢印キー用) がこの行を単一選択で上書きしないようにする
+                self.suppress_focus_select = true;
             }
             if label.double_clicked() {
-                self.selected_item = Some(index);
+                self.select_single(index);
                 self.begin_edit();
             }
 
@@ -1028,6 +1394,101 @@ impl SettingsApp {
             }
         } else if cancel {
             self.variables_draft = None;
+        }
+    }
+
+    /// 選択中の複数項目に共通するプロパティをまとめて設定するダイアログ (FR-6) 。
+    /// 各欄は 3 状態 (変更しない / 値A / 値B) で、既定は「変更しない」。
+    fn show_batch_editor(&mut self, ctx: &egui::Context) {
+        let selected_count = self.selected_items.len();
+        let Some(draft) = self.batch_draft.as_mut() else {
+            return;
+        };
+        let mut apply = false;
+        let mut cancel = false;
+        let window = egui::Window::new("Edit selected items")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "Applies to {selected_count} (Folder / Special folder only where relevant)."
+                ));
+                ui.separator();
+                ui.label("Open mode");
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut draft.open, None, "Don't change");
+                    ui.selectable_value(&mut draft.open, Some(OpenMode::NewWindow), "New window");
+                    ui.selectable_value(
+                        &mut draft.open,
+                        Some(OpenMode::Reuse),
+                        "Reuse Explorer window",
+                    );
+                });
+                ui.label("Show Git branch name");
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut draft.show_branch, None, "Don't change");
+                    ui.selectable_value(&mut draft.show_branch, Some(true), "On");
+                    ui.selectable_value(&mut draft.show_branch, Some(false), "Off");
+                });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    apply = ui.button("OK").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+        lock_modal_focus(ctx, &window);
+
+        let (accept, dismiss) = dialog_keys(ctx, true);
+        if apply || accept {
+            self.apply_batch_draft();
+        } else if cancel || dismiss {
+            self.batch_draft = None;
+        }
+    }
+
+    /// 選択中の項目を別メニューへまとめて移すダイアログ (FR-6.3) 。
+    fn show_move_to_menu_editor(&mut self, ctx: &egui::Context) {
+        let prompt = format!("Move {} to:", self.selection_summary().to_ascii_lowercase());
+        let Some(draft) = self.move_to_menu_draft.as_mut() else {
+            return;
+        };
+        let mut apply = false;
+        let mut cancel = false;
+        let choices = menu_choices(&self.config);
+        let selected_name = choices
+            .iter()
+            .find(|(path, _)| path == &draft.target)
+            .map(|(_, name)| name.as_str())
+            .unwrap_or("Main");
+        let window = egui::Window::new("Move to menu")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(&prompt);
+                egui::ComboBox::from_id_salt("move_to_menu_target")
+                    .selected_text(selected_name)
+                    .show_ui(ui, |ui| {
+                        for (path, name) in &choices {
+                            ui.selectable_value(&mut draft.target, path.clone(), name);
+                        }
+                    });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    apply = ui.button("Move").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+        lock_modal_focus(ctx, &window);
+
+        let (accept, dismiss) = dialog_keys(ctx, true);
+        if apply || accept {
+            let target = draft.target.clone();
+            self.move_selected_to_menu(&target);
+            self.move_to_menu_draft = None;
+        } else if cancel || dismiss {
+            self.move_to_menu_draft = None;
         }
     }
 
@@ -1242,7 +1703,8 @@ impl SettingsApp {
             if let Some(item) = item {
                 if let Some(items) = self.current_items_mut() {
                     items.push(item);
-                    self.selected_item = Some(items.len() - 1);
+                    let index = items.len() - 1;
+                    self.select_single(index);
                     self.dirty = true;
                     self.status = None;
                 }
@@ -1315,6 +1777,10 @@ impl SettingsApp {
                             self.move_selected(1);
                             self.move_pending = false;
                         }
+                        if ui.button("Move to menu...").clicked() {
+                            self.move_to_menu_draft = Some(MoveToMenuDraft::default());
+                            self.move_pending = false;
+                        }
                         if ui.button("Cancel").clicked() {
                             self.move_pending = false;
                         }
@@ -1334,7 +1800,7 @@ impl SettingsApp {
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
-                    ui.label("The selected item will be removed.");
+                    ui.label(format!("{} will be removed.", self.selection_summary()));
                     ui.horizontal(|ui| {
                         if ui.button("Remove").clicked() {
                             self.remove_selected();
@@ -1391,11 +1857,15 @@ impl eframe::App for SettingsApp {
             self.close_pending = true;
         }
         self.add_dropped_folders(&ctx);
-        // ショートカットは一覧を描いた後に見る。先に打鍵を消費すると、
+        // Shift+矢印は egui の自動フォーカス移動より先に横取りする必要がある
+        self.handle_range_selection_keys(&ctx);
+        // それ以外のショートカットは一覧を描いた後に見る。先に打鍵を消費すると、
         // フォーカス中のウィジェットが Enter で起動できなくなる
         self.show_items(ui);
         self.handle_shortcuts(&ctx);
         self.show_item_editor(&ctx);
+        self.show_batch_editor(&ctx);
+        self.show_move_to_menu_editor(&ctx);
         self.show_variables_editor(&ctx);
         self.show_trigger_editor(&ctx);
         self.show_import_editor(&ctx);
@@ -1429,6 +1899,20 @@ struct ItemDraft {
 struct VariablesDraft {
     entries: Vec<(String, String)>,
     error: Option<String>,
+}
+
+/// 複数項目の共有プロパティをまとめて編集するダイアログ (FR-6) 。
+/// `None` は「変更しない」を表す。
+#[derive(Default)]
+struct BatchDraft {
+    open: Option<OpenMode>,
+    show_branch: Option<bool>,
+}
+
+/// 選択項目をまとめて別メニューへ移す先を選ぶダイアログ (FR-6.3) 。
+#[derive(Default)]
+struct MoveToMenuDraft {
+    target: Vec<usize>,
 }
 
 /// ホットキー 1 欄。直接入力と、実際のキー入力からの記録 (FR-6.8.1) 。
@@ -1861,5 +2345,157 @@ mod tests {
     fn dropping_onto_itself_keeps_the_order() {
         assert_eq!(reordered(4, 2, 2), vec![0, 1, 2, 3]);
         assert_eq!(reordered(4, 2, 3), vec![0, 1, 2, 3]);
+    }
+
+    /// テスト用に `n` 個の Folder 項目を持つ最小の SettingsApp を組み立てる。
+    fn app_with_folders(n: usize) -> SettingsApp {
+        let items = (0..n)
+            .map(|i| Item::Folder {
+                name: format!("f{i}"),
+                path: format!("C:/f{i}"),
+                open: None,
+                icon: None,
+                show_branch: false,
+            })
+            .collect();
+        SettingsApp {
+            config: Config {
+                items,
+                ..Default::default()
+            },
+            selected_menu: Vec::new(),
+            selected_items: std::collections::BTreeSet::new(),
+            active_item: None,
+            selection_anchor: None,
+            draft: None,
+            batch_draft: None,
+            move_to_menu_draft: None,
+            variables_draft: None,
+            trigger_draft: None,
+            import_draft: None,
+            clipboard: Vec::new(),
+            add_pending: false,
+            move_pending: false,
+            delete_pending: false,
+            close_pending: false,
+            dirty: false,
+            load_error: None,
+            status: None,
+            focused_row: None,
+            previous_focused_row: None,
+            focus_selected_row: false,
+            suppress_focus_select: false,
+        }
+    }
+
+    fn names(app: &SettingsApp) -> Vec<String> {
+        app.config
+            .items
+            .iter()
+            .map(|item| item.label().unwrap_or_default().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn extend_selection_to_covers_the_range_from_the_anchor() {
+        let mut app = app_with_folders(5);
+        app.select_single(1);
+        app.extend_selection_to(3);
+        assert_eq!(app.selected_items, [1, 2, 3].into_iter().collect());
+
+        // アンカーは 1 のまま。逆方向へ伸ばすと 1 側の選択に切り替わる
+        app.extend_selection_to(0);
+        assert_eq!(app.selected_items, [0, 1].into_iter().collect());
+    }
+
+    #[test]
+    fn toggle_selection_adds_and_removes_a_single_item() {
+        let mut app = app_with_folders(3);
+        app.select_single(0);
+        app.toggle_selection(2);
+        assert_eq!(app.selected_items, [0, 2].into_iter().collect());
+        app.toggle_selection(0);
+        assert_eq!(app.selected_items, [2].into_iter().collect());
+    }
+
+    #[test]
+    fn remove_selected_removes_every_selected_item_at_once() {
+        let mut app = app_with_folders(5);
+        app.selected_items = [0, 2, 4].into_iter().collect();
+        app.remove_selected();
+        assert_eq!(names(&app), vec!["f1", "f3"]);
+    }
+
+    #[test]
+    fn move_selected_shifts_a_scattered_selection_up_together() {
+        let mut app = app_with_folders(5);
+        // f0 f1 f2 f3 f4 のうち f1, f3 を選び上へ動かす
+        app.selected_items = [1, 3].into_iter().collect();
+        app.move_selected(-1);
+        assert_eq!(names(&app), vec!["f1", "f0", "f3", "f2", "f4"]);
+        assert_eq!(app.selected_items, [0, 2].into_iter().collect());
+    }
+
+    #[test]
+    fn move_selected_does_nothing_when_any_item_is_already_at_the_edge() {
+        let mut app = app_with_folders(4);
+        app.selected_items = [0, 2].into_iter().collect();
+        app.move_selected(-1);
+        // f0 が既に先頭なので全体を動かさない
+        assert_eq!(names(&app), vec!["f0", "f1", "f2", "f3"]);
+    }
+
+    #[test]
+    fn duplicate_selected_inserts_copies_directly_after_each_source() {
+        let mut app = app_with_folders(3);
+        app.selected_items = [0, 2].into_iter().collect();
+        app.duplicate_selected();
+        assert_eq!(names(&app), vec!["f0", "f0", "f1", "f2", "f2"]);
+    }
+
+    #[test]
+    fn copy_and_paste_appends_clones_to_the_end() {
+        let mut app = app_with_folders(2);
+        app.selected_items = [0].into_iter().collect();
+        app.copy_selected();
+        app.paste_clipboard();
+        assert_eq!(names(&app), vec!["f0", "f1", "f0"]);
+    }
+
+    #[test]
+    fn move_selected_to_menu_transfers_items_to_the_submenu() {
+        let mut app = app_with_folders(3);
+        app.config.items.push(Item::Submenu {
+            name: "Sub".to_string(),
+            items: Vec::new(),
+            show_branch: false,
+        });
+        app.selected_items = [0, 1].into_iter().collect();
+        app.move_selected_to_menu(&[3]);
+        assert_eq!(names(&app), vec!["f2", "Sub"]);
+        let Item::Submenu { items, .. } = &app.config.items[1] else {
+            panic!("expected submenu");
+        };
+        assert_eq!(
+            items
+                .iter()
+                .map(|i| i.label().unwrap_or_default().to_string())
+                .collect::<Vec<_>>(),
+            vec!["f0", "f1"]
+        );
+    }
+
+    #[test]
+    fn move_selected_to_menu_refuses_to_move_into_the_selection_itself() {
+        let mut app = app_with_folders(0);
+        app.config.items.push(Item::Submenu {
+            name: "Sub".to_string(),
+            items: Vec::new(),
+            show_branch: false,
+        });
+        app.selected_items = [0].into_iter().collect();
+        app.move_selected_to_menu(&[0]);
+        // 何も起きない: Sub はまだルートに残ったまま
+        assert_eq!(names(&app), vec!["Sub"]);
     }
 }
