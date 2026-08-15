@@ -23,7 +23,6 @@ use windows::Win32::UI::Controls::{
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_CONTROL, VK_SHIFT};
-use windows::Win32::UI::Shell::SIID_LINK;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, EN_CHANGE, GetClientRect, GetWindowTextLengthW,
     GetWindowTextW, HMENU, LB_ADDSTRING, LB_GETCURSEL, LB_RESETCONTENT, LB_SETCURSEL,
@@ -1025,7 +1024,7 @@ unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
             Action::FocusWindow(hwnd) => {
                 draw_window_icon(draw.hDC, HWND(hwnd as *mut _), draw.rcItem, dpi)
             }
-            Action::OpenUrl(_) => draw_stock_icon(draw.hDC, SIID_LINK, draw.rcItem, dpi),
+            Action::OpenUrl(_) => draw_favicon_icon(draw.hDC, &entry.path, draw.rcItem, dpi),
         }
         SetBkMode(draw.hDC, TRANSPARENT);
         let text_left = draw.rcItem.left + scale(TEXT_LEFT, dpi);
@@ -1143,14 +1142,16 @@ unsafe fn draw_window_icon(hdc: HDC, hwnd: HWND, rect: RECT, dpi: u32) {
     unsafe { draw_icon_bitmap(hdc, bitmap, rect, dpi, size) };
 }
 
-unsafe fn draw_stock_icon(
-    hdc: HDC,
-    id: windows::Win32::UI::Shell::SHSTOCKICONID,
-    rect: RECT,
-    dpi: u32,
-) {
+/// favicon が無いブックマークに使う既定アイコン (星マーク)。
+const ICON_BOOKMARK: &[u8] = include_bytes!("../assets/menu/bookmark.png");
+
+/// ブックマークの favicon を描く。Chrome/Edge の `Favicons` DB に
+/// 見つからなければ既定の星マークへフォールバックする。
+unsafe fn draw_favicon_icon(hdc: HDC, url: &str, rect: RECT, dpi: u32) {
     let size = scale(ICON_SIZE, dpi);
-    let Some(bitmap) = crate::icon::bitmap_for_stock_sized(id, size) else {
+    let bitmap = crate::icon::bitmap_for_favicon_sized(url, size)
+        .or_else(|| crate::icon::bitmap_for_asset_sized("bookmark", ICON_BOOKMARK, size));
+    let Some(bitmap) = bitmap else {
         return;
     };
     unsafe { draw_icon_bitmap(hdc, bitmap, rect, dpi, size) };
