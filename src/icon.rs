@@ -82,35 +82,41 @@ pub fn bitmap_for_settings() -> Option<HBITMAP> {
 ///
 /// 失敗しても致命的ではないので None を返し、アイコンなしで描く。
 pub fn bitmap_for(path: &str) -> Option<HBITMAP> {
-    let cached = CACHE.with(|c| c.borrow().get(path).copied());
-    if let Some(raw) = cached {
-        return (raw != 0).then_some(HBITMAP(raw as *mut _));
-    }
+    bitmap_for_sized(path, menu_icon_size().cx)
+}
 
-    let bmp = load_bitmap(path);
-    CACHE.with(|c| {
-        c.borrow_mut()
-            .insert(path.to_string(), bmp.map_or(0, |b| b.0 as isize))
-    });
-    bmp
+/// 指定パスのアイコンを、メニューの iconSize 設定とは独立に
+/// 指定寸法のビットマップとして得る。
+///
+/// Quick Launch のようにメニューと別の寸法で描くと、`bitmap_for` が
+/// 返すビットマップとの寸法差で AlphaBlend が拡大縮小を行いにじむ
+/// (要求寸法どおりのビットマップを直接取れば等倍コピーで済む)。
+pub fn bitmap_for_sized(path: &str, size: i32) -> Option<HBITMAP> {
+    cached_bitmap(&format!("{size}:{path}"), || load_bitmap(path, size))
 }
 
 /// Windows 標準の操作アイコンをメニュー用ビットマップとして得る。
 pub fn bitmap_for_stock(id: SHSTOCKICONID) -> Option<HBITMAP> {
-    let key = format!("stock-icon:{}", id.0);
+    bitmap_for_stock_sized(id, menu_icon_size().cx)
+}
+
+/// 指定 ID の標準アイコンを、メニューの iconSize 設定とは独立に
+/// 指定寸法のビットマップとして得る (`bitmap_for_sized` と同じ理由)。
+pub fn bitmap_for_stock_sized(id: SHSTOCKICONID, size: i32) -> Option<HBITMAP> {
+    let key = format!("stock-icon:{size}:{}", id.0);
     cached_bitmap(&key, || unsafe {
         let mut info = SHSTOCKICONINFO {
             cbSize: size_of::<SHSTOCKICONINFO>() as u32,
             ..Default::default()
         };
         // 32px 描画で小アイコンを引き伸ばすとにじむので寸法に合わせて要求する
-        let size_flag = if menu_icon_size().cx <= 16 {
+        let size_flag = if size <= 16 {
             SHGSI_SMALLICON
         } else {
             SHGSI_LARGEICON
         };
         SHGetStockIconInfo(id, SHGSI_ICON | size_flag, &mut info).ok()?;
-        let bitmap = icon_to_bitmap(info.hIcon);
+        let bitmap = icon_to_bitmap(info.hIcon, SIZE { cx: size, cy: size });
         let _ = DestroyIcon(info.hIcon);
         bitmap
     })
@@ -136,7 +142,7 @@ pub fn bitmap_for_dll_icon(dll: &str, index: i32) -> Option<HBITMAP> {
         let prefer_large = menu_icon_size().cx > 16 && !large.is_invalid();
         let chosen = if prefer_large { large } else { small };
         let bitmap = (!chosen.is_invalid())
-            .then(|| icon_to_bitmap(chosen))
+            .then(|| icon_to_bitmap(chosen, menu_icon_size()))
             .flatten();
         if !large.is_invalid() {
             let _ = DestroyIcon(large);
@@ -155,12 +161,17 @@ pub fn bitmap_for_dll_icon(dll: &str, index: i32) -> Option<HBITMAP> {
 /// large=0/small=0 だった) 。`WM_GETICON` を先に試し、無応答なら
 /// クラスアイコンへフォールバックする。
 pub fn bitmap_for_window(hwnd: HWND) -> Option<HBITMAP> {
-    let key = format!("window-icon:{}", hwnd.0 as isize);
+    bitmap_for_window_sized(hwnd, menu_icon_size().cx)
+}
+
+/// `bitmap_for_window` のメニュー設定に依存しない版。[`bitmap_for_sized`] 参照。
+pub fn bitmap_for_window_sized(hwnd: HWND, size: i32) -> Option<HBITMAP> {
+    let key = format!("window-icon:{size}:{}", hwnd.0 as isize);
     cached_bitmap(&key, || unsafe {
-        let large_first = menu_icon_size().cx > 16;
+        let large_first = size > 16;
         let icon = window_icon_via_message(hwnd, large_first)
             .or_else(|| window_icon_via_class(hwnd, large_first))?;
-        icon_to_bitmap(icon)
+        icon_to_bitmap(icon, SIZE { cx: size, cy: size })
     })
 }
 
@@ -254,7 +265,7 @@ pub fn bitmap_for_shell(target: &str) -> Option<HBITMAP> {
     }
 
     let bitmap = shell_icon(target).and_then(|icon| {
-        let bitmap = icon_to_bitmap(icon);
+        let bitmap = icon_to_bitmap(icon, menu_icon_size());
         unsafe {
             let _ = DestroyIcon(icon);
         }
@@ -273,9 +284,9 @@ pub fn clear_cache() {
     CACHE.with(|c| c.borrow_mut().clear());
 }
 
-fn load_bitmap(path: &str) -> Option<HBITMAP> {
-    let icon = system_icon(path)?;
-    let bmp = icon_to_bitmap(icon);
+fn load_bitmap(path: &str, size: i32) -> Option<HBITMAP> {
+    let icon = system_icon(path, size)?;
+    let bmp = icon_to_bitmap(icon, SIZE { cx: size, cy: size });
     unsafe {
         let _ = DestroyIcon(icon);
     }
@@ -283,8 +294,7 @@ fn load_bitmap(path: &str) -> Option<HBITMAP> {
 }
 
 /// シェルが返すアイコンを、描画寸法に見合う解像度で取得する。
-fn system_icon(path: &str) -> Option<HICON> {
-    let wanted = menu_icon_size().cx;
+fn system_icon(path: &str, wanted: i32) -> Option<HICON> {
     unsafe {
         let wide = HSTRING::from(path);
         let mut info = SHFILEINFOW::default();
@@ -357,8 +367,7 @@ fn shell_icon(target: &str) -> Option<HICON> {
 }
 
 /// HICON をメニューが受け付ける 32bit ビットマップへ描き移す。
-fn icon_to_bitmap(icon: HICON) -> Option<HBITMAP> {
-    let size = menu_icon_size();
+fn icon_to_bitmap(icon: HICON, size: SIZE) -> Option<HBITMAP> {
     unsafe {
         let hdc = CreateCompatibleDC(None);
         if hdc.is_invalid() {
