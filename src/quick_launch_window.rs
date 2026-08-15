@@ -12,10 +12,9 @@ use windows::Win32::Graphics::Gdi::{
     CLIP_DEFAULT_PRECIS, CreateCompatibleDC, CreateFontW, CreatePen, CreateSolidBrush,
     DEFAULT_CHARSET, DEFAULT_PITCH, DT_END_ELLIPSIS, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER,
     DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint, FW_NORMAL, FW_SEMIBOLD, FillRect,
-    GetMonitorInfoW, HBITMAP, HBRUSH, HDC, HFONT, InvalidateRect, LineTo,
-    MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow, MoveToEx, OUT_DEFAULT_PRECIS,
-    PAINTSTRUCT, PS_SOLID, RoundRect, SelectObject, SetBkColor, SetBkMode, SetTextColor,
-    TRANSPARENT,
+    GetMonitorInfoW, HBITMAP, HBRUSH, HDC, HFONT, InvalidateRect, LineTo, MONITOR_DEFAULTTONEAREST,
+    MONITORINFO, MonitorFromWindow, MoveToEx, OUT_DEFAULT_PRECIS, PAINTSTRUCT, PS_SOLID, RoundRect,
+    SelectObject, SetBkColor, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
