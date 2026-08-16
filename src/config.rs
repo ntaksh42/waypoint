@@ -33,6 +33,14 @@ pub enum Item {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         show_branch: bool,
     },
+    /// 通常のファイル。パスは変数を含んでよい。
+    /// `newWindow`/`reuse` の概念を持たず、既定の関連付けアプリで開く。
+    File {
+        name: String,
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        icon: Option<String>,
+    },
     /// 既知フォルダ (Downloads, Desktop など) 。
     SpecialFolder {
         name: String,
@@ -65,6 +73,7 @@ impl Item {
     pub fn label(&self) -> Option<&str> {
         match self {
             Item::Folder { name, .. }
+            | Item::File { name, .. }
             | Item::SpecialFolder { name, .. }
             | Item::Shell { name, .. }
             | Item::Submenu { name, .. } => Some(name),
@@ -386,7 +395,9 @@ fn collect_unresolved(
 ) {
     for item in items {
         match item {
-            Item::Folder { name, path, .. } if expand(path, vars).is_none() => {
+            Item::Folder { name, path, .. } | Item::File { name, path, .. }
+                if expand(path, vars).is_none() =>
+            {
                 found.push((name.clone(), path.clone()));
             }
             Item::Submenu { items, .. } => collect_unresolved(items, vars, found),

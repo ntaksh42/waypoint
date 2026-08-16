@@ -256,6 +256,17 @@ fn collect_items(
                     });
                 }
             }
+            Item::File { name, path, .. } => {
+                if let Some(path) = crate::config::expand(path, variables) {
+                    entries.push(Entry {
+                        name: name.clone(),
+                        breadcrumb: parents.join(" > "),
+                        path,
+                        action: Action::OpenWithDefaultHandler,
+                        branch: None,
+                    });
+                }
+            }
             Item::SpecialFolder {
                 name,
                 known_folder,
@@ -524,6 +535,23 @@ mod tests {
         let found = index.search("this pc");
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].path, "shell:MyComputerFolder");
+        assert_eq!(found[0].action, Action::OpenWithDefaultHandler);
+    }
+
+    #[test]
+    fn file_items_are_indexed_and_open_with_default_handler() {
+        let config = Config {
+            items: vec![Item::File {
+                name: "Notes".to_string(),
+                path: r"E:\notes.txt".to_string(),
+                icon: None,
+            }],
+            ..Config::default()
+        };
+        let index = Index::build(&config, &Menus::default());
+        let found = index.search("notes");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].path, r"E:\notes.txt");
         assert_eq!(found[0].action, Action::OpenWithDefaultHandler);
     }
 

@@ -227,6 +227,11 @@ unsafe fn build_level(
                     let label = crate::git::with_branch(name, branch.as_deref());
                     append_leaf(menu, ctx, &label, resolved, open.unwrap_or_default(), accel)?;
                 }
+                Item::File { name, path, .. } => {
+                    accel += 1;
+                    let resolved = crate::config::expand(path, ctx.vars);
+                    append_leaf(menu, ctx, name, resolved, OpenMode::NewWindow, accel)?;
+                }
                 Item::SpecialFolder {
                     name,
                     known_folder,

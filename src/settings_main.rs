@@ -511,21 +511,29 @@ impl SettingsApp {
         let dropped = ctx.input(|input| input.raw.dropped_files.clone());
         for file in dropped {
             let path = file.path();
-            if !path.is_dir() {
-                continue;
-            }
             let name = path
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_else(|| path.display().to_string());
-            if let Some(items) = self.current_items_mut() {
-                items.push(Item::Folder {
+            let item = if path.is_dir() {
+                Item::Folder {
                     name,
                     path: path.display().to_string(),
                     open: None,
                     icon: None,
                     show_branch: false,
-                });
+                }
+            } else if path.is_file() {
+                Item::File {
+                    name,
+                    path: path.display().to_string(),
+                    icon: None,
+                }
+            } else {
+                continue;
+            };
+            if let Some(items) = self.current_items_mut() {
+                items.push(item);
                 let index = items.len() - 1;
                 self.select_single(index);
                 self.dirty = true;
@@ -795,6 +803,10 @@ impl SettingsApp {
                 ui.menu_button("Favorite", |ui| {
                     if ui.button("Add folder").clicked() {
                         self.begin_add(DraftKind::Folder);
+                        ui.close();
+                    }
+                    if ui.button("Add file").clicked() {
+                        self.begin_add(DraftKind::File);
                         ui.close();
                     }
                     if ui.button("Add special folder").clicked() {
@@ -1261,6 +1273,24 @@ impl SettingsApp {
                             "Appends [branch] to the menu label when the path is inside a Git work tree.",
                         );
                 }
+                DraftKind::File => {
+                    ui.label("Name");
+                    ui.text_edit_singleline(&mut draft.name);
+                    ui.label("Path");
+                    ui.horizontal(|ui| {
+                        ui.text_edit_singleline(&mut draft.path);
+                        if ui.button("Browse...").clicked()
+                            && let Some(path) = rfd::FileDialog::new().pick_file()
+                        {
+                            if draft.name.is_empty()
+                                && let Some(name) = path.file_name()
+                            {
+                                draft.name = name.to_string_lossy().into_owned();
+                            }
+                            draft.path = path.display().to_string();
+                        }
+                    });
+                }
                 DraftKind::SpecialFolder => {
                     ui.label("Name");
                     ui.text_edit_singleline(&mut draft.name);
@@ -1726,6 +1756,10 @@ impl SettingsApp {
                         self.begin_add(DraftKind::Folder);
                         self.add_pending = false;
                     }
+                    if ui.button("File").clicked() {
+                        self.begin_add(DraftKind::File);
+                        self.add_pending = false;
+                    }
                     if ui.button("Special folder").clicked() {
                         self.begin_add(DraftKind::SpecialFolder);
                         self.add_pending = false;
@@ -1876,6 +1910,7 @@ impl eframe::App for SettingsApp {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DraftKind {
     Folder,
+    File,
     SpecialFolder,
     Shell,
     Submenu,
@@ -2066,6 +2101,13 @@ impl ItemDraft {
                 show_branch: *show_branch,
                 ..Self::new(DraftKind::Folder)
             },
+            Item::File { name, path, icon } => Self {
+                kind: DraftKind::File,
+                name: name.clone(),
+                path: path.clone(),
+                icon: icon.clone(),
+                ..Self::new(DraftKind::File)
+            },
             Item::SpecialFolder {
                 name,
                 known_folder,
@@ -2112,6 +2154,8 @@ impl ItemDraft {
             DraftKind::Folder if self.path.trim().is_empty() => {
                 Some("Path is required.".to_string())
             }
+            DraftKind::File if self.name.trim().is_empty() => Some("Name is required.".to_string()),
+            DraftKind::File if self.path.trim().is_empty() => Some("Path is required.".to_string()),
             DraftKind::SpecialFolder | DraftKind::Submenu if self.name.trim().is_empty() => {
                 Some("Name is required.".to_string())
             }
@@ -2134,6 +2178,11 @@ impl ItemDraft {
                 open,
                 icon: self.icon,
                 show_branch: self.show_branch,
+            },
+            DraftKind::File => Item::File {
+                name: self.name,
+                path: self.path,
+                icon: self.icon,
             },
             DraftKind::SpecialFolder => Item::SpecialFolder {
                 name: self.name,
@@ -2214,6 +2263,7 @@ fn collect_menu_choices(
 fn item_kind(item: &Item) -> &'static str {
     match item {
         Item::Folder { .. } => "Folder",
+        Item::File { .. } => "File",
         Item::SpecialFolder { .. } => "Special folder",
         Item::Shell { .. } => "Shell location",
         Item::Submenu { .. } => "Submenu",
@@ -2223,7 +2273,7 @@ fn item_kind(item: &Item) -> &'static str {
 
 fn item_detail(item: &Item) -> &str {
     match item {
-        Item::Folder { path, .. } => path,
+        Item::Folder { path, .. } | Item::File { path, .. } => path,
         Item::SpecialFolder { known_folder, .. } => known_folder,
         Item::Shell { target, .. } => target,
         Item::Submenu { .. } | Item::Separator { .. } => "",
@@ -2238,7 +2288,9 @@ fn item_open(item: &Item) -> &'static str {
                 OpenMode::Reuse => "Reuse",
             }
         }
-        Item::Shell { .. } | Item::Submenu { .. } | Item::Separator { .. } => "—",
+        Item::File { .. } | Item::Shell { .. } | Item::Submenu { .. } | Item::Separator { .. } => {
+            "—"
+        }
     }
 }
 
