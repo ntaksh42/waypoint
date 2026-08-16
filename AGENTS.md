@@ -203,6 +203,7 @@ FR-2.7 に反する (実測でメニューが白背景になった) 。
 - ネットワークパスの存在確認はメニュー表示を固めうる。非同期にし、結果が返るまでは通常表示。
 - COM (エクスプローラー操作) は `CoInitializeEx(COINIT_APARTMENTTHREADED)` が必要。UI スレッドから呼ぶ。
 - フックプロシージャは `unsafe extern "system"`。`LPARAM` → `MSLLHOOKSTRUCT` は生ポインタ参照になるので `unsafe` の範囲を最小に閉じる。
+- `eframe`/`egui` の既定フォント (Hack / Ubuntu-Light) は CJK グリフを持たない。設定画面 (FR-6) でフォントを未設定のまま使うと、項目名やパスの日本語が豆腐 (□) になり文字化けして見える。`settings_main.rs` の `configure_fonts` で Windows 同梱の CJK フォント (Yu Gothic / Meiryo / MS Gothic) をフォールバックとして末尾に追加している。
 
 ## Reference implementations
 
