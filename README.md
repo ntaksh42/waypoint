@@ -23,7 +23,14 @@
 
 ## インストール
 
-MSI をダブルクリックする。ユーザー単位でインストールするので管理者権限は不要。
+GitHub Releases から MSI を手動でダウンロードする代わりに、最新版を自動取得して
+インストールするスクリプトが使える。
+
+```powershell
+irm https://raw.githubusercontent.com/ntaksh42/waypoint/main/installer/install.ps1 | iex
+```
+
+MSI を手元に持っている場合はダブルクリックする。ユーザー単位でインストールするので管理者権限は不要。
 
 ```powershell
 # サイレントインストール
