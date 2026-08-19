@@ -61,6 +61,41 @@ pub struct Entry {
     pub branch: Option<String>,
 }
 
+impl Entry {
+    /// config へお気に入り登録できる候補なら `Item` へ変換する。
+    ///
+    /// ウィンドウ (`FocusWindow`) と URL (`OpenUrl`、`b ` で既に検索できる)
+    /// は永続化する対象ではないので None を返す。`OpenWithDefaultHandler`
+    /// は Everything の結果 (ファイル / フォルダ両方あり得る) なので、
+    /// 実際のパスを見てどちらか判定する。
+    pub fn to_item(&self) -> Option<Item> {
+        match &self.action {
+            Action::OpenFolder(open) => Some(Item::Folder {
+                name: self.name.clone(),
+                path: self.path.clone(),
+                open: Some(*open),
+                icon: None,
+                show_branch: false,
+            }),
+            Action::OpenWithDefaultHandler if std::path::Path::new(&self.path).is_dir() => {
+                Some(Item::Folder {
+                    name: self.name.clone(),
+                    path: self.path.clone(),
+                    open: None,
+                    icon: None,
+                    show_branch: false,
+                })
+            }
+            Action::OpenWithDefaultHandler | Action::LaunchApp => Some(Item::File {
+                name: self.name.clone(),
+                path: self.path.clone(),
+                icon: None,
+            }),
+            Action::FocusWindow(_) | Action::OpenUrl(_) => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Index {
     entries: Vec<Entry>,
@@ -683,5 +718,97 @@ mod tests {
         let found = index.search("waypoint");
         assert_eq!(found.len(), 1);
         assert!(found[0].branch.is_some());
+    }
+
+    #[test]
+    fn open_folder_entry_converts_to_folder_item_with_same_open_mode() {
+        let entry = Entry {
+            name: "Docs".into(),
+            breadcrumb: String::new(),
+            path: r"E:\waypoint\docs".into(),
+            action: Action::OpenFolder(OpenMode::Reuse),
+            branch: None,
+        };
+        let item = entry.to_item().expect("folder entries are addable");
+        assert_eq!(
+            item,
+            Item::Folder {
+                name: "Docs".into(),
+                path: r"E:\waypoint\docs".into(),
+                open: Some(OpenMode::Reuse),
+                icon: None,
+                show_branch: false,
+            }
+        );
+    }
+
+    /// FocusWindow / OpenUrl は config へ永続化できないので、
+    /// お気に入り登録の対象外として None を返す。
+    #[test]
+    fn window_and_url_entries_are_not_addable() {
+        let window = Entry {
+            name: "Notepad".into(),
+            breadcrumb: String::new(),
+            path: String::new(),
+            action: Action::FocusWindow(1),
+            branch: None,
+        };
+        let url = Entry {
+            name: "Example".into(),
+            breadcrumb: String::new(),
+            path: "https://example.com/".into(),
+            action: Action::OpenUrl("https://example.com/".into()),
+            branch: None,
+        };
+        assert!(window.to_item().is_none());
+        assert!(url.to_item().is_none());
+    }
+
+    /// Everything の結果 (`OpenWithDefaultHandler`) は実際のパスを見て
+    /// フォルダかファイルかを判定する。このリポジトリ自身を使って確認する。
+    #[test]
+    fn everything_result_becomes_folder_item_when_path_is_a_directory() {
+        let entry = Entry {
+            name: "src".into(),
+            breadcrumb: String::new(),
+            path: format!("{}\\src", env!("CARGO_MANIFEST_DIR")),
+            action: Action::OpenWithDefaultHandler,
+            branch: None,
+        };
+        let item = entry.to_item().expect("existing directories are addable");
+        assert!(matches!(item, Item::Folder { .. }));
+    }
+
+    #[test]
+    fn everything_result_becomes_file_item_when_path_is_not_a_directory() {
+        let entry = Entry {
+            name: "Cargo.toml".into(),
+            breadcrumb: String::new(),
+            path: format!("{}\\Cargo.toml", env!("CARGO_MANIFEST_DIR")),
+            action: Action::OpenWithDefaultHandler,
+            branch: None,
+        };
+        let item = entry.to_item().expect("existing files are addable");
+        assert!(matches!(item, Item::File { .. }));
+    }
+
+    #[test]
+    fn launch_app_entry_converts_to_file_item() {
+        let entry = Entry {
+            name: "Visual Studio Code".into(),
+            breadcrumb: String::new(),
+            path: r"C:\Start Menu\Visual Studio Code.lnk".into(),
+            action: Action::LaunchApp,
+            branch: None,
+        };
+        let item = entry.to_item().expect("apps are addable");
+        assert_eq!(
+            item,
+            Item::File {
+                name: "Visual Studio Code".into(),
+                path: r"C:\Start Menu\Visual Studio Code.lnk".into(),
+                icon: None,
+            }
+        );
     }
 }

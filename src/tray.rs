@@ -31,7 +31,7 @@ use crate::menu::{Action, BuiltMenu, Selection};
 use crate::process;
 use crate::quick_launch;
 use crate::quick_launch_history;
-use crate::quick_launch_window::{self, WM_QUICK_LAUNCH_EXECUTE};
+use crate::quick_launch_window::{self, WM_QUICK_LAUNCH_ADD_TO_FAVORITES, WM_QUICK_LAUNCH_EXECUTE};
 use crate::shell;
 use crate::trigger::{self, Registration, WM_TRIGGER_MENU};
 
@@ -339,6 +339,12 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
             }
             LRESULT(0)
         }
+        WM_QUICK_LAUNCH_ADD_TO_FAVORITES => {
+            if let Some(entry) = quick_launch_window::take_pending_add() {
+                add_entry_to_favorites(entry);
+            }
+            LRESULT(0)
+        }
         WM_RELOAD_CONFIG => {
             reload(hwnd);
             LRESULT(0)
@@ -431,6 +437,37 @@ fn rebuild_menu() {
         };
         state.menu = crate::menu::build(&state.config, &state.dynamic).ok();
     });
+}
+
+/// Quick Launch の `Ctrl+Shift+Enter` で選択した候補を config の
+/// ルートメニュー末尾へ追加保存する。同じパスが既にあれば何もしない
+/// (`Config::add_item_if_new`)。保存後はトレイメニューと Quick Launch の
+/// 検索インデックスを組み直し、その場で見えるようにする。
+fn add_entry_to_favorites(entry: quick_launch::Entry) {
+    let Some(item) = entry.to_item() else {
+        return;
+    };
+    let dynamic = STATE.with(|s| {
+        let mut state = s.borrow_mut();
+        let state = state.as_mut()?;
+        if !state.config.add_item_if_new(item) {
+            return None;
+        }
+        if let Err(e) = crate::config::save(&state.config) {
+            crate::panic_log::record(&format!("failed to save added favorite: {e}"));
+            return None;
+        }
+        state.menu = crate::menu::build(&state.config, &state.dynamic).ok();
+        Some(state.dynamic.clone())
+    });
+    if let Some(dynamic) = dynamic {
+        STATE.with(|s| {
+            let state = s.borrow();
+            if let Some(state) = state.as_ref() {
+                quick_launch_window::configure(&state.config, &dynamic);
+            }
+        });
+    }
 }
 
 /// メニューが閉じた後に列挙し、次回表示用キャッシュを入れ替える。

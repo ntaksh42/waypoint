@@ -7,6 +7,7 @@
 pub mod apps;
 pub mod autostart;
 pub mod bookmarks;
+pub mod clipboard;
 pub mod config;
 pub mod dynamic;
 pub mod everything;

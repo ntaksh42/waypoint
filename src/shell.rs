@@ -76,6 +76,40 @@ pub fn activate_window(hwnd: HWND) {
     }
 }
 
+/// エクスプローラーでパスを開き、対象自体を選択状態にする
+/// (Quick Launch の `Ctrl+E`)。フォルダなら中身を、ファイルなら
+/// 親フォルダを開いて選択する — `explorer.exe /select,` の標準動作。
+pub fn reveal_in_explorer(path: &str) -> std::io::Result<()> {
+    if !Path::new(path).exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("path not found: {path}"),
+        ));
+    }
+    // 引数はカンマの後ろにパスをそのまま続ける独自構文で、通常の
+    // コマンドライン引数分割 (スペース区切り) には従わない。
+    // `ShellExecuteW` の parameters へ 1 本の文字列として渡す
+    let args = HSTRING::from(format!("/select,\"{path}\""));
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            None,
+            &HSTRING::from("explorer.exe"),
+            &args,
+            None,
+            SW_SHOWNORMAL,
+        )
+    };
+    let code = result.0 as isize;
+    if code > 32 {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(format!(
+            "ShellExecuteW failed with code {code}"
+        )))
+    }
+}
+
 /// `This PC` など、ファイルシステム上のパスを持たないシェル項目を開く。
 pub fn open_shell_item(target: &str) -> std::io::Result<()> {
     let target = HSTRING::from(target);

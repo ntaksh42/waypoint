@@ -210,6 +210,35 @@ impl Default for Config {
     }
 }
 
+impl Config {
+    /// ルートメニューの末尾へ項目を追加する。同じパス (大文字小文字を
+    /// 区別しない) を持つ項目がメニュー階層のどこかに既にあれば何もしない
+    /// (Quick Launch からの登録で重複を作らないため)。
+    /// 追加した場合は true を返す。
+    pub fn add_item_if_new(&mut self, item: Item) -> bool {
+        if item_path(&item).is_some_and(|path| contains_path(&self.items, path)) {
+            return false;
+        }
+        self.items.push(item);
+        true
+    }
+}
+
+fn item_path(item: &Item) -> Option<&str> {
+    match item {
+        Item::Folder { path, .. } | Item::File { path, .. } => Some(path),
+        _ => None,
+    }
+}
+
+fn contains_path(items: &[Item], path: &str) -> bool {
+    items.iter().any(|item| match item {
+        Item::Folder { path: p, .. } | Item::File { path: p, .. } => p.eq_ignore_ascii_case(path),
+        Item::Submenu { items, .. } => contains_path(items, path),
+        _ => false,
+    })
+}
+
 fn default_true() -> bool {
     true
 }

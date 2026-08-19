@@ -89,6 +89,8 @@ fn action_color(action: &Action) -> COLORREF {
 pub const WM_QUICK_LAUNCH_EXECUTE: u32 = WM_APP + 4;
 /// Everything からの検索結果を受け取る `WM_COPYDATA` の `dwData`。
 const WM_EVERYTHING_RESULTS: u32 = WM_APP + 5;
+/// `Ctrl+Shift+Enter` で選択項目を config へ登録するよう常駐部へ依頼する。
+pub const WM_QUICK_LAUNCH_ADD_TO_FAVORITES: u32 = WM_APP + 6;
 /// Quick Launch が一度に Everything へ要求する最大件数。
 /// 全件表示はしない (`visible_results` の上限と同じ枠で足りる)。
 const EVERYTHING_MAX_RESULTS: u32 = 24;
@@ -108,6 +110,14 @@ struct State {
     index: Index,
     results: Vec<Entry>,
     pending: Option<Entry>,
+    /// `Ctrl+Shift+Enter` で config への登録を要求された項目。
+    /// ウィンドウは閉じずに続けて検索できるようにするため、
+    /// `pending` (Enter で実行する項目) とは別に持つ。
+    pending_add: Option<Entry>,
+    /// `Ctrl+C` でパスをクリップボードへコピーした直後に立てる。
+    /// 検索窓のバッジを一時的に `COPIED` へ差し替えるのに使い、
+    /// 次のキー入力 (`update_results`) で通常のバッジへ戻る。
+    copy_feedback: bool,
     visible_results: usize,
     dpi: u32,
     edit_font: Option<HFONT>,
@@ -182,6 +192,10 @@ pub fn take_pending() -> Option<(Entry, Option<HWND>)> {
     })
 }
 
+pub fn take_pending_add() -> Option<Entry> {
+    STATE.with(|state| state.borrow_mut().pending_add.take())
+}
+
 /// Quick Launch の子コントロール宛てキーを通常の DispatchMessage より先に扱う。
 pub fn handle_message(message: &windows::Win32::UI::WindowsAndMessaging::MSG) -> bool {
     let belongs_to_quick_launch = STATE.with(|state| {
@@ -219,7 +233,24 @@ pub fn handle_message(message: &windows::Win32::UI::WindowsAndMessaging::MSG) ->
         }
         0x21 => move_selection(-10),
         0x22 => move_selection(10),
+        0x0d if unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0
+            && unsafe { GetKeyState(VK_SHIFT.0 as i32) } < 0 =>
+        {
+            add_selected_to_favorites();
+        }
         0x0d => queue_selected(),
+        // Ctrl+C: 選択中候補のパスをクリップボードへコピーする。
+        // Edit にフォーカスがある間は通常のテキストコピーを奪わないよう、
+        // リスト側で押されたときだけ扱う。
+        0x43 if Some(message.hwnd) == STATE.with(|state| state.borrow().list)
+            && unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0 =>
+        {
+            copy_selected_path();
+        }
+        // Ctrl+E: 選択中候補をエクスプローラーで開き、対象を選択状態にする。
+        0x45 if unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0 => {
+            reveal_selected_in_explorer();
+        }
         0x08 if unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0 => {
             let edit = STATE.with(|state| state.borrow().edit);
             let Some(edit) = edit else {
@@ -563,6 +594,7 @@ fn update_results(state: &RefCell<State>) {
         let mut state = state.borrow_mut();
         // プレフィックスを外れたら、遅れて届く Everything の応答を無視させる
         state.everything_active = false;
+        state.copy_feedback = false;
         state.results = state.index.search(&query).into_iter().cloned().collect();
         let labels: Vec<HSTRING> = state
             .results
@@ -810,6 +842,73 @@ fn queue_selected() {
     }
 }
 
+/// 現在選択中の候補を複製して返す。`SendMessageW` を挟むため、
+/// 呼び出し側は返り値を得てから STATE を再度借用すること。
+fn selected_entry() -> Option<Entry> {
+    let list = STATE.with(|state| state.borrow().list);
+    let selected = current_selection(list)?;
+    STATE.with(|state| state.borrow().results.get(selected).cloned())
+}
+
+/// `Ctrl+Shift+Enter`: 選択中の候補を config へ登録するよう常駐部へ
+/// 依頼する。ウィンドウは閉じず、続けて他の候補も登録できるようにする。
+fn add_selected_to_favorites() {
+    let Some(entry) = selected_entry() else {
+        return;
+    };
+    if entry.to_item().is_none() {
+        // ウィンドウ / URL 候補は登録対象外。無音で無視する
+        // (FocusWindow・OpenUrl は config へ永続化できないため)
+        return;
+    }
+    let owner = STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        state.pending_add = Some(entry);
+        state.owner
+    });
+    if let Some(owner) = owner {
+        unsafe {
+            let _ = PostMessageW(
+                Some(owner),
+                WM_QUICK_LAUNCH_ADD_TO_FAVORITES,
+                WPARAM(0),
+                LPARAM(0),
+            );
+        }
+    }
+}
+
+/// `Ctrl+C`: 選択中候補のパスをクリップボードへコピーする。
+fn copy_selected_path() {
+    let Some(entry) = selected_entry() else {
+        return;
+    };
+    if entry.path.is_empty() || crate::clipboard::set_text(&entry.path).is_err() {
+        return;
+    }
+    STATE.with(|state| {
+        let (window, dpi) = {
+            let mut state = state.borrow_mut();
+            state.copy_feedback = true;
+            (state.window, state.dpi)
+        };
+        invalidate_search_bar(window, dpi);
+    });
+}
+
+/// `Ctrl+E`: 選択中候補をエクスプローラーで開き、対象を選択状態にする。
+fn reveal_selected_in_explorer() {
+    let Some(entry) = selected_entry() else {
+        return;
+    };
+    if entry.path.is_empty() {
+        return;
+    }
+    let window = STATE.with(|state| state.borrow().window);
+    hide_window(window);
+    let _ = crate::shell::reveal_in_explorer(&entry.path);
+}
+
 fn hide_window(window: Option<HWND>) {
     if let Some(window) = window {
         unsafe {
@@ -952,11 +1051,16 @@ fn paint_window(window: HWND) {
         let (dpi, background, surface, badge, detail_font, everything_flags, everything_active) =
             STATE.with(|state| {
                 let state = state.borrow();
+                let badge = if state.copy_feedback {
+                    Some("COPIED")
+                } else {
+                    state.badge
+                };
                 (
                     state.dpi,
                     state.background_brush,
                     state.surface_brush,
-                    state.badge,
+                    badge,
                     state.detail_font,
                     state.everything_flags,
                     state.everything_active,

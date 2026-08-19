@@ -196,3 +196,66 @@ fn unresolved_items_is_empty_when_all_resolve() {
     .unwrap();
     assert!(waypoint::config::unresolved_items(&cfg).is_empty());
 }
+
+/// Quick Launch からの「お気に入り登録」はルートメニュー末尾へ追加する。
+#[test]
+fn add_item_if_new_appends_to_the_root_menu() {
+    let mut cfg = Config::default();
+    let added = cfg.add_item_if_new(Item::Folder {
+        name: "Docs".to_string(),
+        path: r"E:\waypoint\docs".to_string(),
+        open: None,
+        icon: None,
+        show_branch: false,
+    });
+    assert!(added);
+    assert_eq!(cfg.items.len(), 1);
+}
+
+/// 同じパスを持つ項目が既にあれば (大文字小文字を区別せず) 追加しない。
+/// Quick Launch から重複登録しても config が膨らまないようにするため。
+#[test]
+fn add_item_if_new_skips_a_path_that_already_exists() {
+    let mut cfg = Config {
+        items: vec![Item::Folder {
+            name: "Docs".to_string(),
+            path: r"E:\waypoint\DOCS".to_string(),
+            open: None,
+            icon: None,
+            show_branch: false,
+        }],
+        ..Config::default()
+    };
+    let added = cfg.add_item_if_new(Item::Folder {
+        name: "Docs (again)".to_string(),
+        path: r"e:\waypoint\docs".to_string(),
+        open: None,
+        icon: None,
+        show_branch: false,
+    });
+    assert!(!added);
+    assert_eq!(cfg.items.len(), 1);
+}
+
+/// 既存パスの重複チェックはサブメニューの中も見る。
+#[test]
+fn add_item_if_new_checks_paths_inside_submenus_too() {
+    let mut cfg = Config {
+        items: vec![Item::Submenu {
+            name: "Projects".to_string(),
+            items: vec![Item::File {
+                name: "Notes".to_string(),
+                path: r"E:\notes.txt".to_string(),
+                icon: None,
+            }],
+            show_branch: false,
+        }],
+        ..Config::default()
+    };
+    let added = cfg.add_item_if_new(Item::File {
+        name: "Notes (again)".to_string(),
+        path: r"E:\notes.txt".to_string(),
+        icon: None,
+    });
+    assert!(!added);
+}
