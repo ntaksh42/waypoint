@@ -251,7 +251,7 @@ fn default_icon_size() -> u32 {
 }
 
 fn default_quick_launch_hotkey() -> String {
-    "Ctrl+Shift+Q".to_string()
+    "Alt+Space".to_string()
 }
 
 fn default_visible_results() -> usize {

@@ -174,8 +174,13 @@ pub fn parse_hotkey(spec: &str) -> Option<(HOT_KEY_MODIFIERS, u32)> {
     key.map(|k| (mods, k))
 }
 
-/// キー名を仮想キーコードに変換する。英数字とファンクションキーのみ対応。
+/// キー名を仮想キーコードに変換する。英数字・ファンクションキー・
+/// スペースキーに対応する。
 fn virtual_key(name: &str) -> Option<u32> {
+    if name.eq_ignore_ascii_case("space") {
+        // VK_SPACE
+        return Some(0x20);
+    }
     let bytes = name.as_bytes();
     if bytes.len() == 1 {
         let c = bytes[0].to_ascii_uppercase();
@@ -218,6 +223,10 @@ pub fn format_hotkey(mods: HOT_KEY_MODIFIERS, vk: u32) -> Option<String> {
 /// 英数字の仮想キーコードは大文字と数字の ASCII に一致する。小文字の
 /// コード域は別のキーなので、範囲で絞らないと `VK_F5` (0x74) が `t` になる。
 fn key_name(vk: u32) -> Option<String> {
+    // VK_SPACE
+    if vk == 0x20 {
+        return Some("Space".to_string());
+    }
     // '0'..='9' と 'A'..='Z'
     if (0x30..=0x39).contains(&vk) || (0x41..=0x5A).contains(&vk) {
         return char::from_u32(vk).map(|c| c.to_string());

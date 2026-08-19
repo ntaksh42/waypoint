@@ -52,7 +52,14 @@ fn rejects_empty_and_garbage() {
 /// `format_hotkey` は `parse_hotkey` が読める文字列だけを返すこと。
 #[test]
 fn format_round_trips_through_parse() {
-    for spec in ["Win+W", "Ctrl+Shift+Q", "Alt+1", "Ctrl+F5", "F12"] {
+    for spec in [
+        "Win+W",
+        "Ctrl+Shift+Q",
+        "Alt+1",
+        "Ctrl+F5",
+        "F12",
+        "Alt+Space",
+    ] {
         let (mods, vk) = parse_hotkey(spec).unwrap();
         assert_eq!(format_hotkey(mods, vk).as_deref(), Some(spec));
     }

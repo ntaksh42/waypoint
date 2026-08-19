@@ -186,7 +186,7 @@ Quick Access Popup の全機能を分解し、本プロジェクトでの扱い�
 
 ### FR-9 Quick Launch
 
-- **FR-9.1** 設定可能なグローバルホットキー（既定 `Ctrl+Shift+Q`）で検索画面を開く
+- **FR-9.1** 設定可能なグローバルホットキー（既定 `Alt+Space`）で検索画面を開く
 - **FR-9.2** 登録済みの `folder` / `file` / `specialFolder` と、設定で有効にした Recent / Frequent Folders を検索対象にする。Current Windows / ブックマーク / アプリはプレフィックスモード限定（FR-9.13〜9.15）
 - **FR-9.3** 項目名と所属サブメニューのパンくずを、大文字小文字を区別しない部分一致で検索する。空白区切りの語は AND 条件とする
 - **FR-9.4** パス検索は設定で有効化できる。検索中にパスの存在確認やネットワークアクセスを行わない
@@ -233,7 +233,7 @@ Quick Access Popup の全機能を分解し、本プロジェクトでの扱い�
       "numericAccelerators": true
     },
     "quickLaunch": {
-      "hotkey": "Ctrl+Shift+Q",
+      "hotkey": "Alt+Space",
       "includeRecentFolders": true,
       "includeFrequentFolders": true,
       "includeOpenWindows": true,
