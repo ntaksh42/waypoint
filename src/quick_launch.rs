@@ -107,7 +107,13 @@ impl Index {
                 .iter()
                 .map(|window| Entry {
                     name: window.title.clone(),
-                    breadcrumb: "Open Windows".to_string(),
+                    // プロセス名も breadcrumb に含めて検索対象にする。
+                    // タイトルにアプリ名が出ないウィンドウも `w chrome` で探せる。
+                    breadcrumb: if window.process_name.is_empty() {
+                        "Open Windows".to_string()
+                    } else {
+                        format!("Open Windows — {}", window.process_name)
+                    },
                     path: String::new(),
                     action: Action::FocusWindow(window.hwnd),
                     branch: None,
@@ -475,6 +481,26 @@ mod tests {
     fn without_the_window_prefix_open_windows_are_not_searched() {
         let index = index();
         assert!(index.search("notepad").is_empty());
+    }
+
+    /// タイトルにアプリ名が出ないウィンドウも、所有プロセス名で
+    /// 見つけられる (`w chrome` のような検索)。
+    #[test]
+    fn window_search_also_matches_the_owning_process_name() {
+        use crate::dynamic::WindowEntry;
+
+        let dynamic = Menus {
+            current_windows: vec![WindowEntry {
+                title: "新しいタブ".to_string(),
+                hwnd: 999,
+                process_name: "chrome.exe".to_string(),
+            }],
+            ..Menus::default()
+        };
+        let index = Index::build(&Config::default(), &dynamic);
+        let found = index.search("w chrome");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].action, Action::FocusWindow(999));
     }
 
     #[test]

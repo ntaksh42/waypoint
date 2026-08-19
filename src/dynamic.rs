@@ -35,6 +35,10 @@ pub struct PathEntry {
 pub struct WindowEntry {
     pub title: String,
     pub hwnd: isize,
+    /// 所有プロセスの実行ファイル名 (例: `chrome.exe`)。取得できなければ空。
+    /// タイトルにアプリ名が出ないウィンドウも `w chrome` のように
+    /// プロセス名で検索できるようにするために持つ。
+    pub process_name: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -309,6 +313,7 @@ unsafe extern "system" fn enum_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
             windows.push(WindowEntry {
                 title: String::from_utf16_lossy(&title[..len as usize]),
                 hwnd: hwnd.0 as isize,
+                process_name: crate::process::process_name_of(hwnd).unwrap_or_default(),
             });
         }
         true.into()
