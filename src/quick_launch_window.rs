@@ -12,10 +12,9 @@ use windows::Win32::Graphics::Gdi::{
     CLIP_DEFAULT_PRECIS, CreateCompatibleDC, CreateFontW, CreatePen, CreateSolidBrush,
     DEFAULT_CHARSET, DEFAULT_PITCH, DT_CENTER, DT_END_ELLIPSIS, DT_NOPREFIX, DT_SINGLELINE,
     DT_VCENTER, DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint, FW_NORMAL, FW_SEMIBOLD,
-    FillRect, GetMonitorInfoW, HBITMAP, HBRUSH, HDC, HFONT, InvalidateRect, LineTo,
-    MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow, MoveToEx, OUT_DEFAULT_PRECIS,
-    PAINTSTRUCT, PS_SOLID, RoundRect, SelectObject, SetBkColor, SetBkMode, SetTextColor,
-    TRANSPARENT,
+    FillRect, GetMonitorInfoW, HBITMAP, HBRUSH, HDC, HFONT, InvalidateRect,
+    MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow, OUT_DEFAULT_PRECIS, PAINTSTRUCT,
+    PS_SOLID, RoundRect, SelectObject, SetBkColor, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
@@ -31,8 +30,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     PostMessageW, RegisterClassW, SW_HIDE, SW_SHOW, SetForegroundWindow, SetWindowTextW,
     ShowWindow, WINDOW_STYLE, WM_ACTIVATE, WM_APP, WM_CLOSE, WM_COMMAND, WM_CTLCOLOREDIT,
     WM_CTLCOLORLISTBOX, WM_DRAWITEM, WM_ERASEBKGND, WM_KEYDOWN, WM_PAINT, WM_SETFONT, WM_SIZE,
-    WNDCLASSW, WS_CAPTION, WS_CHILD, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_SYSMENU,
-    WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+    WM_SYSKEYDOWN, WNDCLASSW, WS_CAPTION, WS_CHILD, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
 };
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
@@ -122,6 +121,10 @@ struct State {
     /// 最小限のガード (クエリ単位の識別子までは Everything IPC が
     /// 提供しないので、モードの内外だけを見る)。
     everything_active: bool,
+    /// `f ` モード中に有効な Everything 検索フラグ
+    /// (`everything::MATCH_CASE` 等の OR 合成)。モードを抜けても値は保持し、
+    /// 次に `f ` へ入ったときも同じ絞り込みを引き継ぐ。
+    everything_flags: u32,
     /// 現在の入力が `b `/`w `/`a `/`f ` のいずれかに入っていれば
     /// そのモード名。検索窓のバッジ表示に使う。
     badge: Option<&'static str>,
@@ -181,14 +184,25 @@ pub fn take_pending() -> Option<(Entry, Option<HWND>)> {
 
 /// Quick Launch の子コントロール宛てキーを通常の DispatchMessage より先に扱う。
 pub fn handle_message(message: &windows::Win32::UI::WindowsAndMessaging::MSG) -> bool {
-    if message.message != WM_KEYDOWN {
-        return false;
-    }
     let belongs_to_quick_launch = STATE.with(|state| {
         let state = state.borrow();
         Some(message.hwnd) == state.edit || Some(message.hwnd) == state.list
     });
     if !belongs_to_quick_launch {
+        return false;
+    }
+    // Alt 併用のキーは WM_KEYDOWN ではなく WM_SYSKEYDOWN で届く。
+    // f モードのフィルタ切替 (Alt+C/W/R) だけここで拾い、素通しすると
+    // Windows がメニューアクセラレータとして扱いビープ音を鳴らすのを防ぐ。
+    if message.message == WM_SYSKEYDOWN {
+        return match message.wParam.0 as u32 {
+            0x43 => toggle_everything_flag(crate::everything::MATCH_CASE), // Alt+C
+            0x57 => toggle_everything_flag(crate::everything::MATCH_WHOLE_WORD), // Alt+W
+            0x52 => toggle_everything_flag(crate::everything::REGEX),      // Alt+R
+            _ => false,
+        };
+    }
+    if message.message != WM_KEYDOWN {
         return false;
     }
     match message.wParam.0 as u32 {
@@ -215,6 +229,32 @@ pub fn handle_message(message: &windows::Win32::UI::WindowsAndMessaging::MSG) ->
         }
         _ => return false,
     }
+    true
+}
+
+/// `f ` モード中だけ有効な Everything 検索フラグの切替。
+/// モード外では何もしない (Alt+C 等を他モードで押しても無反応)。
+/// 切替後は同じクエリを新しいフラグで即座に再送する。
+fn toggle_everything_flag(flag: u32) -> bool {
+    let in_everything_mode = STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        if !state.everything_active {
+            return false;
+        }
+        state.everything_flags ^= flag;
+        true
+    });
+    if !in_everything_mode {
+        return false;
+    }
+    STATE.with(|state| {
+        let (window, dpi) = {
+            let state = state.borrow();
+            (state.window, state.dpi)
+        };
+        invalidate_search_bar(window, dpi);
+        update_results(state);
+    });
     true
 }
 
@@ -357,15 +397,14 @@ fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT
             });
             let padding = scale(PADDING, dpi);
             let edit_height = scale(EDIT_HEIGHT, dpi);
-            let search_gutter = scale(32, dpi);
             let badge_width = scale(BADGE_WIDTH, dpi);
             unsafe {
                 if let Some(edit) = edit {
                     let _ = MoveWindow(
                         edit,
-                        padding + search_gutter,
                         padding + scale(6, dpi),
-                        width - padding * 2 - search_gutter - badge_width - scale(8, dpi),
+                        padding + scale(6, dpi),
+                        width - padding * 2 - badge_width - scale(14, dpi),
                         edit_height - scale(12, dpi),
                         true,
                     );
@@ -484,9 +523,15 @@ fn update_badge(state: &RefCell<State>, query: &str) {
         state.badge = badge;
         (state.window, state.dpi, changed)
     };
-    if !changed {
-        return;
+    if changed {
+        invalidate_search_bar(window, dpi);
     }
+}
+
+/// 検索窓 (バッジを含む上部の帯) だけを再描画対象にする。
+/// リスト部分を巻き込まないことで、バッジ更新のたびにリスト全体が
+/// ちらつくのを防ぐ。
+fn invalidate_search_bar(window: Option<HWND>, dpi: u32) {
     let Some(window) = window else {
         return;
     };
@@ -540,11 +585,16 @@ fn update_results(state: &RefCell<State>) {
 /// 空の検索語 (`f ` だけ) はクエリを送らない — 全件検索は重く、
 /// タイプの途中で毎回投げると Everything 側の応答待ちが積み上がる。
 fn start_everything_query(state: &RefCell<State>, text: &str) {
-    let (window, list, enabled) = {
+    let (window, list, enabled, flags) = {
         let mut state = state.borrow_mut();
         state.everything_active = true;
         state.results.clear();
-        (state.window, state.list, state.everything_enabled)
+        (
+            state.window,
+            state.list,
+            state.everything_enabled,
+            state.everything_flags,
+        )
     };
     if let Some(list) = list {
         populate_list(list, &[], false);
@@ -552,7 +602,13 @@ fn start_everything_query(state: &RefCell<State>, text: &str) {
     let (Some(window), true, false) = (window, enabled, text.is_empty()) else {
         return;
     };
-    crate::everything::query(window, WM_EVERYTHING_RESULTS, text, EVERYTHING_MAX_RESULTS);
+    crate::everything::query(
+        window,
+        WM_EVERYTHING_RESULTS,
+        text,
+        EVERYTHING_MAX_RESULTS,
+        flags,
+    );
 }
 
 /// Everything から届いた `WM_COPYDATA` を結果リストへ反映する。
@@ -893,16 +949,19 @@ fn paint_window(window: HWND) {
         let hdc = BeginPaint(window, &mut paint);
         let mut client = RECT::default();
         let _ = GetClientRect(window, &mut client);
-        let (dpi, background, surface, badge, detail_font) = STATE.with(|state| {
-            let state = state.borrow();
-            (
-                state.dpi,
-                state.background_brush,
-                state.surface_brush,
-                state.badge,
-                state.detail_font,
-            )
-        });
+        let (dpi, background, surface, badge, detail_font, everything_flags, everything_active) =
+            STATE.with(|state| {
+                let state = state.borrow();
+                (
+                    state.dpi,
+                    state.background_brush,
+                    state.surface_brush,
+                    state.badge,
+                    state.detail_font,
+                    state.everything_flags,
+                    state.everything_active,
+                )
+            });
         if let Some(background) = background {
             FillRect(hdc, &client, background);
         }
@@ -932,34 +991,11 @@ fn paint_window(window: HWND) {
             SelectObject(hdc, old_pen);
             let _ = DeleteObject(surface_pen.into());
 
-            let icon_pen = CreatePen(PS_SOLID, scale(2, dpi).max(1), TEXT_SECONDARY);
-            let old_pen = SelectObject(hdc, icon_pen.into());
-            let icon_left = padding + scale(10, dpi);
-            let icon_top = padding + scale(9, dpi);
-            let icon_size = scale(11, dpi);
-            let _ = Ellipse(
-                hdc,
-                icon_left,
-                icon_top,
-                icon_left + icon_size,
-                icon_top + icon_size,
-            );
-            let _ = MoveToEx(
-                hdc,
-                icon_left + icon_size - scale(1, dpi),
-                icon_top + icon_size - scale(1, dpi),
-                None,
-            );
-            let _ = LineTo(
-                hdc,
-                icon_left + icon_size + scale(5, dpi),
-                icon_top + icon_size + scale(5, dpi),
-            );
-            SelectObject(hdc, old_pen);
-            let _ = DeleteObject(icon_pen.into());
-
             if let Some(badge) = badge {
                 draw_badge(hdc, badge, search, dpi, detail_font);
+                if everything_active {
+                    draw_everything_flag_badges(hdc, everything_flags, search, dpi, detail_font);
+                }
             }
         }
         let _ = EndPaint(window, &paint);
@@ -1004,6 +1040,75 @@ unsafe fn draw_badge(hdc: HDC, badge: &str, search: RECT, dpi: u32, detail_font:
             let mut text_rect = rect;
             draw_text_centered(hdc, badge, &mut text_rect);
             SelectObject(hdc, old_font);
+        }
+    }
+}
+
+/// `f ` モードでアクティブな Everything 検索フラグを、モードバッジの
+/// 左側へ小さいピルとして並べて描く (Alt+C/W/R でトグルした状態の可視化)。
+unsafe fn draw_everything_flag_badges(
+    hdc: HDC,
+    flags: u32,
+    search: RECT,
+    dpi: u32,
+    detail_font: Option<HFONT>,
+) {
+    let active: Vec<&str> = [
+        (crate::everything::MATCH_CASE, "Cc"),
+        (crate::everything::MATCH_WHOLE_WORD, "W"),
+        (crate::everything::REGEX, ".*"),
+    ]
+    .into_iter()
+    .filter(|(flag, _)| flags & flag != 0)
+    .map(|(_, label)| label)
+    .collect();
+    if active.is_empty() {
+        return;
+    }
+
+    unsafe {
+        let height = scale(20, dpi);
+        let gap = scale(6, dpi);
+        let badge_left_edge =
+            search.right - scale(10, dpi) - (scale(BADGE_WIDTH, dpi) - scale(16, dpi));
+        let mut right = badge_left_edge - gap;
+        for label in active {
+            let width = scale(10, dpi) * 2 + scale(8, dpi) * label.chars().count() as i32;
+            let rect = RECT {
+                left: right - width,
+                top: search.top + (search.bottom - search.top - height) / 2,
+                right,
+                bottom: search.top + (search.bottom - search.top - height) / 2 + height,
+            };
+            let brush = CreateSolidBrush(SURFACE_HOVER);
+            let pen = CreatePen(PS_SOLID, 1, ACCENT);
+            let old_brush = SelectObject(hdc, brush.into());
+            let old_pen = SelectObject(hdc, pen.into());
+            let radius = height / 2;
+            let _ = RoundRect(
+                hdc,
+                rect.left,
+                rect.top,
+                rect.right,
+                rect.bottom,
+                radius,
+                radius,
+            );
+            SelectObject(hdc, old_brush);
+            SelectObject(hdc, old_pen);
+            let _ = DeleteObject(brush.into());
+            let _ = DeleteObject(pen.into());
+
+            if let Some(font) = detail_font {
+                let old_font = SelectObject(hdc, font.into());
+                SetBkMode(hdc, TRANSPARENT);
+                SetTextColor(hdc, ACCENT);
+                let mut text_rect = rect;
+                draw_text_centered(hdc, label, &mut text_rect);
+                SelectObject(hdc, old_font);
+            }
+
+            right = rect.left - gap;
         }
     }
 }

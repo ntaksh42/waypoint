@@ -26,6 +26,12 @@ const IPC_ALLRESULTS: u32 = 0xFFFFFFFF;
 /// アイテムがフォルダであることを示すフラグ (`EVERYTHING_IPC_ITEMW::flags`)。
 const IPC_FOLDER: u32 = 0x1;
 
+/// 検索フラグ (`EVERYTHING_IPC_QUERYW::search_flags`)。voidtools SDK の
+/// `everything_ipc.h` で定義された値をそのまま使う。
+pub const MATCH_CASE: u32 = 0x0000_0001;
+pub const MATCH_WHOLE_WORD: u32 = 0x0000_0002;
+pub const REGEX: u32 = 0x0000_0008;
+
 /// Quick Launch が Everything から受け取った 1 件。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EverythingResult {
@@ -50,7 +56,16 @@ pub fn is_running() -> bool {
 /// Everything は 1 ウィンドウにつき 1 クエリしか処理しない。新しいクエリを
 /// 送ると前のクエリは黙ってキャンセルされる (SDK のコメント通り)。
 /// 送信に失敗した場合 (Everything 未起動など) は false を返す。
-pub fn query(reply_hwnd: HWND, reply_message: u32, text: &str, max_results: u32) -> bool {
+///
+/// `flags` は `MATCH_CASE` / `MATCH_WHOLE_WORD` / `REGEX` の OR 合成。
+/// 何も絞り込まない既定検索は `0` を渡す。
+pub fn query(
+    reply_hwnd: HWND,
+    reply_message: u32,
+    text: &str,
+    max_results: u32,
+    flags: u32,
+) -> bool {
     let Some(everything) = find_everything_window() else {
         return false;
     };
@@ -64,7 +79,7 @@ pub fn query(reply_hwnd: HWND, reply_message: u32, text: &str, max_results: u32)
     let mut buffer = Vec::with_capacity(20 + search.len() * 2);
     buffer.extend_from_slice(&(reply_hwnd.0 as u32).to_le_bytes());
     buffer.extend_from_slice(&reply_message.to_le_bytes());
-    buffer.extend_from_slice(&0u32.to_le_bytes()); // search_flags: 既定 (大文字小文字を区別しない)
+    buffer.extend_from_slice(&flags.to_le_bytes());
     buffer.extend_from_slice(&0u32.to_le_bytes()); // offset
     buffer.extend_from_slice(&max_results.to_le_bytes());
     for unit in &search {
