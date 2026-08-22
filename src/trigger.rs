@@ -12,8 +12,9 @@ use std::cell::{Cell, RefCell};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, HOT_KEY_MODIFIERS, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS,
-    KEYBDINPUT, KEYEVENTF_KEYUP, MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, RegisterHotKey,
-    SendInput, UnregisterHotKey, VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+    KEYBDINPUT, KEYEVENTF_KEYUP, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN,
+    RegisterHotKey, SendInput, UnregisterHotKey, VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU,
+    VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, HHOOK, KBDLLHOOKSTRUCT, MSLLHOOKSTRUCT, PostMessageW, SetWindowsHookExW,
@@ -256,7 +257,7 @@ fn register_hotkey_with_id(target: HWND, id: i32, spec: &str) -> Registration {
     let Some((mods, vk)) = parse_hotkey(spec) else {
         return Registration::Failed;
     };
-    if unsafe { RegisterHotKey(Some(target), id, mods, vk) }.is_ok() {
+    if unsafe { RegisterHotKey(Some(target), id, mods | MOD_NOREPEAT, vk) }.is_ok() {
         return Registration::Native;
     }
     if install_keyboard_hook(target).is_err() {
@@ -312,11 +313,14 @@ unsafe extern "system" fn key_proc(code: i32, wparam: WPARAM, lparam: LPARAM) ->
 
         if !own && (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
             if let Some(f) = match_fallback(info.vkCode) {
-                SWALLOWED.with(|s| s.set(info.vkCode));
-                if (f.mods & MOD_WIN).0 != 0 {
-                    break_win_chord();
+                let is_repeat =
+                    SWALLOWED.with(|s| is_repeat_key(s.replace(info.vkCode), info.vkCode));
+                if !is_repeat {
+                    if (f.mods & MOD_WIN).0 != 0 {
+                        break_win_chord();
+                    }
+                    post_hotkey(f.id);
                 }
-                post_hotkey(f.id);
                 return LRESULT(1);
             }
         } else if msg == WM_KEYUP || msg == WM_SYSKEYUP {
@@ -329,6 +333,10 @@ unsafe extern "system" fn key_proc(code: i32, wparam: WPARAM, lparam: LPARAM) ->
         }
     }
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
+}
+
+fn is_repeat_key(previous: u32, current: u32) -> bool {
+    previous == current
 }
 
 /// 押されたキーが横取り対象で、修飾キーの状態も一致するか。
@@ -403,7 +411,7 @@ fn post_hotkey(id: i32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Fallback, find_matching};
+    use super::{Fallback, find_matching, is_repeat_key};
     use windows::Win32::UI::Input::KeyboardAndMouse::{HOT_KEY_MODIFIERS, MOD_ALT, MOD_WIN};
 
     /// 同じ vk (Space) をメインホットキー (Win+Space) とクイックランチの
@@ -451,5 +459,11 @@ mod tests {
         }];
         let matched = find_matching(fallbacks.iter().copied(), b' ' as u32, |_| true);
         assert!(matched.is_none());
+    }
+
+    #[test]
+    fn held_fallback_key_only_triggers_on_the_first_keydown() {
+        assert!(!is_repeat_key(0, b'W' as u32));
+        assert!(is_repeat_key(b'W' as u32, b'W' as u32));
     }
 }
