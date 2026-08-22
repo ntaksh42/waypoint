@@ -30,10 +30,17 @@ pub fn set_text(text: &str) -> windows::core::Result<()> {
             let _ = GlobalFree(Some(handle));
             return Err(e);
         }
-        let _ = EmptyClipboard();
-        let result = SetClipboardData(CF_UNICODETEXT.0 as u32, Some(HANDLE(handle.0)));
+        if let Err(e) = EmptyClipboard() {
+            let _ = CloseClipboard();
+            let _ = GlobalFree(Some(handle));
+            return Err(e);
+        }
+        if let Err(e) = SetClipboardData(CF_UNICODETEXT.0 as u32, Some(HANDLE(handle.0))) {
+            let _ = CloseClipboard();
+            let _ = GlobalFree(Some(handle));
+            return Err(e);
+        }
         let _ = CloseClipboard();
-        result?;
     }
     Ok(())
 }
