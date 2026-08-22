@@ -138,7 +138,7 @@ impl Index {
         }
         let windows = if settings.include_open_windows {
             dynamic
-                .current_windows
+                .all_windows
                 .iter()
                 .map(|window| Entry {
                     name: window.title.clone(),
@@ -525,7 +525,7 @@ mod tests {
         use crate::dynamic::WindowEntry;
 
         let dynamic = Menus {
-            current_windows: vec![WindowEntry {
+            all_windows: vec![WindowEntry {
                 title: "新しいタブ".to_string(),
                 hwnd: 999,
                 process_name: "chrome.exe".to_string(),
@@ -536,6 +536,32 @@ mod tests {
         let found = index.search("w chrome");
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].action, Action::FocusWindow(999));
+    }
+
+    /// トレイの "Current Windows" 表示は件数を絞るが (ITEM_LIMIT) 、
+    /// Quick Launch の検索索引は絞られていない全件から作られること。
+    /// 絞られた current_windows だけを索引に使うと、開いているウィンドウが
+    /// 多い環境で一部が `w ` 検索に一切ヒットしなくなる (実際の不具合)。
+    #[test]
+    fn window_search_uses_all_windows_not_the_truncated_tray_list() {
+        use crate::dynamic::WindowEntry;
+
+        let window = |hwnd: isize| WindowEntry {
+            title: format!("Window {hwnd}"),
+            hwnd,
+            process_name: "app.exe".to_string(),
+        };
+
+        let dynamic = Menus {
+            // トレイ表示用は 1 件だけに絞られているとする
+            current_windows: vec![window(1)],
+            // 検索索引用は絞られていない全件
+            all_windows: vec![window(1), window(2), window(3)],
+            ..Menus::default()
+        };
+        let index = Index::build(&Config::default(), &dynamic);
+        let found = index.search("w window");
+        assert_eq!(found.len(), 3);
     }
 
     #[test]

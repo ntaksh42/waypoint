@@ -47,7 +47,14 @@ pub struct Menus {
     pub recent_files: Vec<PathEntry>,
     pub frequent_folders: Vec<PathEntry>,
     pub frequent_files: Vec<PathEntry>,
+    /// トレイの "Current Windows" サブメニュー用。表示件数を絞るため
+    /// `ITEM_LIMIT` で切り詰めてある。全件が要る場合は `all_windows` を使う
     pub current_windows: Vec<WindowEntry>,
+    /// Quick Launch (`w ` プレフィックス) の検索索引用。こちらは表示件数の
+    /// 制限を持たない。`current_windows` を Quick Launch の索引構築に
+    /// 使い回すと、開いているウィンドウが `ITEM_LIMIT` (10) を超えた分は
+    /// 検索してもヒットしなくなる (実際に報告された不具合)
+    pub all_windows: Vec<WindowEntry>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,12 +88,16 @@ pub fn refresh() -> Menus {
     update_history(&mut history, &recent);
     let _ = save_history(&history);
 
+    let all_windows = enumerate_windows();
+    let current_windows = all_windows.iter().take(ITEM_LIMIT).cloned().collect();
+
     Menus {
         recent_folders: recent_entries(&recent, true),
         recent_files: recent_entries(&recent, false),
         frequent_folders: frequent_entries(&history, true),
         frequent_files: frequent_entries(&history, false),
-        current_windows: enumerate_windows(),
+        current_windows,
+        all_windows,
     }
 }
 
@@ -290,13 +301,12 @@ fn enumerate_windows() -> Vec<WindowEntry> {
             LPARAM((&mut windows as *mut Vec<WindowEntry>) as isize),
         );
     }
-    windows.truncate(ITEM_LIMIT);
     windows
 }
 
 unsafe extern "system" fn enum_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
     unsafe {
-        if !IsWindowVisible(hwnd).as_bool() || GetWindowTextLengthW(hwnd) <= 0 {
+        if !IsWindowVisible(hwnd).as_bool() {
             return true.into();
         }
         let mut process_id = 0;
@@ -307,7 +317,16 @@ unsafe extern "system" fn enum_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
         if !is_taskbar_window(hwnd) {
             return true.into();
         }
-        let mut title = vec![0u16; GetWindowTextLengthW(hwnd) as usize + 1];
+        // GetWindowTextLengthW を判定用と確保用の 2 回に分けて呼ぶと、
+        // その間の別ウィンドウへの Win32 呼び出しが挟まる間にタイトルが
+        // 変わり得て (通知件数の更新など) 、1 回目は空でないのに 2 回目が
+        // 0 を返してウィンドウごと取りこぼす余地があった。1 回だけ呼んで
+        // その結果でバッファを確保し、空なら以降は評価しない
+        let length = GetWindowTextLengthW(hwnd);
+        if length <= 0 {
+            return true.into();
+        }
+        let mut title = vec![0u16; length as usize + 1];
         let len = GetWindowTextW(hwnd, &mut title);
         if len > 0 {
             let windows = &mut *(lparam.0 as *mut c_void as *mut Vec<WindowEntry>);
