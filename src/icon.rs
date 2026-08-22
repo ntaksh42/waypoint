@@ -316,8 +316,21 @@ pub fn bitmap_for_shell_sized(target: &str, size: i32) -> Option<HBITMAP> {
 }
 
 /// キャッシュを捨てる。テーマ変更や設定再読み込みで呼ぶ。
+///
+/// `HashMap` を空にするだけでは中身の `HBITMAP` は解放されない。
+/// テーマ変更・設定再読み込みのたびに全件 GDI リークし、頻繁な
+/// 切り替えでプロセスの GDI ハンドル上限に達してアイコンが描けなく
+/// なる (実測で確認済み) 。値を読んでから `DeleteObject` する。
 pub fn clear_cache() {
-    CACHE.with(|c| c.borrow_mut().clear());
+    CACHE.with(|c| {
+        for (_, raw) in c.borrow_mut().drain() {
+            if raw != 0 {
+                unsafe {
+                    let _ = DeleteObject(HBITMAP(raw as *mut _).into());
+                }
+            }
+        }
+    });
 }
 
 fn load_bitmap(path: &str, size: i32) -> Option<HBITMAP> {
