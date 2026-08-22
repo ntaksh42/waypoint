@@ -8,6 +8,8 @@ use crate::quick_launch_history::Ranking;
 
 /// ブックマーク検索モードに入るプレフィックス (末尾の半角スペース込み)。
 const BOOKMARK_PREFIX: &str = "b ";
+/// ブラウザ履歴検索モードに入るプレフィックス (末尾の半角スペース込み)。
+const HISTORY_PREFIX: &str = "h ";
 /// Open Windows 検索モードに入るプレフィックス (末尾の半角スペース込み)。
 const WINDOW_PREFIX: &str = "w ";
 /// Everything 検索モードに入るプレフィックス (末尾の半角スペース込み)。
@@ -24,6 +26,8 @@ const APPS_PREFIX: &str = "a ";
 pub fn prefix_badge(query: &str) -> Option<&'static str> {
     if query.starts_with(BOOKMARK_PREFIX) {
         Some("BOOKMARKS")
+    } else if query.starts_with(HISTORY_PREFIX) {
+        Some("HISTORY")
     } else if query.starts_with(WINDOW_PREFIX) {
         Some("WINDOWS")
     } else if query.starts_with(APPS_PREFIX) {
@@ -100,6 +104,7 @@ impl Entry {
 pub struct Index {
     entries: Vec<Entry>,
     bookmarks: Vec<Entry>,
+    history: Vec<Entry>,
     windows: Vec<Entry>,
     apps: Vec<Entry>,
     search_paths: bool,
@@ -173,6 +178,21 @@ impl Index {
             Vec::new()
         };
 
+        let history = if settings.include_browser_history {
+            crate::browser_history::scan()
+                .into_iter()
+                .map(|visit| Entry {
+                    name: visit.title,
+                    breadcrumb: format!("{} History", visit.browser),
+                    path: visit.url.clone(),
+                    action: Action::OpenUrl(visit.url),
+                    branch: None,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         let apps = if settings.include_apps {
             crate::apps::scan()
                 .into_iter()
@@ -191,6 +211,7 @@ impl Index {
         Self {
             entries: dedup_by_path(entries),
             bookmarks,
+            history,
             windows,
             apps,
             search_paths: settings.search_paths,
@@ -198,11 +219,13 @@ impl Index {
         }
     }
 
-    /// `b ` / `w ` / `a ` で始まる入力の間は、それぞれブックマーク・
-    /// Open Windows・アプリだけを検索する (FR-9.13 / FR-9.15 / FR-9.14)。
+    /// プレフィックス入力中は、対応する検索対象だけを検索する。
     pub fn search(&self, query: &str) -> Vec<&Entry> {
         if let Some(rest) = query.strip_prefix(BOOKMARK_PREFIX) {
             return search_entries(&self.bookmarks, rest, true, &self.ranking);
+        }
+        if let Some(rest) = query.strip_prefix(HISTORY_PREFIX) {
+            return search_entries(&self.history, rest, true, &self.ranking);
         }
         if let Some(rest) = query.strip_prefix(WINDOW_PREFIX) {
             return search_entries(&self.windows, rest, false, &self.ranking);
@@ -418,6 +441,13 @@ mod tests {
                     branch: None,
                 },
             ],
+            history: vec![Entry {
+                name: "WayPoint pull request".into(),
+                breadcrumb: "Chrome History".into(),
+                path: "https://github.com/example/waypoint/pull/1".into(),
+                action: Action::OpenUrl("https://github.com/example/waypoint/pull/1".into()),
+                branch: None,
+            }],
             windows: vec![Entry {
                 name: "waypoint - Notepad".into(),
                 breadcrumb: "Open Windows".into(),
@@ -610,6 +640,20 @@ mod tests {
     }
 
     #[test]
+    fn history_prefix_switches_to_history_only_search() {
+        let index = index();
+        let found = index.search("h github.com/example");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "WayPoint pull request");
+    }
+
+    #[test]
+    fn without_the_history_prefix_history_is_not_searched() {
+        let index = index();
+        assert!(index.search("pull request").is_empty());
+    }
+
+    #[test]
     fn shell_items_are_indexed_and_open_with_default_handler() {
         let config = Config {
             items: vec![Item::Shell {
@@ -676,6 +720,7 @@ mod tests {
     #[test]
     fn prefix_badge_identifies_each_mode() {
         assert_eq!(prefix_badge("b git"), Some("BOOKMARKS"));
+        assert_eq!(prefix_badge("h waypoint"), Some("HISTORY"));
         assert_eq!(prefix_badge("w notepad"), Some("WINDOWS"));
         assert_eq!(prefix_badge("a code"), Some("APPS"));
         assert_eq!(prefix_badge("f cargo.toml"), Some("FILES"));

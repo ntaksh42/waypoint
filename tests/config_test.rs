@@ -137,6 +137,7 @@ fn missing_optional_fields_use_defaults() {
     assert_eq!(cfg.settings.quick_launch.hotkey, "Alt+Space");
     assert!(cfg.settings.quick_launch.include_recent_folders);
     assert!(cfg.settings.quick_launch.include_frequent_folders);
+    assert!(cfg.settings.quick_launch.include_browser_history);
     assert!(!cfg.settings.quick_launch.search_paths);
     assert_eq!(cfg.settings.quick_launch.visible_results, 12);
 }

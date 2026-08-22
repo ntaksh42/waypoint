@@ -1586,6 +1586,10 @@ impl SettingsApp {
                     "Include browser bookmarks (type \"b \" to search)",
                 );
                 ui.checkbox(
+                    &mut draft.include_browser_history,
+                    "Include browser history (type \"h \" to search)",
+                );
+                ui.checkbox(
                     &mut draft.include_apps,
                     "Include installed apps (type \"a \" to search)",
                 );
@@ -1654,6 +1658,8 @@ impl SettingsApp {
                     draft.include_frequent_folders;
                 self.config.settings.quick_launch.include_open_windows = draft.include_open_windows;
                 self.config.settings.quick_launch.include_bookmarks = draft.include_bookmarks;
+                self.config.settings.quick_launch.include_browser_history =
+                    draft.include_browser_history;
                 self.config.settings.quick_launch.include_apps = draft.include_apps;
                 self.config.settings.quick_launch.include_everything = draft.include_everything;
                 self.config.settings.quick_launch.search_paths = draft.search_paths;
@@ -2044,6 +2050,7 @@ struct TriggerDraft {
     include_frequent_folders: bool,
     include_open_windows: bool,
     include_bookmarks: bool,
+    include_browser_history: bool,
     include_apps: bool,
     include_everything: bool,
     search_paths: bool,
@@ -2080,6 +2087,7 @@ impl TriggerDraft {
             include_frequent_folders: quick_launch.include_frequent_folders,
             include_open_windows: quick_launch.include_open_windows,
             include_bookmarks: quick_launch.include_bookmarks,
+            include_browser_history: quick_launch.include_browser_history,
             include_apps: quick_launch.include_apps,
             include_everything: quick_launch.include_everything,
             search_paths: quick_launch.search_paths,
