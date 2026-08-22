@@ -533,11 +533,12 @@ mod tests {
 
         write_atomic(&path, "first").unwrap();
         write_atomic(&path, "second").unwrap();
+        write_atomic(&path, "third").unwrap();
 
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "second");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "third");
         assert_eq!(
             std::fs::read_to_string(root.join("data.bak.json")).unwrap(),
-            "first"
+            "second"
         );
         std::fs::remove_dir_all(root).unwrap();
     }
