@@ -295,6 +295,19 @@ pub fn load() -> LoadOutcome {
     };
 
     if !path.exists() {
+        // `write_atomic` は「.bak へ退避 → tmp を本配置へ rename」の 2 段階。
+        // 前者が終わった直後にクラッシュ/電源断すると config.json が消え、
+        // ここで無条件にデフォルトへ再シードするとユーザー設定が丸ごと
+        // 失われる。.bak.json が残っていればまずそちらを試す
+        let bak = path.with_extension("bak.json");
+        if let Ok(text) = std::fs::read_to_string(&bak)
+            && let Ok(cfg) = serde_json::from_str::<Config>(&text)
+        {
+            crate::panic_log::record(
+                "config.json が見つからず .bak.json から復元した (中断された保存の可能性)",
+            );
+            return LoadOutcome::Loaded(cfg);
+        }
         let cfg = default_config();
         if let Err(e) = save(&cfg) {
             return LoadOutcome::Failed(format!("既定設定の書き出しに失敗: {e}"));
