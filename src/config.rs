@@ -216,7 +216,10 @@ impl Config {
     /// (Quick Launch からの登録で重複を作らないため)。
     /// 追加した場合は true を返す。
     pub fn add_item_if_new(&mut self, item: Item) -> bool {
-        if item_path(&item).is_some_and(|path| contains_path(&self.items, path)) {
+        if item_path(&item).is_some_and(|path| {
+            let path = expand(path, &self.variables).unwrap_or_else(|| path.to_string());
+            contains_path(&self.items, &path, &self.variables)
+        }) {
             return false;
         }
         self.items.push(item);
@@ -231,10 +234,12 @@ fn item_path(item: &Item) -> Option<&str> {
     }
 }
 
-fn contains_path(items: &[Item], path: &str) -> bool {
+fn contains_path(items: &[Item], path: &str, variables: &BTreeMap<String, String>) -> bool {
     items.iter().any(|item| match item {
-        Item::Folder { path: p, .. } | Item::File { path: p, .. } => p.eq_ignore_ascii_case(path),
-        Item::Submenu { items, .. } => contains_path(items, path),
+        Item::Folder { path: p, .. } | Item::File { path: p, .. } => expand(p, variables)
+            .unwrap_or_else(|| p.clone())
+            .eq_ignore_ascii_case(path),
+        Item::Submenu { items, .. } => contains_path(items, path, variables),
         _ => false,
     })
 }

@@ -259,3 +259,31 @@ fn add_item_if_new_checks_paths_inside_submenus_too() {
     });
     assert!(!added);
 }
+
+/// Quick Launch の索引は展開済みパスを持つため、設定内の変数付きパスとも
+/// 同じ対象として重複判定する。
+#[test]
+fn add_item_if_new_compares_expanded_paths() {
+    let mut cfg = Config {
+        variables: BTreeMap::from([("Work".to_string(), r"E:\work".to_string())]),
+        items: vec![Item::Folder {
+            name: "Project".to_string(),
+            path: r"{Work}\project".to_string(),
+            open: None,
+            icon: None,
+            show_branch: false,
+        }],
+        ..Config::default()
+    };
+
+    let added = cfg.add_item_if_new(Item::Folder {
+        name: "Project (again)".to_string(),
+        path: r"E:\work\project".to_string(),
+        open: None,
+        icon: None,
+        show_branch: false,
+    });
+
+    assert!(!added);
+    assert_eq!(cfg.items.len(), 1);
+}
