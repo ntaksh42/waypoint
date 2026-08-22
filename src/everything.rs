@@ -118,6 +118,10 @@ pub fn parse_results(data: &[u8]) -> Vec<EverythingResult> {
         return Vec::new();
     }
     let numitems = read_u32(data, 20) as usize;
+    // ヘッダ値をそのまま容量確保に使うと、壊れた応答の u32::MAX などで
+    // 巨大なメモリ確保を試みてプロセスごと終了する。実データ内に収まる
+    // 固定長エントリ数を上限にする
+    let numitems = numitems.min((data.len() - HEADER_LEN) / ITEM_LEN);
 
     let mut results = Vec::with_capacity(numitems);
     for index in 0..numitems {
@@ -251,6 +255,13 @@ mod tests {
     fn truncated_data_does_not_panic() {
         assert!(parse_results(&[1, 2, 3]).is_empty());
         assert!(parse_results(&[]).is_empty());
+    }
+
+    #[test]
+    fn impossible_item_count_does_not_allocate_from_the_untrusted_header() {
+        let mut data = vec![0; 28];
+        data[20..24].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(parse_results(&data).is_empty());
     }
 
     #[test]
