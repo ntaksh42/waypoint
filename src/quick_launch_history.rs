@@ -57,6 +57,12 @@ fn save(history: &History) -> std::io::Result<()> {
 
 /// 選択した entry を安定なキーへ変換する。`FocusWindow` は hwnd が
 /// プロセスをまたいで安定しないため、履歴の記録対象にしない。
+///
+/// Windows のパスは大小文字を区別しないため、同じ対象が config 項目と
+/// Everything の検索結果など出所の違いで異なる大小文字で現れることが
+/// ある (`quick_launch::dedup_by_path` が索引側で行っている正規化と
+/// 同じ理由)。小文字化しないと同一対象の使用回数が分裂し、頻度ランキング
+/// が正しく積算されない
 fn key_for(entry: &Entry) -> Option<String> {
     let kind = match entry.action {
         Action::OpenFolder(_) => "folder",
@@ -65,7 +71,7 @@ fn key_for(entry: &Entry) -> Option<String> {
         Action::LaunchApp => "app",
         Action::FocusWindow(_) => return None,
     };
-    Some(format!("{kind}|{}", entry.path))
+    Some(format!("{kind}|{}", entry.path.to_lowercase()))
 }
 
 /// 選択を記録する。表示経路とは別に、選んだ後の一手なので同期 I/O で構わない。
