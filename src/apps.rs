@@ -60,9 +60,11 @@ fn start_menu_roots() -> Vec<PathBuf> {
 fn known_folder_path(id: &windows::core::GUID) -> Option<PathBuf> {
     unsafe {
         let raw = SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, None).ok()?;
-        let path = raw.to_string().ok()?;
+        // to_string() が失敗しても COM が確保したバッファは解放する。
+        // `?` で早期リターンすると CoTaskMemFree に到達せずリークする
+        let path = raw.to_string().ok();
         CoTaskMemFree(Some(raw.0.cast()));
-        Some(PathBuf::from(path))
+        path.map(PathBuf::from)
     }
 }
 
