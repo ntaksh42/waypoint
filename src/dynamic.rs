@@ -229,9 +229,10 @@ fn save_history(history: &History) -> std::io::Result<()> {
     let text = serde_json::to_string_pretty(history).map_err(std::io::Error::other)?;
     let temp = path.with_extension("json.tmp");
     fs::write(&temp, text)?;
-    if path.exists() {
-        fs::remove_file(&path)?;
-    }
+    // tmp を直接 path へ rename する。remove_file してから rename すると、
+    // その間のクラッシュ/電源断で history.json が消えたまま残る瞬間が
+    // できる (quick_launch_history.rs で同型のバグを修正済み)。Windows の
+    // rename は上書き先が既存でも置き換わるため、削除の前段は不要
     fs::rename(temp, path)
 }
 
