@@ -45,8 +45,18 @@ pub fn scan() -> Vec<Bookmark> {
         let Ok(text) = fs::read_to_string(&path) else {
             continue;
         };
-        let Ok(file) = serde_json::from_str::<BookmarksFile>(&text) else {
-            continue;
+        let file = match serde_json::from_str::<BookmarksFile>(&text) {
+            Ok(file) => file,
+            Err(e) => {
+                // ブラウザが書き込み中に読むと壊れた JSON を掴むことがある。
+                // 無言でスキップすると「ブックマークが急に消えた」ように
+                // 見えるだけで原因が追えないため、診断用に 1 行残す
+                crate::panic_log::record(&format!(
+                    "bookmarks: failed to parse {}: {e}",
+                    path.display()
+                ));
+                continue;
+            }
         };
         for root in [file.roots.bookmark_bar, file.roots.other, file.roots.synced]
             .into_iter()
