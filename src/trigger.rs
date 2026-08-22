@@ -332,9 +332,26 @@ unsafe extern "system" fn key_proc(code: i32, wparam: WPARAM, lparam: LPARAM) ->
 }
 
 /// 押されたキーが横取り対象で、修飾キーの状態も一致するか。
+///
+/// 同じ vk を異なる修飾キーで登録した Fallback が複数あり得る
+/// (例: メインホットキーとクイックランチのホットキーが両方ともフック
+/// 経路に落ちた場合) 。最初に vk が一致した 1 件だけを見ると、修飾キーが
+/// 違う後続の Fallback が一致するはずの入力を取りこぼすため、vk が一致する
+/// 全件について修飾キーの一致を確かめる。
 fn match_fallback(vk: u32) -> Option<Fallback> {
-    let f = FALLBACKS.with(|f| f.borrow().iter().copied().find(|x| x.vk == vk))?;
-    modifiers_match(f.mods).then_some(f)
+    FALLBACKS.with(|f| find_matching(f.borrow().iter().copied(), vk, modifiers_match))
+}
+
+/// `match_fallback` の本体。実際のキー状態 (`GetAsyncKeyState`) から
+/// 切り離してテストできるよう、一致判定を関数として受け取る。
+fn find_matching(
+    fallbacks: impl Iterator<Item = Fallback>,
+    vk: u32,
+    modifiers_match: impl Fn(HOT_KEY_MODIFIERS) -> bool,
+) -> Option<Fallback> {
+    fallbacks
+        .filter(|x| x.vk == vk)
+        .find(|x| modifiers_match(x.mods))
 }
 
 /// 指定の修飾キーがすべて押され、指定外の修飾キーが押されていないこと。
@@ -381,5 +398,58 @@ fn post_hotkey(id: i32) {
             WPARAM(id as usize),
             LPARAM(0),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Fallback, find_matching};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{HOT_KEY_MODIFIERS, MOD_ALT, MOD_WIN};
+
+    /// 同じ vk (Space) をメインホットキー (Win+Space) とクイックランチの
+    /// ホットキー (Alt+Space) の両方がフックへ退避した場合、押されている
+    /// 修飾キーに応じて正しい方を選べること。最初に登録された Fallback の
+    /// vk だけを見て決め打ちすると、後から一致するはずの Fallback を
+    /// 取りこぼす (修正前の実際のバグ)。
+    #[test]
+    fn picks_the_fallback_whose_modifiers_actually_match() {
+        let fallbacks = [
+            Fallback {
+                id: 1,
+                mods: MOD_WIN,
+                vk: b' ' as u32,
+            },
+            Fallback {
+                id: 2,
+                mods: MOD_ALT,
+                vk: b' ' as u32,
+            },
+        ];
+
+        let held = MOD_ALT;
+        let matched = find_matching(fallbacks.iter().copied(), b' ' as u32, |mods| mods == held);
+        assert_eq!(matched.map(|f| f.id), Some(2));
+    }
+
+    #[test]
+    fn returns_none_when_no_modifiers_match() {
+        let fallbacks = [Fallback {
+            id: 1,
+            mods: MOD_WIN,
+            vk: b' ' as u32,
+        }];
+        let matched = find_matching(fallbacks.iter().copied(), b' ' as u32, |_| false);
+        assert!(matched.is_none());
+    }
+
+    #[test]
+    fn ignores_fallbacks_with_a_different_vk() {
+        let fallbacks = [Fallback {
+            id: 1,
+            mods: HOT_KEY_MODIFIERS(0),
+            vk: b'W' as u32,
+        }];
+        let matched = find_matching(fallbacks.iter().copied(), b' ' as u32, |_| true);
+        assert!(matched.is_none());
     }
 }
