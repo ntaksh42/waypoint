@@ -18,8 +18,8 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
-    DRAWITEMSTRUCT, EM_GETSEL, EM_REPLACESEL, EM_SETCUEBANNER, EM_SETMARGINS, EM_SETSEL,
-    ODS_SELECTED, SetWindowTheme,
+    DRAWITEMSTRUCT, EM_GETSEL, EM_REPLACESEL, EM_SETMARGINS, EM_SETSEL, ODS_SELECTED,
+    SetWindowTheme,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_CONTROL, VK_SHIFT};
@@ -30,8 +30,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     PostMessageW, RegisterClassW, SW_HIDE, SW_SHOW, SetForegroundWindow, SetWindowTextW,
     ShowWindow, WINDOW_STYLE, WM_ACTIVATE, WM_APP, WM_CLOSE, WM_COMMAND, WM_CTLCOLOREDIT,
     WM_CTLCOLORLISTBOX, WM_DRAWITEM, WM_ERASEBKGND, WM_KEYDOWN, WM_PAINT, WM_SETFONT, WM_SIZE,
-    WM_SYSKEYDOWN, WNDCLASSW, WS_CAPTION, WS_CHILD, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
-    WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+    WM_SYSKEYDOWN, WNDCLASSW, WS_CHILD, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_TABSTOP,
+    WS_VISIBLE, WS_VSCROLL,
 };
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
@@ -313,7 +313,7 @@ fn ensure_window(owner: HWND) -> Result<()> {
             WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
             CLASS_NAME,
             w!("Quick Launch - Waypoint"),
-            WS_POPUP | WS_CAPTION | WS_SYSMENU,
+            WS_POPUP,
             0,
             0,
             WINDOW_WIDTH,
@@ -357,13 +357,6 @@ fn ensure_window(owner: HWND) -> Result<()> {
         )?;
         let _ = SetWindowTheme(edit, w!("DarkMode_Explorer"), PCWSTR::null());
         let _ = SetWindowTheme(list, w!("DarkMode_Explorer"), PCWSTR::null());
-        let cue = HSTRING::from("Search folders");
-        let _ = windows::Win32::UI::WindowsAndMessaging::SendMessageW(
-            edit,
-            EM_SETCUEBANNER,
-            Some(WPARAM(1)),
-            Some(LPARAM(cue.as_ptr() as isize)),
-        );
         STATE.with(|state| {
             let mut state = state.borrow_mut();
             state.window = Some(window);
@@ -1116,6 +1109,8 @@ fn paint_window(window: HWND) {
                 if everything_active {
                     draw_everything_flag_badges(hdc, everything_flags, search, dpi, detail_font);
                 }
+            } else {
+                draw_clock(hdc, search, dpi, detail_font);
             }
         }
         let _ = EndPaint(window, &paint);
@@ -1161,6 +1156,27 @@ unsafe fn draw_badge(hdc: HDC, badge: &str, search: RECT, dpi: u32, detail_font:
             draw_text_centered(hdc, badge, &mut text_rect);
             SelectObject(hdc, old_font);
         }
+    }
+}
+
+/// バッジ非表示中の検索窓の右端に、現在時刻 (HH:mm) を淡色で描く。
+unsafe fn draw_clock(hdc: HDC, search: RECT, dpi: u32, detail_font: Option<HFONT>) {
+    let time = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
+    let text = format!("{:02}:{:02}", time.wHour, time.wMinute);
+    unsafe {
+        let Some(font) = detail_font else { return };
+        let width = scale(BADGE_WIDTH, dpi) - scale(16, dpi);
+        let mut rect = RECT {
+            left: search.right - scale(10, dpi) - width,
+            top: search.top,
+            right: search.right - scale(10, dpi),
+            bottom: search.bottom,
+        };
+        let old_font = SelectObject(hdc, font.into());
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, TEXT_SECONDARY);
+        draw_text_centered(hdc, &text, &mut rect);
+        SelectObject(hdc, old_font);
     }
 }
 
