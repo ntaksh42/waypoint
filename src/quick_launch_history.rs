@@ -46,13 +46,7 @@ fn save(history: &History) -> std::io::Result<()> {
         fs::create_dir_all(parent)?;
     }
     let text = serde_json::to_string_pretty(history).map_err(std::io::Error::other)?;
-    let temp = path.with_extension("json.tmp");
-    fs::write(&temp, text)?;
-    // tmp を直接 path へ rename する。旧実装は remove_file してから
-    // rename しており、その間にクラッシュ/電源断が起きると履歴ファイルが
-    // 消えたまま残る瞬間があった。Windows の rename は上書き先が既存でも
-    // そのまま置き換わるため、削除の前段は不要
-    fs::rename(temp, path)
+    crate::config::write_atomic(&path, &text)
 }
 
 /// 選択した entry を安定なキーへ変換する。`FocusWindow` は hwnd が

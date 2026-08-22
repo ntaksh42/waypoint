@@ -408,16 +408,35 @@ pub fn save(cfg: &Config) -> std::io::Result<()> {
 
 /// クラッシュや電源断でファイルが途中状態にならないよう、
 /// temp に書いてから置換する。書き込み中の中断では既存ファイルが無傷で残る。
-fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, contents)?;
     if path.exists() {
-        // 既存を .bak へ退避してから差し替える
+        // ReplaceFileW なら既存ファイルを残したまま原子的に差し替えられる。
+        // std::fs::rename(tmp, path) は Windows では既存 path を上書きできない
         let bak = path.with_extension("bak.json");
-        let _ = std::fs::remove_file(&bak);
-        std::fs::rename(path, &bak)?;
+        use std::os::windows::ffi::OsStrExt;
+        use windows::Win32::Storage::FileSystem::{REPLACEFILE_WRITE_THROUGH, ReplaceFileW};
+        use windows::core::PCWSTR;
+
+        let path_wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        let tmp_wide: Vec<u16> = tmp.as_os_str().encode_wide().chain(Some(0)).collect();
+        let bak_wide: Vec<u16> = bak.as_os_str().encode_wide().chain(Some(0)).collect();
+        unsafe {
+            ReplaceFileW(
+                PCWSTR(path_wide.as_ptr()),
+                PCWSTR(tmp_wide.as_ptr()),
+                PCWSTR(bak_wide.as_ptr()),
+                REPLACEFILE_WRITE_THROUGH,
+                None,
+                None,
+            )
+            .map_err(std::io::Error::other)?;
+        }
+        Ok(())
+    } else {
+        std::fs::rename(&tmp, path)
     }
-    std::fs::rename(&tmp, path)
 }
 
 /// 変数を解決できない項目を洗い出す (FR-5.4) 。
@@ -488,4 +507,33 @@ fn expand_env_vars(input: &str) -> Option<String> {
     }
     out.push_str(rest);
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::write_atomic;
+
+    #[test]
+    fn atomic_write_replaces_an_existing_file() {
+        let root = std::env::temp_dir().join(format!(
+            "waypoint-atomic-write-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("data.json");
+
+        write_atomic(&path, "first").unwrap();
+        write_atomic(&path, "second").unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "second");
+        assert_eq!(
+            std::fs::read_to_string(root.join("data.bak.json")).unwrap(),
+            "first"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
