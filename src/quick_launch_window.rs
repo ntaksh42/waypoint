@@ -87,8 +87,9 @@ fn action_color(action: &Action) -> COLORREF {
 }
 
 pub const WM_QUICK_LAUNCH_EXECUTE: u32 = WM_APP + 4;
-/// Everything からの検索結果を受け取る `WM_COPYDATA` の `dwData`。
-const WM_EVERYTHING_RESULTS: u32 = WM_APP + 5;
+/// Everything からの検索結果を識別する `WM_COPYDATA` の `dwData` の初期値。
+/// クエリごとに増やし、入力前の古い応答を判別できるようにする。
+const EVERYTHING_REPLY_ID_START: u32 = WM_APP + 5;
 /// `Ctrl+Shift+Enter` で選択項目を config へ登録するよう常駐部へ依頼する。
 pub const WM_QUICK_LAUNCH_ADD_TO_FAVORITES: u32 = WM_APP + 6;
 /// Quick Launch が一度に Everything へ要求する最大件数。
@@ -128,9 +129,11 @@ struct State {
     everything_enabled: bool,
     /// `f ` プレフィックスの間だけ立てる。プレフィックスを抜けた後に
     /// 遅れて届く Everything の応答を、無関係な検索結果へ混ぜないための
-    /// 最小限のガード (クエリ単位の識別子までは Everything IPC が
-    /// 提供しないので、モードの内外だけを見る)。
+    /// ガード。
     everything_active: bool,
+    /// 最後に送った Everything クエリの応答 ID。高速に入力したとき、
+    /// 先行クエリの応答が後から届いて現在の候補を上書きするのを防ぐ。
+    everything_reply_id: u32,
     /// `f ` モード中に有効な Everything 検索フラグ
     /// (`everything::MATCH_CASE` 等の OR 合成)。モードを抜けても値は保持し、
     /// 次に `f ` へ入ったときも同じ絞り込みを引き継ぐ。
@@ -514,10 +517,16 @@ fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT
                 unsafe {
                     let copy_data =
                         &*(lparam.0 as *const windows::Win32::System::DataExchange::COPYDATASTRUCT);
-                    if copy_data.dwData == WM_EVERYTHING_RESULTS as usize
-                        && !copy_data.lpData.is_null()
-                        && copy_data.cbData > 0
-                    {
+                    let reply_id = copy_data.dwData as u32;
+                    let is_current = STATE.with(|state| {
+                        let state = state.borrow();
+                        accepts_everything_reply(
+                            state.everything_active,
+                            state.everything_reply_id,
+                            reply_id,
+                        )
+                    });
+                    if is_current && !copy_data.lpData.is_null() && copy_data.cbData > 0 {
                         // Everything はこのハンドラから戻ると lpData を解放する。
                         // 保持するならここでコピーする必要がある (SDK の注記通り)
                         let bytes = std::slice::from_raw_parts(
@@ -525,7 +534,7 @@ fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT
                             copy_data.cbData as usize,
                         )
                         .to_vec();
-                        handle_everything_results(&bytes);
+                        handle_everything_results(reply_id, &bytes);
                     }
                 }
             }
@@ -617,15 +626,17 @@ fn update_results(state: &RefCell<State>) {
 /// 空の検索語 (`f ` だけ) はクエリを送らない — 全件検索は重く、
 /// タイプの途中で毎回投げると Everything 側の応答待ちが積み上がる。
 fn start_everything_query(state: &RefCell<State>, text: &str) {
-    let (window, list, enabled, flags) = {
+    let (window, list, enabled, flags, reply_id) = {
         let mut state = state.borrow_mut();
         state.everything_active = true;
         state.results.clear();
+        state.everything_reply_id = next_everything_reply_id(state.everything_reply_id);
         (
             state.window,
             state.list,
             state.everything_enabled,
             state.everything_flags,
+            state.everything_reply_id,
         )
     };
     if let Some(list) = list {
@@ -634,13 +645,7 @@ fn start_everything_query(state: &RefCell<State>, text: &str) {
     let (Some(window), true, false) = (window, enabled, text.is_empty()) else {
         return;
     };
-    crate::everything::query(
-        window,
-        WM_EVERYTHING_RESULTS,
-        text,
-        EVERYTHING_MAX_RESULTS,
-        flags,
-    );
+    crate::everything::query(window, reply_id, text, EVERYTHING_MAX_RESULTS, flags);
 }
 
 /// Everything から届いた `WM_COPYDATA` を結果リストへ反映する。
@@ -648,11 +653,11 @@ fn start_everything_query(state: &RefCell<State>, text: &str) {
 /// `f ` を抜けていれば `update_results` が `everything_active` を
 /// 下ろしているので、届いた結果はここでは扱わず捨てる (プレフィックスが
 /// 外れた後に遅延到着した応答が、無関係な検索結果へ紛れ込むのを防ぐ)。
-fn handle_everything_results(data: &[u8]) {
+fn handle_everything_results(reply_id: u32, data: &[u8]) {
     let parsed = crate::everything::parse_results(data);
     let outcome = STATE.with(|s| {
         let mut state = s.borrow_mut();
-        if !state.everything_active {
+        if !accepts_everything_reply(state.everything_active, state.everything_reply_id, reply_id) {
             return None;
         }
         state.results = parsed
@@ -682,6 +687,17 @@ fn handle_everything_results(data: &[u8]) {
     if let Some(list) = list {
         populate_list(list, &labels, has_results);
     }
+}
+
+fn next_everything_reply_id(current: u32) -> u32 {
+    current
+        .checked_add(1)
+        .filter(|next| *next >= EVERYTHING_REPLY_ID_START)
+        .unwrap_or(EVERYTHING_REPLY_ID_START)
+}
+
+fn accepts_everything_reply(active: bool, expected: u32, received: u32) -> bool {
+    active && expected == received
 }
 
 /// リストボックスの中身を丸ごと差し替える。通常検索と Everything の
@@ -1474,7 +1490,7 @@ fn scale(value: i32, dpi: u32) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::word_start_before;
+    use super::{accepts_everything_reply, next_everything_reply_id, word_start_before};
 
     fn to_utf16(s: &str) -> Vec<u16> {
         s.encode_utf16().collect()
@@ -1515,5 +1531,15 @@ mod tests {
     fn cursor_at_zero_is_noop_boundary() {
         let text = to_utf16("hello");
         assert_eq!(word_start_before(&text, 0), 0);
+    }
+
+    #[test]
+    fn stale_everything_reply_is_rejected_after_a_new_query() {
+        let first = next_everything_reply_id(0);
+        let second = next_everything_reply_id(first);
+
+        assert!(!accepts_everything_reply(true, second, first));
+        assert!(accepts_everything_reply(true, second, second));
+        assert!(!accepts_everything_reply(false, second, second));
     }
 }
