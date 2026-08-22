@@ -600,11 +600,15 @@ fn path_menu_icon(name: &str) -> SHSTOCKICONID {
 
 /// 上位 9 件に `&1 ` のようなアクセラレータを前置する (FR-2.4) 。
 fn decorate(name: &str, numeric: bool, accel: usize) -> String {
+    // 項目名の & はリテラルの & として出すためエスケープする。
+    // 数字アクセラレータを前置する分岐でこれを忘れると、"R&D" のような
+    // 項目名で strip_accelerator が & をアクセラレータ区切りと誤解釈し、
+    // 文字が欠けて表示される (実測で確認済み)
+    let escaped = name.replace('&', "&&");
     if numeric && (1..=9).contains(&accel) {
-        format!("&{accel}  {name}")
+        format!("&{accel}  {escaped}")
     } else {
-        // 項目名の & はリテラルの & として出すためエスケープする
-        name.replace('&', "&&")
+        escaped
     }
 }
 
@@ -644,6 +648,14 @@ mod tests {
     fn ampersand_in_name_is_escaped_without_accelerator() {
         let label = with_branch("R&D", Some("main"));
         assert_eq!(decorate(&label, false, 1), "R&&D  [main]");
+    }
+
+    /// 数字アクセラレータを前置する上位 9 件でも & はエスケープされる。
+    /// 抜けると strip_accelerator が項目名中の & を区切りと誤解釈し、
+    /// 文字が欠けて表示される (実測で確認済み)。
+    #[test]
+    fn ampersand_in_name_is_escaped_with_numeric_accelerator() {
+        assert_eq!(decorate("R&D Docs", true, 3), "&3  R&&D Docs");
     }
 
     /// オーナードローでは & を自分で解釈しないので描画前に落とす。
