@@ -27,6 +27,9 @@ const PR_PAGE_SIZE: usize = 500;
 const PROJECT_PAGE_SIZE: usize = 1_000;
 const PIPELINE_BUILD_LIMIT: usize = 100;
 const WORK_ITEM_RESULT_LIMIT: usize = 50;
+/// `az wit` 単体で各プロジェクトから表示する最近更新 Work Item 数。
+/// 監視プロジェクトが複数でも、Quick Launch のリストを過度に埋めない。
+const RECENT_WORK_ITEM_LIMIT: usize = 8;
 const REQUEST_RETRIES: usize = 2;
 const RETRY_DELAY: Duration = Duration::from_millis(350);
 
@@ -154,7 +157,7 @@ pub fn cached_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
     };
     let Ok(mut statement) = connection.prepare(
         "SELECT organization, project, kind, item_id, status, name, detail, url, is_mine
-         FROM candidates",
+         FROM candidates WHERE kind IN ('pr', 'pipeline')",
     ) else {
         return Vec::new();
     };
@@ -215,6 +218,65 @@ pub fn cached_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
                 aliases,
                 priority,
                 is_mine: row.is_mine,
+            })
+        })
+        .collect()
+}
+
+/// 永続キャッシュから Work Item 候補を読む。Quick Launch 表示時はメモリ上の
+/// この結果だけを検索し、キャッシュで見つからない場合にだけ API を呼ぶ。
+pub fn cached_work_item_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
+    if !settings.enabled {
+        return Vec::new();
+    }
+    let Ok(connection) = open_cache() else {
+        return Vec::new();
+    };
+    let Ok(mut statement) = connection.prepare(
+        "SELECT organization, project, status, name, detail, url
+         FROM candidates WHERE kind = 'wit' ORDER BY rowid DESC",
+    ) else {
+        return Vec::new();
+    };
+    let Ok(rows) = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+            row.get::<_, String>(5)?,
+        ))
+    }) else {
+        return Vec::new();
+    };
+    let configured: HashMap<_, _> = settings
+        .projects
+        .iter()
+        .filter(|project| valid_project(project) && project.include_work_items)
+        .map(|project| {
+            (
+                project_key(&project.organization, &project.project),
+                (project.aliases.clone(), project.priority),
+            )
+        })
+        .collect();
+    rows.filter_map(Result::ok)
+        .filter_map(|(organization, project, status, name, detail, url)| {
+            let (aliases, priority) = configured
+                .get(&project_key(&organization, &project))?
+                .clone();
+            Some(Candidate {
+                kind: Kind::WorkItem,
+                status,
+                name,
+                detail,
+                url,
+                organization,
+                project,
+                aliases,
+                priority,
+                is_mine: false,
             })
         })
         .collect()
@@ -342,40 +404,54 @@ pub fn search_work_items_async(
     thread::spawn(move || {
         let mut results = Vec::new();
         let mut failures = Vec::new();
-        if !query.trim().is_empty() {
-            match http_client() {
-                Ok(client) => {
-                    for project in settings
-                        .projects
-                        .iter()
-                        .filter(|project| valid_project(project) && project.include_work_items)
-                    {
-                        let Ok(pat) = load_pat(&project.organization) else {
-                            failures.push(format!("{}: no PAT", project.organization));
-                            continue;
-                        };
-                        match fetch_work_items(&client, project, &pat, &query) {
-                            Ok(mut found) => results.append(&mut found),
-                            Err(error) => {
+        match http_client() {
+            Ok(client) => {
+                for project in settings
+                    .projects
+                    .iter()
+                    .filter(|project| valid_project(project) && project.include_work_items)
+                {
+                    let Ok(pat) = load_pat(&project.organization) else {
+                        failures.push(format!("{}: no PAT", project.organization));
+                        continue;
+                    };
+                    match fetch_work_items(&client, project, &pat, &query) {
+                        Ok(mut found) => {
+                            if let Err(error) = cache_work_item_candidates(&found) {
                                 crate::panic_log::record(&format!(
-                                    "azure devops: work item search {}/{} failed: {error}",
-                                    project.organization, project.project
+                                    "azure devops: could not cache work items: {error}"
                                 ));
-                                failures
-                                    .push(format!("{}/{}", project.organization, project.project));
                             }
+                            results.append(&mut found);
+                        }
+                        Err(error) => {
+                            crate::panic_log::record(&format!(
+                                "azure devops: work item search {}/{} failed: {error}",
+                                project.organization, project.project
+                            ));
+                            failures.push(format!("{}/{}", project.organization, project.project));
                         }
                     }
                 }
-                Err(error) => crate::panic_log::record(&format!(
-                    "azure devops: could not initialize work item client: {error}"
-                )),
             }
+            Err(error) => crate::panic_log::record(&format!(
+                "azure devops: could not initialize work item client: {error}"
+            )),
         }
-        results.sort_by_key(|candidate| (candidate.priority, candidate.name.to_lowercase()));
+        // `az wit` 単体は WIQL の更新日時順を保つ。検索語がある場合だけ
+        // 名前順へそろえ、プロジェクト優先度はどちらにも適用する。
+        if query.trim().is_empty() {
+            results.sort_by_key(|candidate| candidate.priority);
+        } else {
+            results.sort_by_key(|candidate| (candidate.priority, candidate.name.to_lowercase()));
+        }
         let empty_message = if results.is_empty() {
             if failures.is_empty() {
-                Some("No matching work items.".to_string())
+                Some(if query.trim().is_empty() {
+                    "No recently updated work items.".to_string()
+                } else {
+                    "No matching work items.".to_string()
+                })
             } else {
                 Some(format!(
                     "Azure DevOps search unavailable ({})",
@@ -692,6 +768,9 @@ fn fetch_work_items(
     pat: &str,
     query: &str,
 ) -> Result<Vec<Candidate>, String> {
+    if query.trim().is_empty() {
+        return fetch_recent_work_items(client, project, pat);
+    }
     let url = format!(
         "https://almsearch.dev.azure.com/{}/{}/_apis/search/workitemsearchresults?api-version={API_VERSION}",
         encode_segment(&project.organization),
@@ -706,48 +785,104 @@ fn fetch_work_items(
     Ok(work_item_candidates(project, &value))
 }
 
+/// 空の `az wit` 用に、最近更新された Work Item を WIQL で絞って取得する。
+/// まず ID だけを取得し、詳細は batch API で一度に読むため、プロジェクトごとの
+/// 往復は二回で収まる。
+fn fetch_recent_work_items(
+    client: &reqwest::blocking::Client,
+    project: &AzureDevOpsProject,
+    pat: &str,
+) -> Result<Vec<Candidate>, String> {
+    let base = format!(
+        "https://dev.azure.com/{}/{}",
+        encode_segment(&project.organization),
+        encode_segment(&project.project)
+    );
+    let query = post_json(
+        client,
+        &format!("{base}/_apis/wit/wiql?$top={RECENT_WORK_ITEM_LIMIT}&api-version={API_VERSION}"),
+        pat,
+        &json!({
+            "query": "SELECT [System.Id] FROM WorkItems ORDER BY [System.ChangedDate] DESC"
+        }),
+    )?;
+    let ids: Vec<i64> = query["workItems"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| json_i64(&item["id"]))
+        .collect();
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let items = post_json(
+        client,
+        &format!("{base}/_apis/wit/workitemsbatch?api-version={API_VERSION}"),
+        pat,
+        &json!({
+            "ids": ids,
+            "fields": ["System.Id", "System.Title", "System.State", "System.WorkItemType"],
+            "errorPolicy": "omit"
+        }),
+    )?;
+    Ok(work_item_batch_candidates(project, &items))
+}
+
 fn work_item_candidates(project: &AzureDevOpsProject, value: &Value) -> Vec<Candidate> {
     value["results"]
         .as_array()
         .into_iter()
         .flatten()
-        .filter_map(|item| {
-            let fields = &item["fields"];
-            // Search API は Work Item Tracking API と違い、フィールド名を
-            // 小文字の reference name で返す。
-            let id = json_i64(&fields["system.id"])
-                .or_else(|| json_i64(&fields["System.Id"]))
-                .or_else(|| json_i64(&item["id"]))?;
-            let title = fields["system.title"]
-                .as_str()
-                .or_else(|| fields["System.Title"].as_str())
-                .or_else(|| item["name"].as_str())
-                .unwrap_or("Untitled work item");
-            let state = fields["system.state"]
-                .as_str()
-                .or_else(|| fields["System.State"].as_str())
-                .unwrap_or("");
-            let kind = fields["system.workitemtype"]
-                .as_str()
-                .or_else(|| fields["System.WorkItemType"].as_str())
-                .unwrap_or("Work Item");
-            Some(Candidate {
-                kind: Kind::WorkItem,
-                status: state.to_string(),
-                name: format!("{id}: {title}"),
-                detail: format!(
-                    "Azure DevOps — {}/{} — {kind} {state}",
-                    project.organization, project.project
-                ),
-                url: format!("{}/_workitems/edit/{id}", project_url(project)),
-                organization: project.organization.trim().to_string(),
-                project: project.project.trim().to_string(),
-                aliases: project.aliases.clone(),
-                priority: project.priority,
-                is_mine: false,
-            })
-        })
+        .filter_map(|item| work_item_candidate(project, &item["fields"], &item["id"]))
         .collect()
+}
+
+fn work_item_batch_candidates(project: &AzureDevOpsProject, value: &Value) -> Vec<Candidate> {
+    value["value"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| work_item_candidate(project, &item["fields"], &item["id"]))
+        .collect()
+}
+
+fn work_item_candidate(
+    project: &AzureDevOpsProject,
+    fields: &Value,
+    item_id: &Value,
+) -> Option<Candidate> {
+    // Search API は小文字、Work Item Tracking API は PascalCase の reference
+    // name を返す。どちらの取得経路でも同じ候補へ変換する。
+    let id = json_i64(&fields["system.id"])
+        .or_else(|| json_i64(&fields["System.Id"]))
+        .or_else(|| json_i64(item_id))?;
+    let title = fields["system.title"]
+        .as_str()
+        .or_else(|| fields["System.Title"].as_str())
+        .unwrap_or("Untitled work item");
+    let state = fields["system.state"]
+        .as_str()
+        .or_else(|| fields["System.State"].as_str())
+        .unwrap_or("");
+    let kind = fields["system.workitemtype"]
+        .as_str()
+        .or_else(|| fields["System.WorkItemType"].as_str())
+        .unwrap_or("Work Item");
+    Some(Candidate {
+        kind: Kind::WorkItem,
+        status: state.to_string(),
+        name: format!("{id}: {title}"),
+        detail: format!(
+            "Azure DevOps — {}/{} — {kind} {state}",
+            project.organization, project.project
+        ),
+        url: format!("{}/_workitems/edit/{id}", project_url(project)),
+        organization: project.organization.trim().to_string(),
+        project: project.project.trim().to_string(),
+        aliases: project.aliases.clone(),
+        priority: project.priority,
+        is_mine: false,
+    })
 }
 
 /// Search API は `System.Id` を数値または文字列で返す。どちらでも候補を
@@ -892,7 +1027,8 @@ fn replace_project_cache(project: &AzureDevOpsProject, rows: &[CachedRow]) -> Re
         .map_err(|error| error.to_string())?;
     transaction
         .execute(
-            "DELETE FROM candidates WHERE organization = ?1 AND project = ?2",
+            "DELETE FROM candidates
+             WHERE organization = ?1 AND project = ?2 AND kind IN ('pr', 'pipeline')",
             params![project.organization.trim(), project.project.trim()],
         )
         .map_err(|error| error.to_string())?;
@@ -912,6 +1048,37 @@ fn replace_project_cache(project: &AzureDevOpsProject, rows: &[CachedRow]) -> Re
                     row.detail,
                     row.url,
                     row.is_mine as i64,
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    transaction.commit().map_err(|error| error.to_string())
+}
+
+/// ライブ検索で見つけた Work Item を次回の即時検索用に保持する。
+/// PR / Pipeline 同期時に消されないよう `kind = wit` として別扱いにする。
+fn cache_work_item_candidates(candidates: &[Candidate]) -> Result<(), String> {
+    let mut connection = open_cache()?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| error.to_string())?;
+    for candidate in candidates {
+        let Some(item_id) = candidate.url.rsplit('/').next() else {
+            continue;
+        };
+        transaction
+            .execute(
+                "INSERT OR REPLACE INTO candidates
+                 (organization, project, kind, item_id, status, name, detail, url, is_mine)
+                 VALUES (?1, ?2, 'wit', ?3, ?4, ?5, ?6, ?7, 0)",
+                params![
+                    candidate.organization,
+                    candidate.project,
+                    item_id,
+                    candidate.status,
+                    candidate.name,
+                    candidate.detail,
+                    candidate.url,
                 ],
             )
             .map_err(|error| error.to_string())?;
@@ -1091,6 +1258,29 @@ mod tests {
             }}]}),
         );
         assert_eq!(results[0].name, "73: Fix WIT search");
+    }
+
+    #[test]
+    fn recent_work_items_accept_batch_api_fields() {
+        let project = AzureDevOpsProject {
+            organization: "org".to_string(),
+            project: "project".to_string(),
+            aliases: Vec::new(),
+            priority: 0,
+            include_pull_requests: true,
+            include_pipelines: true,
+            include_work_items: true,
+        };
+        let results = work_item_batch_candidates(
+            &project,
+            &json!({ "value": [{ "id": 91, "fields": {
+                "System.Title": "Recent bug",
+                "System.State": "Active",
+                "System.WorkItemType": "Bug"
+            }}]}),
+        );
+        assert_eq!(results[0].name, "91: Recent bug");
+        assert_eq!(results[0].status, "Active");
     }
 
     #[test]

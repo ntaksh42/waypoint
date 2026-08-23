@@ -86,6 +86,49 @@ fn action_color(action: &Action) -> COLORREF {
     }
 }
 
+/// Azure DevOps 検索で URL から判定できる候補種別。通常の URL 検索では
+/// favicon を優先するため、`az ` モード中だけこのアイコンを使う。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AzureIconKind {
+    PullRequest,
+    WorkItem,
+    Pipeline,
+    Project,
+}
+
+fn azure_icon_kind(badge: Option<&str>, path: &str) -> Option<AzureIconKind> {
+    if badge != Some("AZURE DEVOPS") || !path.starts_with("https://dev.azure.com/") {
+        return None;
+    }
+    if path.contains("/pullrequest/") {
+        Some(AzureIconKind::PullRequest)
+    } else if path.contains("/_workitems/edit/") {
+        Some(AzureIconKind::WorkItem)
+    } else if path.contains("/_build") {
+        Some(AzureIconKind::Pipeline)
+    } else {
+        Some(AzureIconKind::Project)
+    }
+}
+
+fn azure_icon_color(kind: AzureIconKind) -> COLORREF {
+    match kind {
+        AzureIconKind::PullRequest => rgb(191, 90, 242), // 紫
+        AzureIconKind::WorkItem => rgb(0, 120, 212),     // 青
+        AzureIconKind::Pipeline => rgb(52, 199, 89),     // 緑
+        AzureIconKind::Project => rgb(48, 176, 199),     // シアン
+    }
+}
+
+fn azure_icon_label(kind: AzureIconKind) -> &'static str {
+    match kind {
+        AzureIconKind::PullRequest => "⇄",
+        AzureIconKind::WorkItem => "◆",
+        AzureIconKind::Pipeline => "▶",
+        AzureIconKind::Project => "▦",
+    }
+}
+
 pub const WM_QUICK_LAUNCH_EXECUTE: u32 = WM_APP + 4;
 /// Everything からの検索結果を識別する `WM_COPYDATA` の `dwData` の初期値。
 /// クエリごとに増やし、入力前の古い応答を判別できるようにする。
@@ -674,25 +717,59 @@ fn start_everything_query(state: &RefCell<State>, text: &str) {
 /// `az wit ` に入った。入力が止まるまで待ってから API を呼び、入力中に
 /// プロジェクト数分の通信が積み上がらないようにする。
 fn start_azure_work_item_query(state: &RefCell<State>, text: &str) {
-    let (window, list, reply_id) = {
+    let (window, list, reply_id, has_cached_results) = {
         let mut state = state.borrow_mut();
         state.everything_active = false;
         state.azure_work_items_active = true;
-        state.results.clear();
-        state.empty_message = Some(if text.trim().is_empty() {
-            "Type words after az wit to search work items.".to_string()
+        state.results = state
+            .index
+            .search_cached_work_items(text)
+            .into_iter()
+            .cloned()
+            .collect();
+        state.empty_message = if state.results.is_empty() {
+            Some(if text.trim().is_empty() {
+                "Loading recently updated Azure DevOps work items…".to_string()
+            } else {
+                "Searching Azure DevOps work items…".to_string()
+            })
         } else {
-            "Searching Azure DevOps work items…".to_string()
-        });
+            None
+        };
         state.azure_work_item_reply_id = next_azure_reply_id(state.azure_work_item_reply_id);
         state.azure_work_item_query = text.trim().to_string();
-        (state.window, state.list, state.azure_work_item_reply_id)
+        (
+            state.window,
+            state.list,
+            state.azure_work_item_reply_id,
+            !state.results.is_empty(),
+        )
     };
     if let Some(list) = list {
-        let message = state.borrow().empty_message.clone();
-        populate_empty_message(list, message.as_deref());
+        let (labels, has_results, message) = {
+            let state = state.borrow();
+            (
+                state
+                    .results
+                    .iter()
+                    .map(|entry| {
+                        HSTRING::from(format!("{}    {}", entry.name, entry_context(entry)))
+                    })
+                    .collect::<Vec<_>>(),
+                !state.results.is_empty(),
+                state.empty_message.clone(),
+            )
+        };
+        if has_results {
+            populate_list(list, &labels, true);
+        } else {
+            populate_empty_message(list, message.as_deref());
+        }
     }
-    let (Some(window), false) = (window, text.trim().is_empty()) else {
+    if has_cached_results {
+        return;
+    }
+    let Some(window) = window else {
         return;
     };
     let notify = window.0 as isize;
@@ -734,9 +811,6 @@ fn start_debounced_azure_work_item_query(reply_id: u32) {
     };
     if !settings.enabled {
         set_azure_empty_message("Azure DevOps search is disabled in Settings.");
-        return;
-    }
-    if query.is_empty() {
         return;
     }
     crate::azure_devops::search_work_items_async(
@@ -783,6 +857,8 @@ fn handle_azure_work_item_results(reply_id: u32) {
                 branch: None,
             })
             .collect();
+        let fetched_entries = state.results.clone();
+        state.index.merge_cached_work_items(&fetched_entries);
         state.empty_message = reply.message;
         let labels: Vec<HSTRING> = state
             .results
@@ -1517,15 +1593,21 @@ unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
             let _ = DeleteObject(accent.into());
         }
 
-        draw_icon_backdrop(draw.hDC, action_color(&entry.action), draw.rcItem, dpi);
-        match entry.action {
-            Action::OpenFolder(_) | Action::OpenWithDefaultHandler | Action::LaunchApp => {
-                draw_path_icon(draw.hDC, &entry.path, draw.rcItem, dpi)
+        if let Some(kind) = azure_icon_kind(badge, &entry.path) {
+            let color = azure_icon_color(kind);
+            draw_icon_backdrop(draw.hDC, color, draw.rcItem, dpi);
+            draw_azure_icon(draw.hDC, kind, color, draw.rcItem, dpi, name_font);
+        } else {
+            draw_icon_backdrop(draw.hDC, action_color(&entry.action), draw.rcItem, dpi);
+            match entry.action {
+                Action::OpenFolder(_) | Action::OpenWithDefaultHandler | Action::LaunchApp => {
+                    draw_path_icon(draw.hDC, &entry.path, draw.rcItem, dpi)
+                }
+                Action::FocusWindow(hwnd) => {
+                    draw_window_icon(draw.hDC, HWND(hwnd as *mut _), draw.rcItem, dpi)
+                }
+                Action::OpenUrl(_) => draw_favicon_icon(draw.hDC, &entry.path, draw.rcItem, dpi),
             }
-            Action::FocusWindow(hwnd) => {
-                draw_window_icon(draw.hDC, HWND(hwnd as *mut _), draw.rcItem, dpi)
-            }
-            Action::OpenUrl(_) => draw_favicon_icon(draw.hDC, &entry.path, draw.rcItem, dpi),
         }
         SetBkMode(draw.hDC, TRANSPARENT);
         let text_left = draw.rcItem.left + scale(TEXT_LEFT, dpi);
@@ -1661,6 +1743,33 @@ unsafe fn draw_icon_backdrop(hdc: HDC, color: COLORREF, rect: RECT, dpi: u32) {
     }
 }
 
+/// Azure DevOps の種別を小さなグリフとして描く。外部アイコンの読込を
+/// 増やさず、PR / WIT / Pipeline / Project を色と形で区別する。
+unsafe fn draw_azure_icon(
+    hdc: HDC,
+    kind: AzureIconKind,
+    color: COLORREF,
+    rect: RECT,
+    dpi: u32,
+    font: Option<HFONT>,
+) {
+    let Some(font) = font else { return };
+    unsafe {
+        let size = scale(ICON_SIZE, dpi);
+        let mut icon_rect = RECT {
+            left: rect.left + scale(ICON_LEFT, dpi),
+            top: rect.top + (rect.bottom - rect.top - size) / 2,
+            right: rect.left + scale(ICON_LEFT, dpi) + size,
+            bottom: rect.top + (rect.bottom - rect.top - size) / 2 + size,
+        };
+        let old_font = SelectObject(hdc, font.into());
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, color);
+        draw_text_centered(hdc, azure_icon_label(kind), &mut icon_rect);
+        SelectObject(hdc, old_font);
+    }
+}
+
 /// 種別色をそのまま塗ると強すぎるので、背景 (`BACKGROUND`) に大きく
 /// 寄せた低彩度版にする。
 fn backdrop_tint(color: COLORREF) -> COLORREF {
@@ -1755,8 +1864,8 @@ fn scale(value: i32, dpi: u32) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        accepts_azure_work_item_reply, accepts_everything_reply, next_everything_reply_id,
-        word_start_before,
+        AzureIconKind, accepts_azure_work_item_reply, accepts_everything_reply, azure_icon_kind,
+        next_everything_reply_id, word_start_before,
     };
 
     fn to_utf16(s: &str) -> Vec<u16> {
@@ -1815,5 +1924,38 @@ mod tests {
         assert!(!accepts_azure_work_item_reply(true, 8, 7));
         assert!(!accepts_azure_work_item_reply(false, 8, 8));
         assert!(accepts_azure_work_item_reply(true, 8, 8));
+    }
+
+    #[test]
+    fn azure_urls_use_distinct_icons_only_in_azure_mode() {
+        assert_eq!(
+            azure_icon_kind(
+                Some("AZURE DEVOPS"),
+                "https://dev.azure.com/org/project/_git/repo/pullrequest/42"
+            ),
+            Some(AzureIconKind::PullRequest)
+        );
+        assert_eq!(
+            azure_icon_kind(
+                Some("AZURE DEVOPS"),
+                "https://dev.azure.com/org/project/_workitems/edit/91"
+            ),
+            Some(AzureIconKind::WorkItem)
+        );
+        assert_eq!(
+            azure_icon_kind(
+                Some("AZURE DEVOPS"),
+                "https://dev.azure.com/org/project/_build/results?buildId=8"
+            ),
+            Some(AzureIconKind::Pipeline)
+        );
+        assert_eq!(
+            azure_icon_kind(Some("AZURE DEVOPS"), "https://dev.azure.com/org/project"),
+            Some(AzureIconKind::Project)
+        );
+        assert_eq!(
+            azure_icon_kind(Some("BOOKMARKS"), "https://dev.azure.com/org/project"),
+            None
+        );
     }
 }

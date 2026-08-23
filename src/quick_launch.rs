@@ -110,6 +110,7 @@ pub struct Index {
     bookmarks: Vec<Entry>,
     history: Vec<Entry>,
     azure: Vec<AzureIndexed>,
+    azure_work_items: Vec<Entry>,
     windows: Vec<Entry>,
     apps: Vec<Entry>,
     search_paths: bool,
@@ -307,22 +308,17 @@ impl Index {
         let azure = azure_candidates
             .into_iter()
             .map(|candidate| AzureIndexed {
-                entry: Entry {
-                    name: candidate.name,
-                    breadcrumb: if candidate.aliases.is_empty() {
-                        candidate.detail
-                    } else {
-                        format!("{} — {}", candidate.detail, candidate.aliases.join(" "))
-                    },
-                    path: candidate.url.clone(),
-                    action: Action::OpenUrl(candidate.url),
-                    branch: None,
-                },
+                entry: azure_candidate_entry(candidate.clone()),
                 kind: candidate.kind,
                 status: candidate.status,
                 is_mine: candidate.is_mine,
             })
             .collect();
+        let azure_work_items =
+            crate::azure_devops::cached_work_item_candidates(&settings.azure_devops)
+                .into_iter()
+                .map(azure_candidate_entry)
+                .collect();
 
         let apps = if settings.include_apps {
             crate::apps::scan()
@@ -344,6 +340,7 @@ impl Index {
             bookmarks,
             history,
             azure,
+            azure_work_items,
             windows,
             apps,
             search_paths: settings.search_paths,
@@ -368,7 +365,10 @@ impl Index {
         if let Some((command, rest)) = azure_command(query) {
             return match command {
                 AzureCommand::All => search_entries(
-                    self.azure.iter().map(|entry| &entry.entry),
+                    self.azure
+                        .iter()
+                        .map(|entry| &entry.entry)
+                        .chain(self.azure_work_items.iter()),
                     rest,
                     true,
                     &self.ranking,
@@ -419,6 +419,39 @@ impl Index {
             };
         }
         search_entries(&self.entries, query, self.search_paths, &self.ranking)
+    }
+
+    /// Work Item キャッシュは Index 構築時に読み込み済み。Quick Launch の
+    /// キー入力経路では SQLite に触れず、ここで即時に候補の有無を判定する。
+    pub fn search_cached_work_items(&self, query: &str) -> Vec<&Entry> {
+        search_entries(&self.azure_work_items, query, true, &self.ranking)
+    }
+
+    /// ライブ API の結果をメモリ上のキャッシュにも反映する。
+    pub fn merge_cached_work_items(&mut self, entries: &[Entry]) {
+        for entry in entries {
+            if !self
+                .azure_work_items
+                .iter()
+                .any(|cached| cached.path == entry.path)
+            {
+                self.azure_work_items.push(entry.clone());
+            }
+        }
+    }
+}
+
+fn azure_candidate_entry(candidate: crate::azure_devops::Candidate) -> Entry {
+    Entry {
+        name: candidate.name,
+        breadcrumb: if candidate.aliases.is_empty() {
+            candidate.detail
+        } else {
+            format!("{} — {}", candidate.detail, candidate.aliases.join(" "))
+        },
+        path: candidate.url.clone(),
+        action: Action::OpenUrl(candidate.url),
+        branch: None,
     }
 }
 
@@ -662,6 +695,7 @@ mod tests {
                 status: "active".into(),
                 is_mine: true,
             }],
+            azure_work_items: Vec::new(),
             windows: vec![Entry {
                 name: "waypoint - Notepad".into(),
                 breadcrumb: "Open Windows".into(),
@@ -874,6 +908,27 @@ mod tests {
         assert_eq!(index.search("az pr-a-mine azure").len(), 1);
         assert!(index.search("az pr-c azure").is_empty());
         assert_eq!(index.search("az wp").len(), 1);
+    }
+
+    #[test]
+    fn cached_work_items_are_searchable_without_live_api() {
+        let mut index = index();
+        index.azure_work_items = vec![Entry {
+            name: "91: Cache WIT results".into(),
+            breadcrumb: "Azure DevOps — org/Waypoint — Bug Active".into(),
+            path: "https://dev.azure.com/org/Waypoint/_workitems/edit/91".into(),
+            action: Action::OpenUrl("https://dev.azure.com/org/Waypoint/_workitems/edit/91".into()),
+            branch: None,
+        }];
+
+        let found = index.search_cached_work_items("cache");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "91: Cache WIT results");
+        assert!(index.search_cached_work_items("missing").is_empty());
+
+        let all_azure = index.search("az cache");
+        assert_eq!(all_azure.len(), 1);
+        assert_eq!(all_azure[0].name, "91: Cache WIT results");
     }
 
     #[test]
