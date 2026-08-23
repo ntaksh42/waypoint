@@ -6,6 +6,7 @@
 
 pub mod apps;
 pub mod autostart;
+pub mod azure_devops;
 pub mod bookmarks;
 pub mod browser_history;
 pub mod clipboard;

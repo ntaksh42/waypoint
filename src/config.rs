@@ -140,6 +140,8 @@ pub struct QuickLaunchSettings {
     pub include_browser_history: bool,
     #[serde(default = "default_true")]
     pub include_apps: bool,
+    #[serde(default)]
+    pub azure_devops: AzureDevOpsSettings,
     /// Everything 連携 (FR-9.16)。PC 全体のファイル名検索という重い操作
     /// のため、他のプレフィックス機能と違って既定はオフ
     #[serde(default)]
@@ -160,11 +162,41 @@ impl Default for QuickLaunchSettings {
             include_bookmarks: true,
             include_browser_history: true,
             include_apps: true,
+            azure_devops: AzureDevOpsSettings::default(),
             include_everything: false,
             search_paths: false,
             visible_results: default_visible_results(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AzureDevOpsSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub projects: Vec<AzureDevOpsProject>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AzureDevOpsProject {
+    pub organization: String,
+    pub project: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default)]
+    pub priority: u32,
+    /// PR を同期・検索対象にするか。既存設定との互換性のため既定は有効。
+    #[serde(default = "default_true")]
+    pub include_pull_requests: bool,
+    /// Pipeline を同期・検索対象にするか。既存設定との互換性のため既定は有効。
+    #[serde(default = "default_true")]
+    pub include_pipelines: bool,
+    /// Work Item のオンライン検索対象にするか。既存設定との互換性のため既定は有効。
+    #[serde(default = "default_true")]
+    pub include_work_items: bool,
 }
 
 impl Default for MenuSettings {
