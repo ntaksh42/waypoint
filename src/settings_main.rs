@@ -472,6 +472,10 @@ impl SettingsApp {
         self.selection_anchor = next;
         self.dirty = true;
         self.status = None;
+        // 削除後の再描画では egui 側のフォーカスがまだ古い index の行を指しており、
+        // それを「フォーカス変化」と誤検出した show_item_rows が select_single で
+        // ここで決めた選択を上書きしてしまう。クリック時と同じガードで防ぐ
+        self.suppress_focus_select = true;
     }
 
     /// 選択中の全項目をまとめて上下へ動かす。連続していなくてもよい。
