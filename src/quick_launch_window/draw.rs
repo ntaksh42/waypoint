@@ -10,8 +10,8 @@ use windows::Win32::UI::Controls::{DRAWITEMSTRUCT, ODS_SELECTED};
 
 use super::badge::{action_color, azure_icon_color, azure_icon_kind, badge_color};
 use super::draw_icons::{
-    backdrop_tint, draw_azure_icon, draw_command_icon, draw_favicon_icon, draw_icon_backdrop,
-    draw_path_icon, draw_window_icon,
+    FaviconFallback, backdrop_tint, draw_azure_icon, draw_command_icon, draw_favicon_icon,
+    draw_icon_backdrop, draw_path_icon, draw_window_icon,
 };
 use super::layout::{scale, weekday_label};
 use super::{
@@ -377,9 +377,20 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
                 Action::FocusWindow(hwnd) => {
                     draw_window_icon(draw.hDC, HWND(hwnd as *mut _), draw.rcItem, dpi)
                 }
-                Action::OpenUrl(_) | Action::FocusBrowserTab(_) => {
-                    draw_favicon_icon(draw.hDC, &entry.path, draw.rcItem, dpi)
-                }
+                Action::OpenUrl(_) => draw_favicon_icon(
+                    draw.hDC,
+                    &entry.path,
+                    draw.rcItem,
+                    dpi,
+                    FaviconFallback::Bookmark,
+                ),
+                Action::FocusBrowserTab(_) => draw_favicon_icon(
+                    draw.hDC,
+                    &entry.path,
+                    draw.rcItem,
+                    dpi,
+                    FaviconFallback::Tab,
+                ),
                 Action::ReplaceQuery(_) => draw_command_icon(draw.hDC, draw.rcItem, dpi, name_font),
             }
         }

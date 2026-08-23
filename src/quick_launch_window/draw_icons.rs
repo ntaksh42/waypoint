@@ -111,15 +111,35 @@ pub(super) unsafe fn draw_window_icon(hdc: HDC, hwnd: HWND, rect: RECT, dpi: u32
     unsafe { draw_icon_bitmap(hdc, bitmap, rect, dpi, size) };
 }
 
-/// favicon が無いブックマークに使う既定アイコン (星マーク)。
+/// favicon が無いブックマーク／履歴に使う既定アイコン (星マーク)。
 const ICON_BOOKMARK: &[u8] = include_bytes!("../../assets/menu/bookmark.png");
 
-/// ブックマークの favicon を描く。Chrome/Edge の `Favicons` DB に
-/// 見つからなければ既定の星マークへフォールバックする。
-pub(super) unsafe fn draw_favicon_icon(hdc: HDC, url: &str, rect: RECT, dpi: u32) {
+/// favicon が無い開いているタブに使う既定アイコン (ブラウザタブ形状)。
+const ICON_TAB: &[u8] = include_bytes!("../../assets/menu/tab.png");
+
+/// favicon が見つからないときのフォールバック種別。
+#[derive(Clone, Copy)]
+pub(super) enum FaviconFallback {
+    Bookmark,
+    Tab,
+}
+
+/// URL 系候補の favicon を描く。Chrome/Edge の `Favicons` DB に
+/// 見つからなければ `fallback` に応じた既定アイコンへフォールバックする。
+pub(super) unsafe fn draw_favicon_icon(
+    hdc: HDC,
+    url: &str,
+    rect: RECT,
+    dpi: u32,
+    fallback: FaviconFallback,
+) {
     let size = scale(ICON_SIZE, dpi);
-    let bitmap = crate::icon::bitmap_for_favicon_sized(url, size)
-        .or_else(|| crate::icon::bitmap_for_asset_sized("bookmark", ICON_BOOKMARK, size));
+    let bitmap = crate::icon::bitmap_for_favicon_sized(url, size).or_else(|| match fallback {
+        FaviconFallback::Bookmark => {
+            crate::icon::bitmap_for_asset_sized("bookmark", ICON_BOOKMARK, size)
+        }
+        FaviconFallback::Tab => crate::icon::bitmap_for_asset_sized("tab", ICON_TAB, size),
+    });
     let Some(bitmap) = bitmap else {
         return;
     };
