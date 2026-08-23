@@ -35,8 +35,6 @@ pub(super) fn app_with_folders(n: usize) -> SettingsApp {
         azure_project_picker: None,
         import_draft: None,
         clipboard: Vec::new(),
-        add_pending: false,
-        move_pending: false,
         delete_pending: false,
         close_pending: false,
         dirty: false,

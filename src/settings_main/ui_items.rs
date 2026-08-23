@@ -1,13 +1,12 @@
-//! 項目一覧の描画: ツールバー・一覧テーブル・各行のドラッグ&ドロップ。
+//! 項目一覧の描画: 一覧テーブルと各行のドラッグ&ドロップ。
+//! ツールバーは `ui_toolbar`、左のメニューツリーは `ui_tree` に分離している。
 
 use eframe::egui;
 use waypoint::config::Item;
 
 use super::app::SettingsApp;
-use super::drafts::DraftKind;
-use super::helpers::{item_detail, item_kind, item_open, menu_choices};
-use super::items_at;
-use super::{COL_KIND, COL_NAME, COL_OPEN, MoveToMenuDraft, ROW_INDENT, TAIL_DROP_HEIGHT};
+use super::helpers::{item_detail, item_kind, item_open};
+use super::{COL_KIND, COL_NAME, COL_OPEN, ROW_INDENT, TAIL_DROP_HEIGHT};
 
 /// ドラッグ中の行。掴んだ時点の添字だけを運ぶ。
 #[derive(Debug, Clone, Copy)]
@@ -35,122 +34,60 @@ pub(super) fn reorder_target(from: usize, insert_at: usize) -> usize {
 }
 
 impl SettingsApp {
+    /// エクスプローラ型レイアウト: 左にメニューツリー、右に選択中メニューの項目一覧。
+    /// 上部にツールバー、下部に Save/Close と状態表示を置く。
     pub(super) fn show_items(&mut self, root: &mut egui::Ui) {
         let ctx = root.ctx().clone();
-        egui::CentralPanel::default().show(root, |ui| {
-            egui::MenuBar::new().ui(ui, |ui| {
-                ui.menu_button("File", |ui| {
-                    if ui.button("Save").clicked() {
-                        self.save();
-                        ui.close();
-                    }
-                    if ui.button("Save & Close").clicked() {
-                        if self.save() {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                        }
-                        ui.close();
-                    }
-                    if ui.button("Close").clicked() {
-                        self.request_close(&ctx);
-                        ui.close();
-                    }
-                });
-                ui.menu_button("Favorite", |ui| {
-                    if ui.button("Add folder").clicked() {
-                        self.begin_add(DraftKind::Folder);
-                        ui.close();
-                    }
-                    if ui.button("Add file").clicked() {
-                        self.begin_add(DraftKind::File);
-                        ui.close();
-                    }
-                    if ui.button("Add special folder").clicked() {
-                        self.begin_add(DraftKind::SpecialFolder);
-                        ui.close();
-                    }
-                    if ui.button("Add shell location").clicked() {
-                        self.begin_add(DraftKind::Shell);
-                        ui.close();
-                    }
-                    if ui.button("Add menu").clicked() {
-                        self.begin_add(DraftKind::Submenu);
-                        ui.close();
-                    }
-                    if ui.button("Add separator").clicked() {
-                        self.begin_add(DraftKind::Separator);
-                        ui.close();
-                    }
-                    if ui.button("Import folder structure...").clicked() {
-                        self.open_import();
-                        ui.close();
-                    }
-                    if ui.button("Add My Special Folders preset").clicked() {
-                        self.insert_my_special_folders_preset();
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui
-                        .add_enabled(!self.selected_items.is_empty(), egui::Button::new("Edit"))
-                        .clicked()
-                    {
-                        self.begin_edit();
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            !self.selected_items.is_empty(),
-                            egui::Button::new("Move to menu..."),
-                        )
-                        .clicked()
-                    {
-                        self.move_to_menu_draft = Some(MoveToMenuDraft::default());
-                        ui.close();
-                    }
-                });
-                ui.menu_button("Options", |ui| {
-                    if ui.button("Variables...").clicked() {
-                        self.open_variables();
-                        ui.close();
-                    }
-                    if ui.button("Trigger...").clicked() {
-                        self.open_trigger();
-                        ui.close();
-                    }
-                });
-            });
-            ui.separator();
-
-            ui.label("Menu or group to edit:");
-            let choices = menu_choices(&self.config);
-            let selected_name = choices
-                .iter()
-                .find(|(path, _)| path == &self.selected_menu)
-                .map(|(_, name)| name.as_str())
-                .unwrap_or("Main");
-            egui::ComboBox::from_id_salt("menu_to_edit")
-                .selected_text(selected_name)
-                .width(ui.available_width())
-                .show_ui(ui, |ui| {
-                    for (path, name) in choices {
-                        if ui
-                            .selectable_label(path == self.selected_menu, name)
-                            .clicked()
-                        {
-                            let first = items_at(&self.config, &path)
-                                .and_then(|items| (!items.is_empty()).then_some(0));
-                            self.selected_items = first.into_iter().collect();
-                            self.active_item = first;
-                            self.selection_anchor = first;
-                            self.selected_menu = path;
-                        }
-                    }
-                });
-            ui.add_space(8.0);
-
-            let rows = self.current_items().cloned().unwrap_or_default();
+        egui::Panel::top("toolbar").show(root, |ui| {
+            ui.add_space(4.0);
+            self.show_toolbar(ui);
+            ui.add_space(4.0);
+        });
+        egui::Panel::bottom("footer").show(root, |ui| {
+            ui.add_space(6.0);
+            if let Some(error) = &self.load_error {
+                ui.colored_label(
+                    egui::Color32::RED,
+                    format!("Configuration could not be loaded: {error}"),
+                );
+                ui.label("The file was not overwritten. Close this window and repair config.json.");
+            }
             ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(self.load_error.is_none(), egui::Button::new("Save & Close"))
+                    .clicked()
+                    && self.save()
+                {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                if ui
+                    .add_enabled(self.load_error.is_none(), egui::Button::new("Save"))
+                    .clicked()
+                {
+                    self.save();
+                }
+                if ui.button("Close").clicked() {
+                    self.request_close(&ctx);
+                }
+                if self.dirty {
+                    ui.weak("Unsaved changes");
+                } else if let Some(status) = &self.status {
+                    ui.label(status);
+                }
+            });
+            ui.add_space(6.0);
+        });
+        egui::Panel::left("menu_tree_panel")
+            .resizable(true)
+            .default_size(200.0)
+            .size_range(140.0..=360.0)
+            .show(root, |ui| {
+                self.show_menu_tree(ui);
+            });
+        egui::CentralPanel::default().show(root, |ui| {
+            ui.horizontal(|ui| {
+                let selected = !self.selected_items.is_empty();
                 ui.vertical(|ui| {
-                    let selected = !self.selected_items.is_empty();
                     if ui
                         .add_enabled(
                             selected,
@@ -173,155 +110,20 @@ impl SettingsApp {
                     }
                 });
 
-                let list_width = (ui.available_width() - 92.0).max(360.0);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(list_width, 400.0),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        ui.set_min_width(list_width);
-                        ui.set_max_width(list_width);
-                        egui::Frame::group(ui.style()).show(ui, |ui| {
-                            ui.set_min_size(egui::vec2(list_width - 4.0, 360.0));
-                            egui::ScrollArea::both()
-                                .min_scrolled_height(360.0)
-                                .show(ui, |ui| {
-                                    self.show_item_rows(ui, &rows);
-                                });
-                        });
-                        ui.weak("Drag rows to reorder. Drop folders into the list to add them");
-                    },
-                );
-
                 ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 9.0;
-                    if ui
-                        .add(egui::Button::new("Add").min_size([74.0, 32.0].into()))
-                        .clicked()
-                    {
-                        self.add_pending = true;
-                    }
-                    if ui
-                        .add(egui::Button::new("Import").min_size([74.0, 32.0].into()))
-                        .on_hover_text("Import a folder structure")
-                        .clicked()
-                    {
-                        self.open_import();
-                    }
-                    let selected = !self.selected_items.is_empty();
-                    let multi = self.selected_items.len() > 1;
-                    if ui
-                        .add_enabled(
-                            selected,
-                            egui::Button::new(if multi { "Edit all..." } else { "Edit" })
-                                .min_size([74.0, 32.0].into()),
-                        )
-                        .on_hover_text(if multi {
-                            "Edit shared properties (Open mode, Show Git branch) for all selected items"
-                        } else {
-                            "Edit this item"
-                        })
-                        .clicked()
-                    {
-                        self.begin_edit();
-                    }
-                    if ui
-                        .add_enabled(
-                            selected,
-                            egui::Button::new("Remove").min_size([74.0, 32.0].into()),
-                        )
-                        .on_hover_text("Remove selected items (Delete)")
-                        .clicked()
-                    {
-                        self.delete_pending = true;
-                    }
-                    if ui
-                        .add_enabled(
-                            selected,
-                            egui::Button::new("Duplicate").min_size([74.0, 32.0].into()),
-                        )
-                        .on_hover_text("Duplicate selected items (Ctrl+D)")
-                        .clicked()
-                    {
-                        self.duplicate_selected();
-                    }
-                    if ui
-                        .add_enabled(
-                            selected,
-                            egui::Button::new("Copy").min_size([74.0, 32.0].into()),
-                        )
-                        .on_hover_text("Copy selected items to clipboard (Ctrl+C)")
-                        .clicked()
-                    {
-                        self.copy_selected();
-                    }
-                    if ui
-                        .add_enabled(
-                            !self.clipboard.is_empty(),
-                            egui::Button::new("Paste").min_size([74.0, 32.0].into()),
-                        )
-                        .on_hover_text("Paste clipboard items here (Ctrl+V)")
-                        .clicked()
-                    {
-                        self.paste_clipboard();
-                    }
-                    if ui
-                        .add_enabled(
-                            selected,
-                            egui::Button::new("Move").min_size([74.0, 32.0].into()),
-                        )
-                        .on_hover_text("Move up/down or to another menu")
-                        .clicked()
-                    {
-                        self.move_pending = true;
-                    }
+                    ui.set_width(ui.available_width());
+                    let rows = self.current_items().cloned().unwrap_or_default();
+                    egui::Frame::group(ui.style()).show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        egui::ScrollArea::both()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                self.show_item_rows(ui, &rows);
+                            });
+                    });
+                    ui.weak("Drag rows to reorder. Drop folders into the list to add them");
                 });
             });
-
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                let button_widths = 120.0 + 90.0 + 90.0 + ui.spacing().item_spacing.x * 2.0;
-                ui.add_space(((ui.available_width() - button_widths) / 2.0).max(0.0));
-                if ui
-                    .add_enabled(
-                        self.load_error.is_none(),
-                        egui::Button::new("Save & Close").min_size([120.0, 34.0].into()),
-                    )
-                    .clicked()
-                    && self.save()
-                {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-                if ui
-                    .add_enabled(
-                        self.load_error.is_none(),
-                        egui::Button::new("Save").min_size([90.0, 34.0].into()),
-                    )
-                    .clicked()
-                {
-                    self.save();
-                }
-                if ui
-                    .add(egui::Button::new("Close").min_size([90.0, 34.0].into()))
-                    .clicked()
-                {
-                    self.request_close(&ctx);
-                }
-            });
-            ui.horizontal_centered(|ui| {
-                if self.dirty {
-                    ui.weak("Unsaved changes");
-                } else if let Some(status) = &self.status {
-                    ui.label(status);
-                }
-            });
-
-            if let Some(error) = &self.load_error {
-                ui.colored_label(
-                    egui::Color32::RED,
-                    format!("Configuration could not be loaded: {error}"),
-                );
-                ui.label("The file was not overwritten. Close this window and repair config.json.");
-            }
         });
     }
 

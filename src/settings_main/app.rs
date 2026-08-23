@@ -27,8 +27,6 @@ pub(super) struct SettingsApp {
     pub(super) import_draft: Option<ImportDraft>,
     /// アプリ内クリップボード。Ctrl+C でコピーした項目を保持する。
     pub(super) clipboard: Vec<Item>,
-    pub(super) add_pending: bool,
-    pub(super) move_pending: bool,
     pub(super) delete_pending: bool,
     pub(super) close_pending: bool,
     pub(super) dirty: bool,
@@ -69,8 +67,6 @@ impl SettingsApp {
             azure_project_picker: None,
             import_draft: None,
             clipboard: Vec::new(),
-            add_pending: false,
-            move_pending: false,
             delete_pending: false,
             close_pending: false,
             dirty: false,
@@ -210,8 +206,6 @@ impl SettingsApp {
             || self.trigger_draft.is_some()
             || self.azure_project_picker.is_some()
             || self.import_draft.is_some()
-            || self.add_pending
-            || self.move_pending
             || self.delete_pending
             || self.close_pending
     }

@@ -5,10 +5,10 @@ use waypoint::config::AzureDevOpsSettings;
 use waypoint::hotkey_capture;
 
 use super::app::SettingsApp;
+use super::azure_draft::AzureProjectPicker;
 use super::keys::{dialog_keys, lock_modal_focus};
 use super::trigger_draft::{
-    AzureProjectPicker, HotkeyField, azure_project_count, hotkey_row, parse_azure_projects,
-    poll_hotkey_capture,
+    HotkeyField, TriggerTab, azure_project_count, hotkey_row, poll_hotkey_capture,
 };
 
 impl SettingsApp {
@@ -28,84 +28,105 @@ impl SettingsApp {
             .collapsible(false)
             .resizable(true)
             .default_width(520.0)
-            .default_height(680.0)
+            .default_height(520.0)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.checkbox(&mut draft.middle_click, "Enable middle click");
-                ui.label("Hotkey");
-                hotkey_row(ui, draft, HotkeyField::Menu);
-                ui.weak("Example: Win+W");
-                ui.separator();
-                ui.strong("Quick Launch");
-                ui.label("Hotkey");
-                hotkey_row(ui, draft, HotkeyField::QuickLaunch);
-                ui.checkbox(&mut draft.include_recent_folders, "Include Recent Folders");
-                ui.checkbox(
-                    &mut draft.include_frequent_folders,
-                    "Include Frequent Folders",
-                );
-                ui.checkbox(&mut draft.include_open_windows, "Include Open Windows");
-                ui.checkbox(
-                    &mut draft.include_bookmarks,
-                    "Include browser bookmarks (type \"b \" to search)",
-                );
-                ui.checkbox(
-                    &mut draft.include_browser_history,
-                    "Include browser history (type \"h \" to search)",
-                );
-                ui.checkbox(
-                    &mut draft.include_apps,
-                    "Include installed apps (type \"a \" to search)",
-                );
-                ui.checkbox(
-                    &mut draft.include_everything,
-                    "Search all files via Everything (type \"f \" to search; requires Everything to be running)",
-                );
-                ui.separator();
-                ui.strong("Azure DevOps");
-                ui.checkbox(
-                    &mut draft.azure_enabled,
-                    "Enable Azure DevOps search (type \"az \" to search)",
-                );
-                ui.label(format!("Watching {} project(s).", azure_project_count(draft)));
-                let azure_status = waypoint::azure_devops::cache_status(&AzureDevOpsSettings {
-                    enabled: draft.azure_enabled,
-                    projects: parse_azure_projects(&draft.azure_projects).unwrap_or_default(),
-                });
-                ui.weak(waypoint::azure_devops::cache_status_label(&azure_status));
-                if let Some(error) = azure_status.last_error {
-                    ui.weak(format!("Last Azure DevOps error: {error}"));
-                }
-                if ui.button("Choose watched projects...").clicked() {
-                    open_picker = true;
-                }
-                ui.checkbox(&mut draft.search_paths, "Search folder paths");
                 ui.horizontal(|ui| {
-                    ui.label("Visible results");
-                    ui.add(egui::DragValue::new(&mut draft.visible_results).range(12..=24));
+                    ui.selectable_value(&mut draft.active_tab, TriggerTab::General, "General");
+                    ui.selectable_value(
+                        &mut draft.active_tab,
+                        TriggerTab::QuickLaunch,
+                        "Quick Launch",
+                    );
+                    ui.selectable_value(
+                        &mut draft.active_tab,
+                        TriggerTab::AzureDevOps,
+                        "Azure DevOps",
+                    );
                 });
                 ui.separator();
-                ui.label("Excluded processes (one per line)");
-                ui.add(
-                    egui::TextEdit::multiline(&mut draft.excluded_processes)
-                        .desired_rows(7)
-                        .desired_width(f32::INFINITY),
-                );
+                egui::ScrollArea::vertical().show(ui, |ui| match draft.active_tab {
+                    TriggerTab::General => {
+                        ui.checkbox(&mut draft.middle_click, "Enable middle click");
+                        ui.label("Hotkey");
+                        hotkey_row(ui, draft, HotkeyField::Menu);
+                        ui.weak("Example: Win+W");
+                        ui.add_space(8.0);
+                        ui.label("Excluded processes (one per line)");
+                        ui.add(
+                            egui::TextEdit::multiline(&mut draft.excluded_processes)
+                                .desired_rows(7)
+                                .desired_width(f32::INFINITY),
+                        );
+                    }
+                    TriggerTab::QuickLaunch => {
+                        ui.label("Hotkey");
+                        hotkey_row(ui, draft, HotkeyField::QuickLaunch);
+                        ui.add_space(8.0);
+                        ui.checkbox(&mut draft.include_recent_folders, "Include Recent Folders");
+                        ui.checkbox(
+                            &mut draft.include_frequent_folders,
+                            "Include Frequent Folders",
+                        );
+                        ui.checkbox(&mut draft.include_open_windows, "Include Open Windows");
+                        ui.checkbox(
+                            &mut draft.include_bookmarks,
+                            "Include browser bookmarks (type \"b \" to search)",
+                        );
+                        ui.checkbox(
+                            &mut draft.include_browser_history,
+                            "Include browser history (type \"h \" to search)",
+                        );
+                        ui.checkbox(
+                            &mut draft.include_apps,
+                            "Include installed apps (type \"a \" to search)",
+                        );
+                        ui.checkbox(
+                            &mut draft.include_everything,
+                            "Search all files via Everything (type \"f \" to search; requires Everything to be running)",
+                        );
+                        ui.checkbox(&mut draft.search_paths, "Search folder paths");
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            ui.label("Visible results");
+                            ui.add(egui::DragValue::new(&mut draft.visible_results).range(12..=24));
+                        });
+                    }
+                    TriggerTab::AzureDevOps => {
+                        ui.checkbox(
+                            &mut draft.azure_enabled,
+                            "Enable Azure DevOps search (type \"az \" to search)",
+                        );
+                        ui.add_space(8.0);
+                        ui.label(format!("Watching {} project(s).", azure_project_count(draft)));
+                        let azure_status =
+                            waypoint::azure_devops::cache_status(&AzureDevOpsSettings {
+                                enabled: draft.azure_enabled,
+                                projects: draft.azure_projects.clone(),
+                            });
+                        ui.weak(waypoint::azure_devops::cache_status_label(&azure_status));
+                        if let Some(error) = azure_status.last_error {
+                            ui.weak(format!("Last Azure DevOps error: {error}"));
+                        }
+                        ui.add_space(4.0);
+                        if ui.button("Choose watched projects...").clicked() {
+                            open_picker = true;
+                        }
+                    }
+                });
+                ui.separator();
                 if let Some(error) = &draft.error {
                     ui.colored_label(egui::Color32::RED, error);
                 }
-                ui.separator();
                 ui.horizontal(|ui| {
                     apply = ui.button("OK").clicked();
                     cancel = ui.button("Cancel").clicked();
-                });
                 });
             });
         lock_modal_focus(ctx, &window);
 
         if open_picker {
-            self.azure_project_picker = Some(AzureProjectPicker::new(draft));
+            self.azure_project_picker = Some(AzureProjectPicker::new(draft.azure_projects.clone()));
         }
 
         // 除外プロセス欄が複数行なので Enter は改行に譲り、Esc だけ受ける。
@@ -128,11 +149,7 @@ impl SettingsApp {
                 .eq_ignore_ascii_case(draft.quick_launch_hotkey.trim())
             {
                 draft.error = Some("The two hotkeys must be different.".to_string());
-            } else if let Err(error) = parse_azure_projects(&draft.azure_projects) {
-                draft.error = Some(error);
             } else {
-                let azure_projects = parse_azure_projects(&draft.azure_projects)
-                    .expect("validated Azure DevOps project lines");
                 self.config.settings.trigger.middle_click = draft.middle_click;
                 self.config.settings.trigger.hotkey = draft.hotkey.trim().to_string();
                 self.config.settings.trigger.excluded_processes = draft
@@ -155,7 +172,7 @@ impl SettingsApp {
                 self.config.settings.quick_launch.include_apps = draft.include_apps;
                 self.config.settings.quick_launch.azure_devops = AzureDevOpsSettings {
                     enabled: draft.azure_enabled,
-                    projects: azure_projects,
+                    projects: draft.azure_projects.clone(),
                 };
                 self.config.settings.quick_launch.include_everything = draft.include_everything;
                 self.config.settings.quick_launch.search_paths = draft.search_paths;

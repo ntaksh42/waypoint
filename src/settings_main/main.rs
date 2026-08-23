@@ -4,6 +4,7 @@
 
 mod app;
 mod app_edit;
+mod azure_draft;
 mod drafts;
 mod helpers;
 mod keys;
@@ -16,14 +17,15 @@ mod ui_confirm;
 mod ui_editors;
 mod ui_import;
 mod ui_items;
+mod ui_toolbar;
+mod ui_tree;
 mod ui_trigger;
 
 use eframe::egui;
 
 use app::SettingsApp;
+use azure_draft::AzureProjectPicker;
 use drafts::{ImportDraft, MoveToMenuDraft, VariablesDraft};
-use helpers::items_at;
-use trigger_draft::AzureProjectPicker;
 use ui_items::reorder_target;
 
 fn main() -> eframe::Result<()> {
@@ -33,8 +35,8 @@ fn main() -> eframe::Result<()> {
     let icon = app_icon();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([700.0, 560.0])
-            .with_min_inner_size([640.0, 520.0])
+            .with_inner_size([880.0, 620.0])
+            .with_min_inner_size([700.0, 480.0])
             .with_icon(icon),
         ..Default::default()
     };
