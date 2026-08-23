@@ -14,6 +14,7 @@ mod search;
 mod tests;
 
 pub use azure::{AzureCommand, PipelineFilter, PullRequestFilter, azure_command};
+pub(crate) use search::search_entries;
 
 use azure::AzureIndexed;
 

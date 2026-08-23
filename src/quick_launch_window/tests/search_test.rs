@@ -1,6 +1,7 @@
 use super::super::RowKind;
 use super::super::search::{
     accepts_azure_work_item_reply, accepts_everything_reply, build_rows, next_everything_reply_id,
+    refined_search_term,
 };
 use crate::config::OpenMode;
 use crate::quick_launch::{Action, Entry};
@@ -30,6 +31,17 @@ fn stale_azure_work_item_request_is_rejected_after_more_typing() {
     assert!(!accepts_azure_work_item_reply(true, 8, 7));
     assert!(!accepts_azure_work_item_reply(false, 8, 8));
     assert!(accepts_azure_work_item_reply(true, 8, 8));
+}
+
+#[test]
+fn refined_search_only_reuses_candidates_for_a_narrower_local_query() {
+    assert_eq!(refined_search_term("way", "wayp"), Some("wayp"));
+    assert_eq!(refined_search_term("b git", "b gith"), Some("gith"));
+    assert_eq!(refined_search_term("b git", "h git"), None);
+    assert_eq!(refined_search_term("way", "way"), None);
+    assert_eq!(refined_search_term("", "way"), None);
+    assert_eq!(refined_search_term("f read", "f readm"), None);
+    assert_eq!(refined_search_term("az pr", "az pra"), None);
 }
 
 #[test]

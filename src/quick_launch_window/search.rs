@@ -96,9 +96,26 @@ pub(super) fn update_results(state: &RefCell<State>) {
             state.results = results;
             section_headers
         } else {
-            state.results = state.index.search(&query).into_iter().cloned().collect();
+            state.results = if let Some(search_term) = state
+                .previous_query
+                .as_deref()
+                .and_then(|previous| refined_search_term(previous, &query))
+            {
+                crate::quick_launch::search_entries(
+                    &state.results,
+                    search_term,
+                    state.index.search_paths,
+                    &state.index.ranking,
+                )
+                .into_iter()
+                .cloned()
+                .collect()
+            } else {
+                state.index.search(&query).into_iter().cloned().collect()
+            };
             Vec::new()
         };
+        state.previous_query = Some(query);
         let (labels, rows) = build_rows(&state.results, &section_headers);
         state.rows = rows.clone();
         (state.list, labels, rows)
@@ -120,6 +137,7 @@ pub(super) fn start_everything_query(state: &RefCell<State>, text: &str) {
     let (window, list, enabled, flags, reply_id) = {
         let mut state = state.borrow_mut();
         state.everything_active = true;
+        state.previous_query = None;
         state.results.clear();
         state.rows.clear();
         state.everything_reply_id = next_everything_reply_id(state.everything_reply_id);
@@ -146,6 +164,7 @@ pub(super) fn start_azure_work_item_query(state: &RefCell<State>, text: &str) {
     let (window, list, reply_id, has_cached_results) = {
         let mut state = state.borrow_mut();
         state.everything_active = false;
+        state.previous_query = None;
         state.azure_work_items_active = true;
         state.results = state
             .index
@@ -358,6 +377,39 @@ pub(super) fn accepts_everything_reply(active: bool, expected: u32, received: u3
 
 pub(super) fn accepts_azure_work_item_reply(active: bool, expected: u32, received: u32) -> bool {
     active && expected == received
+}
+
+/// 前回の検索結果だけを対象にしても漏れがない場合の、今回の検索語を返す。
+///
+/// 通常検索と `b ` / `h ` / `w ` / `a ` の同一モードでは、入力末尾への文字追加で
+/// 一致集合が広がらない。Everything と Azure DevOps は別経路なので対象外にする。
+pub(super) fn refined_search_term<'a>(previous: &str, current: &'a str) -> Option<&'a str> {
+    let (previous_scope, previous_term) = local_search_scope(previous)?;
+    let (current_scope, current_term) = local_search_scope(current)?;
+    (previous_scope == current_scope
+        && !previous_term.is_empty()
+        && current_term.len() > previous_term.len()
+        && current_term.starts_with(previous_term))
+    .then_some(current_term)
+}
+
+fn local_search_scope(query: &str) -> Option<(&'static str, &str)> {
+    if query.starts_with(crate::quick_launch::EVERYTHING_PREFIX)
+        || query.starts_with(crate::quick_launch::AZURE_DEVOPS_PREFIX)
+    {
+        return None;
+    }
+    if let Some(term) = query.strip_prefix("b ") {
+        Some(("bookmarks", term))
+    } else if let Some(term) = query.strip_prefix("h ") {
+        Some(("history", term))
+    } else if let Some(term) = query.strip_prefix("w ") {
+        Some(("windows", term))
+    } else if let Some(term) = query.strip_prefix("a ") {
+        Some(("apps", term))
+    } else {
+        Some(("normal", query))
+    }
 }
 
 /// リストボックスの中身を丸ごと差し替える。通常検索と Everything の
