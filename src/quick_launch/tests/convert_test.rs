@@ -1,4 +1,5 @@
 use super::super::*;
+use super::fixture::config_without_live_scans;
 use crate::config::Config;
 use crate::dynamic::Menus;
 
@@ -14,7 +15,7 @@ fn folder_with_show_branch_carries_branch_name() {
             icon: None,
             show_branch: true,
         }],
-        ..Config::default()
+        ..config_without_live_scans()
     };
     let index = Index::build(&config, &Menus::default());
     let found = index.search("waypoint");
@@ -33,7 +34,7 @@ fn folder_without_show_branch_has_no_branch() {
             icon: None,
             show_branch: false,
         }],
-        ..Config::default()
+        ..config_without_live_scans()
     };
     let index = Index::build(&config, &Menus::default());
     let found = index.search("waypoint");
@@ -57,7 +58,7 @@ fn submenu_show_branch_is_inherited_by_child_folders() {
             }],
             show_branch: true,
         }],
-        ..Config::default()
+        ..config_without_live_scans()
     };
     let index = Index::build(&config, &Menus::default());
     let found = index.search("waypoint");

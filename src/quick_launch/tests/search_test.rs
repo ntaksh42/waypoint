@@ -1,6 +1,6 @@
 use super::super::azure::{AzureCommand, PipelineFilter, PullRequestFilter};
 use super::super::*;
-use super::fixture::index;
+use super::fixture::{config_without_live_scans, index};
 use crate::config::Config;
 use crate::dynamic::Menus;
 
@@ -21,12 +21,21 @@ fn all_terms_must_match_name_or_breadcrumb() {
 fn exact_and_prefix_matches_rank_before_substrings() {
     let index = index();
     let found = index.search("waypoint");
+    // FR-9.2: 無接頭辞の通常検索は Folders / Open Windows / Bookmarks /
+    // Apps を横断する (History は対象外、`h ` プレフィックス限定)。
+    // 先頭一致 (Waypoint docs, waypoint - Notepad) が単語境界一致
+    // (Old waypoint) や breadcrumb 一致 (Release) より先に並ぶ。
     assert_eq!(
         found
             .iter()
             .map(|item| item.name.as_str())
             .collect::<Vec<_>>(),
-        ["Waypoint docs", "Old waypoint", "Release"]
+        [
+            "Waypoint docs",
+            "waypoint - Notepad",
+            "Old waypoint",
+            "Release"
+        ]
     );
 }
 
@@ -77,10 +86,13 @@ fn window_prefix_switches_to_window_only_search() {
     assert_eq!(found[0].action, Action::FocusWindow(12345));
 }
 
+/// FR-9.2: `w ` プレフィックスなしでも Open Windows は通常検索の対象。
 #[test]
-fn without_the_window_prefix_open_windows_are_not_searched() {
+fn open_windows_are_searched_without_the_window_prefix() {
     let index = index();
-    assert!(index.search("notepad").is_empty());
+    let found = index.search("notepad");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].action, Action::FocusWindow(12345));
 }
 
 /// タイトルにアプリ名が出ないウィンドウも、所有プロセス名で
@@ -137,10 +149,13 @@ fn apps_prefix_switches_to_apps_only_search() {
     assert_eq!(found[0].action, Action::LaunchApp);
 }
 
+/// FR-9.2: `a ` プレフィックスなしでもアプリは通常検索の対象。
 #[test]
-fn without_the_apps_prefix_apps_are_not_searched() {
+fn apps_are_searched_without_the_apps_prefix() {
     let index = index();
-    assert!(index.search("code").is_empty());
+    let found = index.search("code");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].action, Action::LaunchApp);
 }
 
 /// 絞り込みなしの一覧は、データを持つ区分だけを由来別に分けて返す。
@@ -202,10 +217,13 @@ fn bookmark_prefix_switches_to_bookmark_only_search() {
     );
 }
 
+/// FR-9.2: `b ` プレフィックスなしでもブックマークは通常検索の対象。
 #[test]
-fn without_the_bookmark_prefix_bookmarks_are_not_searched() {
+fn bookmarks_are_searched_without_the_bookmark_prefix() {
     let index = index();
-    assert!(index.search("github").is_empty());
+    let found = index.search("github");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].name, "GitHub");
 }
 
 #[test]
@@ -224,6 +242,8 @@ fn history_prefix_switches_to_history_only_search() {
     assert_eq!(found[0].name, "WayPoint pull request");
 }
 
+/// ブラウザ履歴は件数が多く、通常検索に含めるとキー入力ごとの全件走査が
+/// 重くなるため対象外 (`h ` プレフィックス限定)。
 #[test]
 fn without_the_history_prefix_history_is_not_searched() {
     let index = index();
@@ -267,7 +287,7 @@ fn shell_items_are_indexed_and_open_with_default_handler() {
             name: "This PC".to_string(),
             target: "shell:MyComputerFolder".to_string(),
         }],
-        ..Config::default()
+        ..config_without_live_scans()
     };
     let index = Index::build(&config, &Menus::default());
     let found = index.search("this pc");
@@ -284,7 +304,7 @@ fn file_items_are_indexed_and_open_with_default_handler() {
             path: r"E:\notes.txt".to_string(),
             icon: None,
         }],
-        ..Config::default()
+        ..config_without_live_scans()
     };
     let index = Index::build(&config, &Menus::default());
     let found = index.search("notes");
@@ -305,7 +325,7 @@ fn same_path_from_config_and_recent_and_frequent_folds_into_one() {
             icon: None,
             show_branch: false,
         }],
-        ..Config::default()
+        ..config_without_live_scans()
     };
     let dynamic = Menus {
         recent_folders: vec![PathEntry {

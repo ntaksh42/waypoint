@@ -1,5 +1,20 @@
 use super::super::azure::AzureIndexed;
 use super::super::*;
+use crate::config::Config;
+
+/// 実マシンの Open Windows / ブックマーク / 履歴 / インストール済みアプリを
+/// スキャンしない `Config`。`Config::default()` は Quick Launch の該当設定が
+/// 既定でオン (FR-9.2) のため、`Index::build` に渡すとテスト実行環境依存の
+/// 結果が紛れ込む。これらの経路を検証しないテストはこちらを使う。
+pub(super) fn config_without_live_scans() -> Config {
+    let mut config = Config::default();
+    let quick_launch = &mut config.settings.quick_launch;
+    quick_launch.include_open_windows = false;
+    quick_launch.include_bookmarks = false;
+    quick_launch.include_browser_history = false;
+    quick_launch.include_apps = false;
+    config
+}
 
 pub(super) fn index() -> Index {
     Index {

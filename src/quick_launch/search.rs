@@ -92,7 +92,16 @@ impl Index {
                 AzureCommand::WorkItems => Vec::new(),
             };
         }
-        search_entries(&self.entries, query, self.search_paths, &self.ranking)
+        search_entries(
+            self.entries
+                .iter()
+                .chain(&self.windows)
+                .chain(&self.bookmarks)
+                .chain(&self.apps),
+            query,
+            self.search_paths,
+            &self.ranking,
+        )
     }
 
     /// 絞り込みなし (空クエリ) のときに、Spotlight 風の区分見出し付き一覧を返す。
