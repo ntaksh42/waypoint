@@ -57,6 +57,8 @@ pub enum Action {
     OpenWithDefaultHandler,
     /// スタートメニューのショートカットを起動する。
     LaunchApp,
+    /// 検索欄へコマンドを補完する。候補の選択時に外部操作は行わない。
+    ReplaceQuery(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,7 +101,7 @@ impl Entry {
                 path: self.path.clone(),
                 icon: None,
             }),
-            Action::FocusWindow(_) | Action::OpenUrl(_) => None,
+            Action::FocusWindow(_) | Action::OpenUrl(_) | Action::ReplaceQuery(_) => None,
         }
     }
 }
@@ -362,6 +364,9 @@ impl Index {
         if let Some(rest) = query.strip_prefix(APPS_PREFIX) {
             return search_entries(&self.apps, rest, false, &self.ranking);
         }
+        if query == AZURE_DEVOPS_PREFIX {
+            return azure_command_entries().iter().collect();
+        }
         if let Some((command, rest)) = azure_command(query) {
             return match command {
                 AzureCommand::All => search_entries(
@@ -439,6 +444,31 @@ impl Index {
             }
         }
     }
+}
+
+/// `az ` の直後に出すコマンド候補。候補を決定しても検索欄を補完するだけで、
+/// URL を開いたり API を呼んだりはしない。
+fn azure_command_entries() -> &'static [Entry] {
+    static ENTRIES: std::sync::LazyLock<Vec<Entry>> = std::sync::LazyLock::new(|| {
+        [
+            ("az pr", "Search all pull requests"),
+            ("az pr-a", "Search active pull requests"),
+            ("az pr-c", "Search completed pull requests"),
+            ("az wit", "Search work items"),
+            ("az pipeline", "Search pipelines"),
+            ("az project", "Open configured projects"),
+        ]
+        .into_iter()
+        .map(|(name, breadcrumb)| Entry {
+            name: name.to_string(),
+            breadcrumb: breadcrumb.to_string(),
+            path: String::new(),
+            action: Action::ReplaceQuery(format!("{name} ")),
+            branch: None,
+        })
+        .collect()
+    });
+    &ENTRIES
 }
 
 fn azure_candidate_entry(candidate: crate::azure_devops::Candidate) -> Entry {
@@ -1049,6 +1079,27 @@ mod tests {
             azure_command("az platform"),
             Some((AzureCommand::All, "platform"))
         );
+    }
+
+    #[test]
+    fn azure_prefix_shows_command_completions() {
+        let index = index();
+        let found = index.search("az ");
+        assert_eq!(
+            found
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "az pr",
+                "az pr-a",
+                "az pr-c",
+                "az wit",
+                "az pipeline",
+                "az project"
+            ]
+        );
+        assert_eq!(found[3].action, Action::ReplaceQuery("az wit ".to_string()));
     }
 
     /// showBranch が真の Folder は、このリポジトリ自身を指せば

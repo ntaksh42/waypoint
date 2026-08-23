@@ -354,6 +354,7 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                     | quick_launch::Action::LaunchApp => {
                         let _ = shell::open_shell_item(&entry.path);
                     }
+                    quick_launch::Action::ReplaceQuery(_) => {}
                 }
                 refresh_dynamic();
             }

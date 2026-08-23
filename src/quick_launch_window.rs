@@ -82,7 +82,10 @@ fn badge_color(badge: &str) -> COLORREF {
 fn action_color(action: &Action) -> COLORREF {
     match action {
         Action::FocusWindow(_) | Action::LaunchApp => badge_color("WINDOWS"),
-        Action::OpenFolder(_) | Action::OpenUrl(_) | Action::OpenWithDefaultHandler => ACCENT,
+        Action::OpenFolder(_)
+        | Action::OpenUrl(_)
+        | Action::OpenWithDefaultHandler
+        | Action::ReplaceQuery(_) => ACCENT,
     }
 }
 
@@ -1080,11 +1083,21 @@ fn queue_selected() {
     let list = STATE.with(|state| state.borrow().list);
     let selected = current_selection(list);
 
-    let queued = STATE.with(|state| {
+    enum Selected {
+        Replace(HWND, String),
+        Execute(Option<HWND>, Option<HWND>),
+    }
+
+    let selected = STATE.with(|state| {
         let mut state = state.borrow_mut();
         let mut entry = selected
             .and_then(|index| state.results.get(index))
             .cloned()?;
+        if let Action::ReplaceQuery(query) = &entry.action {
+            return state
+                .edit
+                .map(|edit| Selected::Replace(edit, query.clone()));
+        }
         if let Action::OpenFolder(mode) = &mut entry.action {
             let shift = unsafe { GetKeyState(VK_SHIFT.0 as i32) } < 0;
             let control = unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0;
@@ -1095,16 +1108,30 @@ fn queue_selected() {
             }
         }
         state.pending = Some(entry);
-        Some((state.window, state.owner))
+        Some(Selected::Execute(state.window, state.owner))
     });
-    let Some((window, owner)) = queued else {
-        return;
-    };
-    hide_window(window);
-    if let Some(owner) = owner {
-        unsafe {
-            let _ = PostMessageW(Some(owner), WM_QUICK_LAUNCH_EXECUTE, WPARAM(0), LPARAM(0));
+    match selected {
+        Some(Selected::Replace(edit, query)) => unsafe {
+            let cursor = query.encode_utf16().count();
+            let _ = SetWindowTextW(edit, &HSTRING::from(query));
+            let _ = SetFocus(Some(edit));
+            let _ = windows::Win32::UI::WindowsAndMessaging::SendMessageW(
+                edit,
+                EM_SETSEL,
+                Some(WPARAM(cursor)),
+                Some(LPARAM(cursor as isize)),
+            );
+        },
+        Some(Selected::Execute(window, owner)) => {
+            hide_window(window);
+            if let Some(owner) = owner {
+                unsafe {
+                    let _ =
+                        PostMessageW(Some(owner), WM_QUICK_LAUNCH_EXECUTE, WPARAM(0), LPARAM(0));
+                }
+            }
         }
+        None => {}
     }
 }
 
@@ -1607,6 +1634,7 @@ unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
                     draw_window_icon(draw.hDC, HWND(hwnd as *mut _), draw.rcItem, dpi)
                 }
                 Action::OpenUrl(_) => draw_favicon_icon(draw.hDC, &entry.path, draw.rcItem, dpi),
+                Action::ReplaceQuery(_) => draw_command_icon(draw.hDC, draw.rcItem, dpi, name_font),
             }
         }
         SetBkMode(draw.hDC, TRANSPARENT);
@@ -1766,6 +1794,26 @@ unsafe fn draw_azure_icon(
         SetBkMode(hdc, TRANSPARENT);
         SetTextColor(hdc, color);
         draw_text_centered(hdc, azure_icon_label(kind), &mut icon_rect);
+        SelectObject(hdc, old_font);
+    }
+}
+
+/// コマンド候補は URL やファイルの実体を持たないため、補完操作であることを
+/// 小さな `>` グリフで示す。
+unsafe fn draw_command_icon(hdc: HDC, rect: RECT, dpi: u32, font: Option<HFONT>) {
+    let Some(font) = font else { return };
+    unsafe {
+        let size = scale(ICON_SIZE, dpi);
+        let mut icon_rect = RECT {
+            left: rect.left + scale(ICON_LEFT, dpi),
+            top: rect.top + (rect.bottom - rect.top - size) / 2,
+            right: rect.left + scale(ICON_LEFT, dpi) + size,
+            bottom: rect.top + (rect.bottom - rect.top - size) / 2 + size,
+        };
+        let old_font = SelectObject(hdc, font.into());
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, ACCENT);
+        draw_text_centered(hdc, ">", &mut icon_rect);
         SelectObject(hdc, old_font);
     }
 }

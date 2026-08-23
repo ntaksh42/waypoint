@@ -63,7 +63,7 @@ fn key_for(entry: &Entry) -> Option<String> {
         Action::OpenUrl(_) => "url",
         Action::OpenWithDefaultHandler => "default",
         Action::LaunchApp => "app",
-        Action::FocusWindow(_) => return None,
+        Action::FocusWindow(_) | Action::ReplaceQuery(_) => return None,
     };
     Some(format!("{kind}|{}", entry.path.to_lowercase()))
 }
