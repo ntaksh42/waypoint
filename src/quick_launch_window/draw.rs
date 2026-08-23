@@ -13,7 +13,7 @@ use super::draw_icons::{
     backdrop_tint, draw_azure_icon, draw_command_icon, draw_favicon_icon, draw_icon_backdrop,
     draw_path_icon, draw_window_icon,
 };
-use super::layout::scale;
+use super::layout::{scale, weekday_label};
 use super::{
     ACCENT, BACKGROUND, BADGE_WIDTH, EDIT_HEIGHT, ICON_LEFT, PADDING, STATE, SURFACE,
     SURFACE_HOVER, TEXT_LEFT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY, rgb,
@@ -137,10 +137,17 @@ pub(super) unsafe fn draw_badge(
     }
 }
 
-/// バッジ非表示中の検索窓の右端に、現在時刻 (HH:mm) を淡色で描く。
+/// バッジ非表示中の検索窓の右端に、日付・曜日・現在時刻を淡色で描く。
 pub(super) unsafe fn draw_clock(hdc: HDC, search: RECT, dpi: u32, detail_font: Option<HFONT>) {
     let time = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
-    let text = format!("{:02}:{:02}", time.wHour, time.wMinute);
+    let text = format!(
+        "{}/{} {} {:02}:{:02}",
+        time.wMonth,
+        time.wDay,
+        weekday_label(time.wDayOfWeek),
+        time.wHour,
+        time.wMinute
+    );
     unsafe {
         let Some(font) = detail_font else { return };
         let width = scale(BADGE_WIDTH, dpi) - scale(16, dpi);

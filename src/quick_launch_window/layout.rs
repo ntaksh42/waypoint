@@ -134,3 +134,9 @@ pub(super) fn apply_window_chrome(window: HWND) {
 pub(super) fn scale(value: i32, dpi: u32) -> i32 {
     value * dpi.max(96) as i32 / 96
 }
+
+/// 曜日番号 (`SYSTEMTIME::wDayOfWeek`、0=日曜) を英語 3 文字表記へ変換する。
+pub(super) fn weekday_label(day_of_week: u16) -> &'static str {
+    const NAMES: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    NAMES[day_of_week as usize % 7]
+}
