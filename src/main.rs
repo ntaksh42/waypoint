@@ -18,6 +18,11 @@ fn main() {
     // 以降の panic をログに残す
     panic_log::install();
 
+    if std::env::args().any(|a| a == "--open-tab-setup-guide") {
+        let _ = waypoint::browser_tabs::open_setup_guide();
+        return;
+    }
+
     // インストーラーが初回インストール時のみ渡す一度きりのフラグ。
     // 常駐は開始せず、自動起動 (FR-8.4) を有効にして即終了する。
     // トレイの手動トグルと同じ関数を呼ぶことで管理主体をアプリ側に一本化し、
@@ -48,6 +53,10 @@ fn main() {
 
     // IShellWindows は STA を要求する (R-8)
     let _com = shell::ComGuard::new();
+
+    // Native Messaging host はブラウザが起動する。ここでは Chrome / Edge が
+    // host を見つけられるよう登録だけを済ませ、手作業を発生させない。
+    let _ = waypoint::browser_tabs::register_native_host();
 
     tray::load_state();
 

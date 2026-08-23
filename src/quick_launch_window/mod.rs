@@ -108,6 +108,9 @@ struct State {
     owner: Option<HWND>,
     origin: Option<HWND>,
     index: Index,
+    /// 拡張から受け取った現在のブラウザタブ。Index を再構築しても失わないよう、
+    /// 検索インデックスとは別にメモリ上で保持する。
+    browser_tabs: Vec<(crate::browser_tabs::Browser, crate::browser_tabs::Tab)>,
     results: Vec<Entry>,
     /// 直前に同期検索した入力。末尾への文字追加だけなら、前回の候補を
     /// 起点に再検索して全索引の走査を避けるために使う。
@@ -163,10 +166,38 @@ pub fn configure(config: &Config, dynamic: &Menus) {
         let has_window = {
             let mut state = state.borrow_mut();
             state.index = Index::build(config, dynamic);
+            let tabs = state.browser_tabs.clone();
+            state.index.set_browser_tabs(&tabs);
             state.previous_query = None;
             state.visible_results = config.settings.quick_launch.visible_results.clamp(12, 24);
             state.everything_enabled = config.settings.quick_launch.include_everything;
             state.azure_devops = config.settings.quick_launch.azure_devops.clone();
+            state.window.is_some()
+        };
+        if has_window {
+            update_results(state);
+        }
+    });
+}
+
+/// Native Messaging host が届けた 1 ブラウザ分のタブ一覧を入れ替える。
+///
+/// タブの変更通知時だけ呼ばれる。Quick Launch が表示中なら、現在の `t ` 検索結果も
+/// 即座に差し替えるが、ブラウザへ同期問い合わせは行わない。
+pub fn replace_browser_tabs(
+    browser: crate::browser_tabs::Browser,
+    tabs: Vec<crate::browser_tabs::Tab>,
+) {
+    STATE.with(|state| {
+        let has_window = {
+            let mut state = state.borrow_mut();
+            state.browser_tabs.retain(|(source, _)| *source != browser);
+            state
+                .browser_tabs
+                .extend(tabs.into_iter().map(|tab| (browser, tab)));
+            let tabs = state.browser_tabs.clone();
+            state.index.set_browser_tabs(&tabs);
+            state.previous_query = None;
             state.window.is_some()
         };
         if has_window {

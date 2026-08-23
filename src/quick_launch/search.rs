@@ -7,7 +7,7 @@ use fuzzy_matcher::FuzzyMatcher;
 use super::azure::{AzureCommand, PipelineFilter, azure_command, azure_command_entries};
 use super::{
     APPS_PREFIX, AZURE_DEVOPS_PREFIX, BOOKMARK_PREFIX, Entry, FUZZY_MATCHER, HISTORY_PREFIX, Index,
-    WINDOW_PREFIX,
+    TABS_PREFIX, WINDOW_PREFIX,
 };
 use crate::quick_launch_history::Ranking;
 
@@ -70,6 +70,9 @@ impl Index {
         }
         if let Some(rest) = query.strip_prefix(APPS_PREFIX) {
             return search_entries_cached(&self.apps, &self.apps_lower, rest, false, &self.ranking);
+        }
+        if let Some(rest) = query.strip_prefix(TABS_PREFIX) {
+            return search_entries_cached(&self.tabs, &self.tabs_lower, rest, true, &self.ranking);
         }
         if query == AZURE_DEVOPS_PREFIX {
             return azure_command_entries().iter().collect();

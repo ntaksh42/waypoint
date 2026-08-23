@@ -9,6 +9,7 @@ pub mod autostart;
 pub mod azure_devops;
 pub mod bookmarks;
 pub mod browser_history;
+pub mod browser_tabs;
 pub mod clipboard;
 pub mod config;
 pub mod dynamic;

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Waypoint Browser Tab Bridge</title>
+  <style>
+    body { background: #171717; color: #f2f2f2; font: 16px/1.6 "Yu Gothic UI", sans-serif; margin: 48px auto; max-width: 760px; }
+    h1 { margin-bottom: 8px; }
+    a { background: #276bb5; border-radius: 6px; color: white; display: inline-block; margin: 4px 8px 16px 0; padding: 8px 14px; text-decoration: none; }
+    code { background: #292929; border-radius: 4px; display: block; overflow-wrap: anywhere; padding: 10px; }
+    .note { color: #b8c7d9; }
+  </style>
+</head>
+<body>
+  <h1>ブラウザタブ検索を有効にする</h1>
+  <p>使うブラウザごとに、以下の操作は最初の一度だけ必要です。</p>
+
+  <h2>1. 拡張機能の管理画面を開く</h2>
+  <a href="edge://extensions">Edge の拡張機能を開く</a>
+  <a href="chrome://extensions">Chrome の拡張機能を開く</a>
+
+  <h2>2. 拡張を読み込む</h2>
+  <ol>
+    <li>「開発者モード」を ON にする。</li>
+    <li>「開梱された読み込み」（Load unpacked）を選ぶ。画面が狭い場合は左端のフォルダアイコンです。</li>
+    <li>次のフォルダを選ぶ。</li>
+  </ol>
+  <code id="extension-path"></code>
+
+  <h2>3. Waypoint で検索する</h2>
+  <p><code>Alt+Space</code> を押して <code>t </code> と入力します。タブ名または URL で検索し、Enter で対象タブを前面化します。</p>
+  <p class="note">Native Messaging host の登録は Waypoint 起動時に自動で行われます。PowerShell は不要です。</p>
+
+  <script>
+    const current = decodeURIComponent(location.pathname).replace(/^\/([A-Za-z]:)/, "$1");
+    const directory = current.replace(/[/\\]setup\.html$/, "").replaceAll("/", "\\");
+    document.querySelector("#extension-path").textContent = `${directory}\\extension`;
+  </script>
+</body>
+</html>

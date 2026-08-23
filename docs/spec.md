@@ -57,6 +57,7 @@ Quick Access Popup の全機能を分解し、本プロジェクトでの扱い�
 | Current Windows | **採用** | 現在開いている Explorer とアプリのウィンドウへ切り替える |
 | ブラウザブックマーク検索 | **採用** | Quick Launch で `b ` に続けて入力すると Chrome / Edge のブックマークだけを検索し、選択すると既定ブラウザで開く。フォルダ移動ではないが Quick Launch の検索窓を流用でき、追加コストが小さい |
 | ブラウザ履歴検索 | **採用** | Quick Launch で `h ` に続けて入力すると Chrome / Edge の履歴だけを検索し、選択すると既定ブラウザで開く。履歴 DB はインデックス更新時に読むだけで、キー入力・表示の経路ではメモリ上の候補だけを検索する |
+| 現在のブラウザタブ検索 | **採用** | Chrome / Edge 拡張が現在のタブ一覧を Native Messaging で常駐部へ渡し、Quick Launch で `t ` に続けて検索・前面化する。Native Messaging host の登録は waypoint 起動時に自動で行う。拡張未導入時は 0 件とし、タブ情報はメモリだけに置く |
 | アプリ起動（インストール済みアプリの検索・起動） | **採用** | スタートメニューのショートカット (`.lnk`) を列挙し、Quick Launch で `a ` に続けて入力すると検索できる。フォルダ・ブックマークと同じ「検索して一手で開く」体験に揃える。ファイルシステム全体のインデックス化はしない |
 | Everything 連携（PC 全体のファイル名検索） | **採用** | Quick Launch で `f ` に続けて入力すると、常駐中の Everything へ IPC で問い合わせて結果を出す。waypoint 自身は索引を持たず、Everything が未インストール・未起動なら 0 件を返すだけでエラーにしない |
 | Azure DevOps 検索 | **採用** | Quick Launch で `az ` に続けて入力すると、設定したプロジェクトの PR・パイプライン・Work Item を検索する。PAT は Windows Credential Manager にのみ保存し、PR・パイプラインは SQLite キャッシュ、Work Item は非同期の API 検索を使う |
@@ -209,6 +210,7 @@ Quick Access Popup の全機能を分解し、本プロジェクトでの扱い�
 - **FR-9.16** 入力が `f ` (半角スペース込み) で始まる間は通常の検索対象を隠し、常駐中の Everything へ IPC (`WM_COPYDATA`) で問い合わせて結果をそのまま並べる。Enter でエクスプローラーの既定ハンドラーで開く。Everything が見つからない・応答しない場合は 0 件を返し、エラー表示はしない。Everything 連携は設定で無効化できる（既定オフ。全ファイル検索は個人の意図的な操作でのみ有効にする）
 - **FR-9.16.1** `f ` モード中、`Alt+C` (Match Case) / `Alt+W` (Match Whole Word) / `Alt+R` (Regex) で Everything IPC の検索フラグをトグルできる。トグルすると同じクエリを新しいフラグで即座に再送する。アクティブなフラグは検索窓の `FILES` バッジの左に短いピルで表示する。フラグの状態は `f ` モードを抜けても保持し、次に `f ` へ入ったときも引き継ぐ（プロセス内メモリのみ、設定ファイルへは保存しない）
 - **FR-9.17** 入力が `h ` (半角スペース込み) で始まる間は通常の検索対象を隠し、Chrome / Edge の既定プロファイルの閲覧履歴だけを残りの文字列で検索する。選択すると既定ブラウザで URL を開く。履歴取り込みは設定で無効化でき、URL も検索対象にする。履歴 DB の読取は FR-9.9 のインデックス更新時に限定し、キー入力・表示の経路では行わない
+- **FR-9.17.1** 入力が `t ` (半角スペース込み) で始まる間は通常の検索対象を隠し、Chrome / Edge の現在開いているタブだけをタイトルと URL で検索する。選択すると、拡張経由で対象ブラウザのウィンドウとタブを前面化する。タブのタイトル・URL・ID はメモリだけに置き、設定・履歴・ログへ保存しない。Native Messaging host の manifest と Chrome / Edge のユーザー登録は waypoint 起動時に更新する。初回の対話的 MSI インストール完了後は、拡張を読み込むローカル案内ページを自動で開く。拡張またはブラウザが未起動なら 0 件を返す。タブ変更時のスナップショット更新だけを受け、Quick Launch の表示・キー入力時にブラウザへ同期問い合わせを行わない
 - **FR-9.18** 入力が `az ` (半角スペース込み) で始まる間は通常の検索対象を隠し、設定済み Azure DevOps プロジェクトの候補だけを検索する。`az ` の直後は `az pr` / `az wit` / `az pipeline` / `az project` などのコマンド候補を表示し、選ぶと実行せず検索欄を補完する。`az pr` / `az pr-a` / `az pr-c` / `az pr-ab` はそれぞれ全 PR / Active / Completed / Abandoned、`az pr-mine` / `az pr-a-mine` は自分が作成またはレビュー担当の PR（全件 / Active）、`az pipeline`（`pipelines` / `build`）はパイプライン、`az pipeline-def` は定義、`az pipeline-failed` は失敗実行、`az project`（`projects`）はプロジェクトを検索する。候補を選ぶと対応する Azure DevOps の Web ページを開く
 - **FR-9.18.1** `az wit `（`wi` / `workitems`）はまず `%APPDATA%\\waypoint\\azure_devops.db` に保存済みの Work Item をメモリ上で検索し、0 件の場合だけ設定済みプロジェクトへ Work Item API を非同期で問い合わせる。ライブ検索結果はキャッシュへ追記する。`az wit` の直後は各プロジェクトの最近更新された Work Item を最大 8 件ずつ取得し、`az wit bug` のように続く文字列は Work Item の検索語になる。入力が 180ms 停止してから最新の要求だけを発行し、キー入力・表示経路で同期通信を行わない。PR とパイプラインも同じ DB のキャッシュを検索し、キャッシュ更新は起動時・設定再読み込み時にバックグラウンドで行う
 - **FR-9.18.2** Azure DevOps の PAT は設定ファイルへ保存せず、組織ごとに Windows Credential Manager へ保存する。設定画面の専用プロジェクト選択画面では PAT 保存後に組織のプロジェクト一覧を取得し、文字列で絞り込みながら複数の監視対象をチェックで選べる。一覧でチェックした行を選ぶと詳細パネルが開き、別名・優先度・同期スコープ（PR / Pipeline / Work Item）・興味のある Area Path を GUI 上で編集できる。Area Path は Azure DevOps の Area 階層 API から取得したツリーをチェックボックスで選ぶ（検索フィルタ付き）。テキスト DSL を手打ちする経路は持たない。「Suggest from my assigned work items」ボタンを押すと、選択中プロジェクトで自分に割り当てられた Work Item を WIQL (`[System.AssignedTo] = @Me`) で取得し、その Area Path を件数の多い順に候補として表示する（チェックボックスで選択に追加できる）。ボタンを押すまで API は呼ばない
@@ -401,9 +403,10 @@ Quick Access Popup の全機能を分解し、本プロジェクトでの扱い�
 | アーキテクチャ | x64 のみ | ARM64 機でもエミュレーションで動作する。ビルドとリリースを 1 本に保つ |
 | スコープ | ユーザー単位 (`perUser`) | 設定 (`%APPDATA%`) も自動起動 (`HKCU`) もユーザー単位なので整合する。UAC が出ない |
 | インストール先 | `%LOCALAPPDATA%\Programs\waypoint` | `perUser` では `ProgramFiles` を使えない |
-| 同梱物 | `waypoint.exe` / `waypoint-settings.exe` | 常駐部と管理画面 |
+| 同梱物 | `waypoint.exe` / `waypoint-settings.exe` / `waypoint-tab-host.exe` / ブラウザ拡張 | タブ検索の Native Messaging host と Chrome / Edge 拡張を含む |
 | ショートカット | スタートメニューに `waypoint` | インストール後すぐ起動できるように |
 | 自動起動 | 初回インストール時のみ MSI が既定で有効にする | アプリ本体を `--enable-autostart-once` で一度だけ起動し、トレイの手動トグル (FR-8.4) と同じ関数でレジストリを書く。MSI がレジストリ値自体を Component として持たないため、ユーザーが後で OFF にしてもアップグレード時に勝手に ON へ戻らない (二重管理を避ける) |
+| 拡張導入案内 | 初回の対話的インストール完了後にローカル HTML を開く | 開発者モード・「開梱された読み込み」・選択対象フォルダをその場で示す。サイレント導入・アップグレード時は開かない |
 | 署名 | しない | R-7 のとおり |
 
 ---

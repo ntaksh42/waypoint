@@ -377,7 +377,9 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
                 Action::FocusWindow(hwnd) => {
                     draw_window_icon(draw.hDC, HWND(hwnd as *mut _), draw.rcItem, dpi)
                 }
-                Action::OpenUrl(_) => draw_favicon_icon(draw.hDC, &entry.path, draw.rcItem, dpi),
+                Action::OpenUrl(_) | Action::FocusBrowserTab(_) => {
+                    draw_favicon_icon(draw.hDC, &entry.path, draw.rcItem, dpi)
+                }
                 Action::ReplaceQuery(_) => draw_command_icon(draw.hDC, draw.rcItem, dpi, name_font),
             }
         }

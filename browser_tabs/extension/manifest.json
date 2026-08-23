@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Waypoint Tab Bridge",
+  "version": "0.1.0",
+  "description": "Makes current Chrome and Edge tabs searchable from Waypoint.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3TDpDZ1w7puY3liVFU9rfrT4J5GhAockSMPgC+0Lxn/ovo2okLDSbQ6ZDg5wnSHBThSefmQyQLBJ4i7C21QUicrzCT2trjsQ5kBJTPIg4dwwuV28Lil3HLt5YKmAv9kr+WXaZdCpNHMhW3GTXrQbSCvDyRAPjcY9OJF4um0TIP+L8UaCpeBlx1Zu1JuLEdECjqrHOGnkkqK5z4loB0SYFjuwukYs65IdWH4wUH0SHB8uhjHyXF3O+IjxsL+2C9NBwnRAtAb0TH+m82jw0MznnmnTpUdqBtsCWscRIWBaiYvn7wJ/BRZPVqJgxbejz+nWP5fpTKKMEpJRpHxET2noXQIDAQAB",
+  "permissions": ["tabs", "nativeMessaging"],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

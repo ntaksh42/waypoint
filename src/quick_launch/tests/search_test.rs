@@ -149,6 +149,32 @@ fn apps_prefix_switches_to_apps_only_search() {
     assert_eq!(found[0].action, Action::LaunchApp);
 }
 
+#[test]
+fn tabs_prefix_searches_the_live_tab_cache_only() {
+    let mut index = index();
+    index.set_browser_tabs(&[(
+        crate::browser_tabs::Browser::Chrome,
+        crate::browser_tabs::Tab {
+            id: 7,
+            window_id: 3,
+            title: "Waypoint documentation".into(),
+            url: "https://example.test/waypoint".into(),
+        },
+    )]);
+
+    let found = index.search("t example.test");
+    assert_eq!(found.len(), 1);
+    assert!(matches!(
+        found[0].action,
+        Action::FocusBrowserTab(crate::browser_tabs::TabTarget {
+            browser: crate::browser_tabs::Browser::Chrome,
+            tab_id: 7,
+            window_id: 3,
+        })
+    ));
+    assert!(index.search("example.test").is_empty());
+}
+
 /// FR-9.2: `a ` プレフィックスなしでもアプリは通常検索の対象。
 #[test]
 fn apps_are_searched_without_the_apps_prefix() {
@@ -351,6 +377,7 @@ fn prefix_badge_identifies_each_mode() {
     assert_eq!(prefix_badge("az pr-a waypoint"), Some("AZURE DEVOPS"));
     assert_eq!(prefix_badge("w notepad"), Some("WINDOWS"));
     assert_eq!(prefix_badge("a code"), Some("APPS"));
+    assert_eq!(prefix_badge("t waypoint"), Some("TABS"));
     assert_eq!(prefix_badge("f cargo.toml"), Some("FILES"));
     assert_eq!(prefix_badge("plain query"), None);
     assert_eq!(prefix_badge(""), None);

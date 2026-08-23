@@ -1,6 +1,6 @@
 [package]
 name = "waypoint"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 description = "ホットキーで呼び出す階層ポップアップランチャー"
 license = "MIT"
@@ -17,6 +17,10 @@ path = "src/main.rs"
 [[bin]]
 name = "waypoint-settings"
 path = "src/settings_main/main.rs"
+
+[[bin]]
+name = "waypoint-tab-host"
+path = "src/tab_host_main.rs"
 
 [dependencies]
 # Win32 API バインディング。必要な feature のみ有効にする

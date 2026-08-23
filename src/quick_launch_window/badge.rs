@@ -10,7 +10,7 @@ use crate::quick_launch::Action;
 pub(super) fn badge_color(badge: &str) -> COLORREF {
     match badge {
         "WINDOWS" | "APPS" => rgb(143, 168, 118), // 緑寄りの寒色
-        "BOOKMARKS" | "HISTORY" | "FILES" | "AZURE DEVOPS" => rgb(95, 157, 176), // 青寄りの寒色
+        "BOOKMARKS" | "HISTORY" | "FILES" | "TABS" | "AZURE DEVOPS" => rgb(95, 157, 176), // 青寄りの寒色
         _ => ACCENT,
     }
 }
@@ -22,6 +22,7 @@ pub(super) fn action_color(action: &Action) -> COLORREF {
         Action::FocusWindow(_) | Action::LaunchApp => badge_color("WINDOWS"),
         Action::OpenFolder(_)
         | Action::OpenUrl(_)
+        | Action::FocusBrowserTab(_)
         | Action::OpenWithDefaultHandler
         | Action::ReplaceQuery(_) => ACCENT,
     }

@@ -3,6 +3,10 @@
 # インストーラの成果物 (MSI / wixpdb)
 /dist
 
+# 拡張をパックしたときに生成される署名鍵と配布物
+/browser_tabs/extension.pem
+/browser_tabs/extension.crx
+
 # Rider / VS
 .vs/
 .idea/

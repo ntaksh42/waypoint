@@ -38,6 +38,8 @@ const WINDOW_PREFIX: &str = "w ";
 pub const EVERYTHING_PREFIX: &str = "f ";
 /// アプリ検索モードに入るプレフィックス (末尾の半角スペース込み)。
 const APPS_PREFIX: &str = "a ";
+/// 現在開いているブラウザタブを検索するプレフィックス (末尾の半角スペース込み)。
+const TABS_PREFIX: &str = "t ";
 
 /// 入力がいずれかのプレフィックスモードに入っていれば、表示用の短いラベルを返す。
 /// 描画側 (`quick_launch_window.rs`) が検索窓にモードバッジを出すために使う。
@@ -52,6 +54,8 @@ pub fn prefix_badge(query: &str) -> Option<&'static str> {
         Some("WINDOWS")
     } else if query.starts_with(APPS_PREFIX) {
         Some("APPS")
+    } else if query.starts_with(TABS_PREFIX) {
+        Some("TABS")
     } else if query.starts_with(EVERYTHING_PREFIX) {
         Some("FILES")
     } else {
@@ -66,6 +70,8 @@ pub enum Action {
     OpenFolder(OpenMode),
     /// 既に開いているウィンドウにフォーカスを移す。
     FocusWindow(isize),
+    /// Chrome / Edge の拡張へ、現在開いているタブの前面化を依頼する。
+    FocusBrowserTab(crate::browser_tabs::TabTarget),
     /// 既定のブラウザで URL を開く。
     OpenUrl(String),
     /// Windows の既定ハンドラーでファイル / フォルダを開く (Everything 結果用)。
@@ -117,7 +123,10 @@ impl Entry {
                 path: self.path.clone(),
                 icon: None,
             }),
-            Action::FocusWindow(_) | Action::OpenUrl(_) | Action::ReplaceQuery(_) => None,
+            Action::FocusWindow(_)
+            | Action::FocusBrowserTab(_)
+            | Action::OpenUrl(_)
+            | Action::ReplaceQuery(_) => None,
         }
     }
 }
@@ -136,6 +145,8 @@ pub struct Index {
     pub(crate) windows_lower: Vec<search::LowerKeys>,
     pub(crate) apps: Vec<Entry>,
     pub(crate) apps_lower: Vec<search::LowerKeys>,
+    pub(crate) tabs: Vec<Entry>,
+    pub(crate) tabs_lower: Vec<search::LowerKeys>,
     pub(crate) search_paths: bool,
     pub(crate) ranking: Ranking,
 }

@@ -44,7 +44,7 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { throw "cargo build に失敗しました" }
 }
 
-foreach ($exe in @('waypoint.exe', 'waypoint-settings.exe')) {
+foreach ($exe in @('waypoint.exe', 'waypoint-settings.exe', 'waypoint-tab-host.exe')) {
     $p = Join-Path $relDir $exe
     if (-not (Test-Path $p)) { throw "$exe が見つかりません: $p" }
 }

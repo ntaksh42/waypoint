@@ -2,8 +2,9 @@
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    DefWindowProcW, GetCursorPos, PostQuitMessage, WM_COMMAND, WM_DESTROY, WM_DRAWITEM, WM_HOTKEY,
-    WM_LBUTTONUP, WM_MEASUREITEM, WM_RBUTTONUP, WM_SETTINGCHANGE, WM_THEMECHANGED,
+    DefWindowProcW, GetCursorPos, PostQuitMessage, WM_COMMAND, WM_COPYDATA, WM_DESTROY,
+    WM_DRAWITEM, WM_HOTKEY, WM_LBUTTONUP, WM_MEASUREITEM, WM_RBUTTONUP, WM_SETTINGCHANGE,
+    WM_THEMECHANGED,
 };
 
 use crate::quick_launch;
@@ -86,6 +87,9 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                     quick_launch::Action::FocusWindow(hwnd) => {
                         shell::activate_window(HWND(hwnd as *mut _));
                     }
+                    quick_launch::Action::FocusBrowserTab(target) => {
+                        let _ = crate::browser_tabs::request_focus(&target);
+                    }
                     quick_launch::Action::OpenUrl(url) => {
                         let _ = shell::open_shell_item(&url);
                     }
@@ -117,6 +121,27 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                 }
             });
             LRESULT(0)
+        }
+        WM_COPYDATA if lparam.0 != 0 => {
+            unsafe {
+                let copy_data =
+                    &*(lparam.0 as *const windows::Win32::System::DataExchange::COPYDATASTRUCT);
+                if copy_data.dwData == crate::browser_tabs::SNAPSHOT_COPYDATA
+                    && !copy_data.lpData.is_null()
+                    && copy_data.cbData > 0
+                {
+                    // Native Messaging host はこのハンドラから戻ると送信バッファを解放する。
+                    // 先に JSON をコピーし、Quick Launch のキャッシュ更新はそのコピーだけで行う。
+                    let bytes = std::slice::from_raw_parts(
+                        copy_data.lpData.cast::<u8>(),
+                        copy_data.cbData as usize,
+                    );
+                    if let Some((browser, tabs)) = crate::browser_tabs::parse_snapshot(bytes) {
+                        quick_launch_window::replace_browser_tabs(browser, tabs);
+                    }
+                }
+            }
+            LRESULT(1)
         }
         // ダーク / ライトの切り替えでアイコンの見え方が変わる。
         // 古いビットマップを捨て、次回表示で引き直す

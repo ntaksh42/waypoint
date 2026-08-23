@@ -76,6 +76,25 @@
             <File Id="WaypointSettingsExe" Source="waypoint-settings.exe" KeyPath="yes" />
           </Component>
 
+          <!-- Chrome / Edge 拡張との Native Messaging 中継。登録は waypoint の起動時に行う。 -->
+          <Component Id="TabHost" Guid="*">
+            <File Id="WaypointTabHostExe" Source="waypoint-tab-host.exe" KeyPath="yes" />
+          </Component>
+
+          <Directory Id="BrowserTabsFolder" Name="browser-tabs">
+            <Directory Id="BrowserTabsExtensionFolder" Name="extension">
+              <Component Id="TabBridgeManifestComponent" Guid="*">
+                <File Id="TabBridgeManifest" Source="browser_tabs\extension\manifest.json" KeyPath="yes" />
+              </Component>
+              <Component Id="TabBridgeBackgroundComponent" Guid="*">
+                <File Id="TabBridgeBackground" Source="browser_tabs\extension\background.js" />
+              </Component>
+            </Directory>
+            <Component Id="TabBridgeSetupGuide" Guid="*">
+              <File Id="TabBridgeSetupGuideHtml" Source="browser_tabs\setup.html" KeyPath="yes" />
+            </Component>
+          </Directory>
+
         </Directory>
       </Directory>
     </StandardDirectory>
@@ -115,15 +134,28 @@
                   ExeCommand="--enable-autostart-once"
                   Return="ignore"
                   Execute="deferred" />
+    <!-- 初回の対話的インストール後だけ、拡張導入のローカル案内を開く。 -->
+    <CustomAction Id="OpenTabSetupGuide"
+                  FileRef="WaypointExe"
+                  ExeCommand="--open-tab-setup-guide"
+                  Return="asyncNoWait"
+                  Execute="immediate"
+                  Impersonate="yes" />
 
     <InstallExecuteSequence>
       <Custom Action="EnableAutostartOnInstall" After="InstallFiles"
               Condition="NOT Installed AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="OpenTabSetupGuide" After="InstallFinalize"
+              Condition="NOT Installed AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt;= 3" />
     </InstallExecuteSequence>
 
     <Feature Id="Main" Title="waypoint">
       <ComponentRef Id="MainExe" />
       <ComponentRef Id="SettingsExe" />
+      <ComponentRef Id="TabHost" />
+      <ComponentRef Id="TabBridgeManifestComponent" />
+      <ComponentRef Id="TabBridgeBackgroundComponent" />
+      <ComponentRef Id="TabBridgeSetupGuide" />
       <ComponentRef Id="StartMenuShortcut" />
     </Feature>
 

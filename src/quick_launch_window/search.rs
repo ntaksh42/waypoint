@@ -407,6 +407,8 @@ fn local_search_scope(query: &str) -> Option<(&'static str, &str)> {
         Some(("windows", term))
     } else if let Some(term) = query.strip_prefix("a ") {
         Some(("apps", term))
+    } else if let Some(term) = query.strip_prefix("t ") {
+        Some(("tabs", term))
     } else {
         Some(("normal", query))
     }

@@ -152,9 +152,38 @@ impl Index {
             windows_lower,
             apps,
             apps_lower,
+            tabs: Vec::new(),
+            tabs_lower: Vec::new(),
             search_paths: settings.search_paths,
             ranking: Ranking::load(),
         }
+    }
+
+    /// 拡張から届いた全ブラウザのタブ一覧で、検索用候補を差し替える。
+    /// タブの URL / タイトルは常駐プロセスのメモリだけに置き、設定や履歴には保存しない。
+    pub(crate) fn set_browser_tabs(
+        &mut self,
+        tabs: &[(crate::browser_tabs::Browser, crate::browser_tabs::Tab)],
+    ) {
+        self.tabs = tabs
+            .iter()
+            .map(|(browser, tab)| Entry {
+                name: if !tab.title.trim().is_empty() {
+                    tab.title.clone()
+                } else {
+                    tab.url.clone()
+                },
+                breadcrumb: format!("{} — Current Tab", browser.label()),
+                path: tab.url.clone(),
+                action: Action::FocusBrowserTab(crate::browser_tabs::TabTarget {
+                    browser: *browser,
+                    tab_id: tab.id,
+                    window_id: tab.window_id,
+                }),
+                branch: None,
+            })
+            .collect();
+        self.tabs_lower = super::search::LowerKeys::build_for(&self.tabs);
     }
 }
 
