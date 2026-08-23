@@ -713,14 +713,23 @@ fn work_item_candidates(project: &AzureDevOpsProject, value: &Value) -> Vec<Cand
         .flatten()
         .filter_map(|item| {
             let fields = &item["fields"];
-            let id = json_i64(&fields["System.Id"]).or_else(|| json_i64(&item["id"]))?;
-            let title = fields["System.Title"]
+            // Search API は Work Item Tracking API と違い、フィールド名を
+            // 小文字の reference name で返す。
+            let id = json_i64(&fields["system.id"])
+                .or_else(|| json_i64(&fields["System.Id"]))
+                .or_else(|| json_i64(&item["id"]))?;
+            let title = fields["system.title"]
                 .as_str()
+                .or_else(|| fields["System.Title"].as_str())
                 .or_else(|| item["name"].as_str())
                 .unwrap_or("Untitled work item");
-            let state = fields["System.State"].as_str().unwrap_or("");
-            let kind = fields["System.WorkItemType"]
+            let state = fields["system.state"]
                 .as_str()
+                .or_else(|| fields["System.State"].as_str())
+                .unwrap_or("");
+            let kind = fields["system.workitemtype"]
+                .as_str()
+                .or_else(|| fields["System.WorkItemType"].as_str())
                 .unwrap_or("Work Item");
             Some(Candidate {
                 kind: Kind::WorkItem,
@@ -1051,10 +1060,10 @@ mod tests {
         let results = work_item_candidates(
             &project,
             &json!({ "results": [{ "fields": {
-                "System.Id": 42,
-                "System.Title": "Fix launcher",
-                "System.State": "Active",
-                "System.WorkItemType": "Bug"
+                "system.id": "42",
+                "system.title": "Fix launcher",
+                "system.state": "Active",
+                "system.workitemtype": "Bug"
             }}]}),
         );
         assert_eq!(results[0].name, "42: Fix launcher");
@@ -1078,7 +1087,7 @@ mod tests {
         let results = work_item_candidates(
             &project,
             &json!({ "results": [{ "fields": {
-                "System.Id": "73", "System.Title": "Fix WIT search"
+                "system.id": "73", "system.title": "Fix WIT search"
             }}]}),
         );
         assert_eq!(results[0].name, "73: Fix WIT search");
