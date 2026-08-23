@@ -20,20 +20,19 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
-    DRAWITEMSTRUCT, EM_GETSEL, EM_REPLACESEL, EM_SETMARGINS, EM_SETSEL, ODS_SELECTED,
-    SetWindowTheme,
+    DRAWITEMSTRUCT, EM_GETSEL, EM_REPLACESEL, EM_SETMARGINS, EM_SETSEL, MEASUREITEMSTRUCT,
+    ODS_SELECTED, SetWindowTheme,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_CONTROL, VK_SHIFT};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, EN_CHANGE, GetClientRect, GetWindowTextLengthW,
-    GetWindowTextW, HMENU, LB_ADDSTRING, LB_GETCURSEL, LB_RESETCONTENT, LB_SETCURSEL,
-    LB_SETITEMHEIGHT, LBN_DBLCLK, LBS_HASSTRINGS, LBS_NOTIFY, LBS_OWNERDRAWFIXED, MoveWindow,
-    PostMessageW, RegisterClassW, SW_HIDE, SW_SHOW, SetForegroundWindow, SetWindowTextW,
-    ShowWindow, WINDOW_STYLE, WM_ACTIVATE, WM_APP, WM_CLOSE, WM_COMMAND, WM_CTLCOLOREDIT,
-    WM_CTLCOLORLISTBOX, WM_DRAWITEM, WM_ERASEBKGND, WM_KEYDOWN, WM_PAINT, WM_SETFONT, WM_SIZE,
-    WM_SYSKEYDOWN, WNDCLASSW, WS_CHILD, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_TABSTOP,
-    WS_VISIBLE, WS_VSCROLL,
+    GetWindowTextW, HMENU, LB_ADDSTRING, LB_GETCURSEL, LB_RESETCONTENT, LB_SETCURSEL, LBN_DBLCLK,
+    LBS_HASSTRINGS, LBS_NOTIFY, LBS_OWNERDRAWVARIABLE, MoveWindow, PostMessageW, RegisterClassW,
+    SW_HIDE, SW_SHOW, SetForegroundWindow, SetWindowTextW, ShowWindow, WINDOW_STYLE, WM_ACTIVATE,
+    WM_APP, WM_CLOSE, WM_COMMAND, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_DRAWITEM, WM_ERASEBKGND,
+    WM_KEYDOWN, WM_MEASUREITEM, WM_PAINT, WM_SETFONT, WM_SIZE, WM_SYSKEYDOWN, WNDCLASSW, WS_CHILD,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
 };
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
@@ -47,6 +46,8 @@ const WINDOW_WIDTH: i32 = 720;
 const PADDING: i32 = 10;
 const EDIT_HEIGHT: i32 = 34;
 const ROW_HEIGHT: i32 = 42;
+/// セクション見出し行の高さ。通常項目より詰めて、区切りだと分かる程度にする。
+const HEADER_HEIGHT: i32 = 26;
 /// モードバッジ ("BOOKMARKS" 等) 用に検索窓の右側へ確保する幅。
 const BADGE_WIDTH: i32 = 92;
 /// 候補行のアイコン一辺。行の左端からの余白と種別バッジの半径もこれを基準に決める。
@@ -153,6 +154,19 @@ thread_local! {
     static STATE: RefCell<State> = RefCell::new(State::default());
 }
 
+/// リストボックスの 1 行が何を表すか。`results` のインデックスと行番号の
+/// ずれを吸収するため、行番号から `results` を直接インデックス参照する
+/// 代わりに必ずこの配列 (`State::rows`) を経由する。
+#[derive(Debug, Clone, Copy)]
+enum RowKind {
+    /// `results[usize]` を表示する通常の項目行。選択・実行の対象。
+    Item(usize),
+    /// 絞り込みなし一覧の区分見出し。選択・実行の対象外。
+    Header(&'static str),
+    /// 検索中・0 件時の説明文 (`State::empty_message`)。選択・実行の対象外。
+    Message,
+}
+
 #[derive(Default)]
 struct State {
     window: Option<HWND>,
@@ -162,6 +176,11 @@ struct State {
     origin: Option<HWND>,
     index: Index,
     results: Vec<Entry>,
+    /// リストボックスの行番号ごとの内訳。通常検索時は `Item(0), Item(1), ...`
+    /// のフラットな並び (見出しなし)。行番号と `results` の対応を一箇所の
+    /// 配列に固定することで、描画・選択移動・実行の各所で見出し行と項目行の
+    /// 変換ロジックを重複させない。
+    rows: Vec<RowKind>,
     pending: Option<Entry>,
     /// `Ctrl+Shift+Enter` で config への登録を要求された項目。
     /// ウィンドウは閉じずに続けて検索できるようにするため、
@@ -405,7 +424,7 @@ fn ensure_window(owner: HWND) -> Result<()> {
                 | WS_VISIBLE
                 | WS_TABSTOP
                 | WS_VSCROLL
-                | WINDOW_STYLE((LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS) as u32),
+                | WINDOW_STYLE((LBS_NOTIFY | LBS_OWNERDRAWVARIABLE | LBS_HASSTRINGS) as u32),
             PADDING,
             PADDING + EDIT_HEIGHT + PADDING,
             WINDOW_WIDTH - PADDING * 2,
@@ -513,6 +532,12 @@ fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT
         WM_DRAWITEM => {
             if lparam.0 != 0 {
                 unsafe { draw_list_item(&*(lparam.0 as *const DRAWITEMSTRUCT)) };
+            }
+            LRESULT(1)
+        }
+        WM_MEASUREITEM => {
+            if lparam.0 != 0 {
+                unsafe { measure_list_item(&mut *(lparam.0 as *mut MEASUREITEMSTRUCT)) };
             }
             LRESULT(1)
         }
@@ -666,26 +691,36 @@ fn update_results(state: &RefCell<State>) {
         return;
     }
 
-    let (list, labels, has_results) = {
+    let (list, labels, rows) = {
         let mut state = state.borrow_mut();
         // プレフィックスを外れたら、遅れて届く Everything の応答を無視させる
         state.everything_active = false;
         state.azure_work_items_active = false;
         state.empty_message = None;
         state.copy_feedback = false;
-        state.results = state.index.search(&query).into_iter().cloned().collect();
-        let labels: Vec<HSTRING> = state
-            .results
-            .iter()
-            .map(|entry| HSTRING::from(format!("{}    {}", entry.name, entry_context(entry))))
-            .collect();
-        (state.list, labels, !state.results.is_empty())
+        let section_headers = if query.is_empty() {
+            // 絞り込みなし: Spotlight 風に区分見出し付きで一覧を組み立てる
+            let mut results = Vec::new();
+            let mut section_headers = Vec::new();
+            for (label, entries) in state.index.sections() {
+                section_headers.push((results.len(), label));
+                results.extend(entries.into_iter().cloned());
+            }
+            state.results = results;
+            section_headers
+        } else {
+            state.results = state.index.search(&query).into_iter().cloned().collect();
+            Vec::new()
+        };
+        let (labels, rows) = build_rows(&state.results, &section_headers);
+        state.rows = rows.clone();
+        (state.list, labels, rows)
     }; // ← ここで借用が切れる。以降の再入は borrow() できる
 
     let Some(list) = list else {
         return;
     };
-    populate_list(list, &labels, has_results);
+    populate_list(list, &labels, &rows);
 }
 
 /// `f ` プレフィックスに入った。Everything へ非同期クエリを送り、
@@ -699,6 +734,7 @@ fn start_everything_query(state: &RefCell<State>, text: &str) {
         let mut state = state.borrow_mut();
         state.everything_active = true;
         state.results.clear();
+        state.rows.clear();
         state.everything_reply_id = next_everything_reply_id(state.everything_reply_id);
         (
             state.window,
@@ -709,7 +745,7 @@ fn start_everything_query(state: &RefCell<State>, text: &str) {
         )
     };
     if let Some(list) = list {
-        populate_list(list, &[], false);
+        populate_list(list, &[], &[]);
     }
     let (Some(window), true, false) = (window, enabled, text.is_empty()) else {
         return;
@@ -749,22 +785,18 @@ fn start_azure_work_item_query(state: &RefCell<State>, text: &str) {
         )
     };
     if let Some(list) = list {
-        let (labels, has_results, message) = {
-            let state = state.borrow();
-            (
-                state
-                    .results
-                    .iter()
-                    .map(|entry| {
-                        HSTRING::from(format!("{}    {}", entry.name, entry_context(entry)))
-                    })
-                    .collect::<Vec<_>>(),
-                !state.results.is_empty(),
-                state.empty_message.clone(),
-            )
+        let (labels, rows, message) = {
+            let mut state = state.borrow_mut();
+            let (labels, rows) = build_rows(&state.results, &[]);
+            state.rows = if rows.is_empty() {
+                vec![RowKind::Message]
+            } else {
+                rows.clone()
+            };
+            (labels, rows, state.empty_message.clone())
         };
-        if has_results {
-            populate_list(list, &labels, true);
+        if !rows.is_empty() {
+            populate_list(list, &labels, &rows);
         } else {
             populate_empty_message(list, message.as_deref());
         }
@@ -829,6 +861,7 @@ fn set_azure_empty_message(message: &str) {
     let outcome = STATE.with(|state| {
         let mut state = state.borrow_mut();
         state.empty_message = Some(message.to_string());
+        state.rows = vec![RowKind::Message];
         state.list
     });
     if let Some(list) = outcome {
@@ -863,24 +896,20 @@ fn handle_azure_work_item_results(reply_id: u32) {
         let fetched_entries = state.results.clone();
         state.index.merge_cached_work_items(&fetched_entries);
         state.empty_message = reply.message;
-        let labels: Vec<HSTRING> = state
-            .results
-            .iter()
-            .map(|entry| HSTRING::from(format!("{}    {}", entry.name, entry_context(entry))))
-            .collect();
-        Some((
-            state.list,
-            labels,
-            !state.results.is_empty(),
-            state.empty_message.clone(),
-        ))
+        let (labels, rows) = build_rows(&state.results, &[]);
+        state.rows = if rows.is_empty() {
+            vec![RowKind::Message]
+        } else {
+            rows.clone()
+        };
+        Some((state.list, labels, rows, state.empty_message.clone()))
     });
-    let Some((list, labels, has_results, empty_message)) = outcome else {
+    let Some((list, labels, rows, empty_message)) = outcome else {
         return;
     };
     if let Some(list) = list {
-        if has_results {
-            populate_list(list, &labels, true);
+        if !rows.is_empty() {
+            populate_list(list, &labels, &rows);
         } else {
             populate_empty_message(list, empty_message.as_deref());
         }
@@ -913,18 +942,15 @@ fn handle_everything_results(reply_id: u32, data: &[u8]) {
                 branch: None,
             })
             .collect();
-        let labels: Vec<HSTRING> = state
-            .results
-            .iter()
-            .map(|entry| HSTRING::from(format!("{}    {}", entry.name, entry_context(entry))))
-            .collect();
-        Some((state.list, labels, !state.results.is_empty()))
+        let (labels, rows) = build_rows(&state.results, &[]);
+        state.rows = rows.clone();
+        Some((state.list, labels, rows))
     });
-    let Some((list, labels, has_results)) = outcome else {
+    let Some((list, labels, rows)) = outcome else {
         return;
     };
     if let Some(list) = list {
-        populate_list(list, &labels, has_results);
+        populate_list(list, &labels, &rows);
     }
 }
 
@@ -949,7 +975,9 @@ fn accepts_azure_work_item_reply(active: bool, expected: u32, received: u32) -> 
 
 /// リストボックスの中身を丸ごと差し替える。通常検索と Everything の
 /// 非同期結果受信 (`handle_everything_results`) の双方から使う。
-fn populate_list(list: HWND, labels: &[HSTRING], has_results: bool) {
+/// `rows` が空でも構わない (見出しも項目もない = 空一覧)。
+/// 初期カーソルは、見出し行を飛ばした最初の項目行に置く。
+fn populate_list(list: HWND, labels: &[HSTRING], rows: &[RowKind]) {
     unsafe {
         let _ = windows::Win32::UI::WindowsAndMessaging::SendMessageW(
             list,
@@ -965,21 +993,58 @@ fn populate_list(list: HWND, labels: &[HSTRING], has_results: bool) {
                 Some(LPARAM(label.as_ptr() as isize)),
             );
         }
-        if has_results {
+        if let Some(row) = rows.iter().position(|row| matches!(row, RowKind::Item(_))) {
             let _ = windows::Win32::UI::WindowsAndMessaging::SendMessageW(
                 list,
                 LB_SETCURSEL,
-                Some(WPARAM(0)),
+                Some(WPARAM(row)),
                 None,
             );
         }
     }
 }
 
+/// `results` と区分見出し (`results` 側インデックス昇順の `(挿入位置, ラベル)`) から、
+/// リストボックスへ渡す行ラベルと `State::rows` を作る。
+/// `section_headers` が空なら見出しなしのフラットな 1:1 対応になる。
+fn build_rows(
+    results: &[Entry],
+    section_headers: &[(usize, &'static str)],
+) -> (Vec<HSTRING>, Vec<RowKind>) {
+    let mut labels = Vec::with_capacity(results.len() + section_headers.len());
+    let mut rows = Vec::with_capacity(results.len() + section_headers.len());
+    let mut headers = section_headers.iter().peekable();
+    for (index, entry) in results.iter().enumerate() {
+        while let Some((at, label)) = headers.peek() {
+            if *at != index {
+                break;
+            }
+            labels.push(HSTRING::from(*label));
+            rows.push(RowKind::Header(label));
+            headers.next();
+        }
+        labels.push(HSTRING::from(format!(
+            "{}    {}",
+            entry.name,
+            entry_context(entry)
+        )));
+        rows.push(RowKind::Item(index));
+    }
+    // 末尾 (results が空、または最後の区分) に付く見出しも取りこぼさない
+    for (_, label) in headers {
+        labels.push(HSTRING::from(*label));
+        rows.push(RowKind::Header(label));
+    }
+    (labels, rows)
+}
+
 /// 説明用の 1 行を出す。`results` には追加しないため Enter で実行されない。
+/// 呼び出し元は `state.rows` もこの内容に合わせて更新すること
+/// (古い `RowKind::Item` が残ると、表示上は消えた項目を選択・実行できてしまう)。
 fn populate_empty_message(list: HWND, message: Option<&str>) {
     let labels = message.map(HSTRING::from).into_iter().collect::<Vec<_>>();
-    populate_list(list, &labels, false);
+    let rows = vec![RowKind::Message; labels.len()];
+    populate_list(list, &labels, &rows);
 }
 
 fn read_text(hwnd: HWND) -> String {
@@ -1065,17 +1130,37 @@ fn select_at(list: Option<HWND>, index: usize) {
 }
 
 /// 選択を相対移動する。借用は最初に済ませ、以降は Win32 のみ触る。
+/// 区分見出し行は選択対象外なので、着地点がそれに重なったら同じ方向へ
+/// さらに進めて次の項目行を探す (見出しが連続することはない前提)。
 fn move_selection(delta: isize) {
-    let (list, count) = STATE.with(|state| {
+    let (list, rows) = STATE.with(|state| {
         let state = state.borrow();
-        (state.list, state.results.len())
+        (state.list, state.rows.clone())
     });
-    if count == 0 {
+    if rows.is_empty() {
         return;
     }
+    let step = if delta < 0 { -1isize } else { 1isize };
     let current = current_selection(list).unwrap_or(0);
-    let next = current.saturating_add_signed(delta).min(count - 1);
+    let mut next = current.saturating_add_signed(delta).min(rows.len() - 1);
+    while matches!(rows.get(next), Some(RowKind::Header(_))) {
+        let Some(stepped) = next.checked_add_signed(step) else {
+            return;
+        };
+        if stepped >= rows.len() {
+            return;
+        }
+        next = stepped;
+    }
     select_at(list, next);
+}
+
+/// `state.rows[row]` が指す項目行の `Entry` を返す。見出し・メッセージ行は `None`。
+fn entry_at_row(state: &State, row: usize) -> Option<Entry> {
+    match state.rows.get(row)? {
+        RowKind::Item(index) => state.results.get(*index).cloned(),
+        RowKind::Header(_) | RowKind::Message => None,
+    }
 }
 
 fn queue_selected() {
@@ -1090,9 +1175,7 @@ fn queue_selected() {
 
     let selected = STATE.with(|state| {
         let mut state = state.borrow_mut();
-        let mut entry = selected
-            .and_then(|index| state.results.get(index))
-            .cloned()?;
+        let mut entry = selected.and_then(|row| entry_at_row(&state, row))?;
         if let Action::ReplaceQuery(query) = &entry.action {
             return state
                 .edit
@@ -1140,7 +1223,7 @@ fn queue_selected() {
 fn selected_entry() -> Option<Entry> {
     let list = STATE.with(|state| state.borrow().list);
     let selected = current_selection(list)?;
-    STATE.with(|state| state.borrow().results.get(selected).cloned())
+    STATE.with(|state| entry_at_row(&state.borrow(), selected))
 }
 
 /// `Ctrl+Shift+Enter`: 選択中の候補を config へ登録するよう常駐部へ
@@ -1236,12 +1319,11 @@ fn position_window(window: HWND, monitor_window: HWND, rows: usize, dpi: u32) {
 
 fn apply_dpi(window: HWND, dpi: u32) {
     let dpi = dpi.max(96);
-    let (edit, list, old_fonts, fonts) = STATE.with(|state| {
+    let (edit, old_fonts, fonts) = STATE.with(|state| {
         let mut state = state.borrow_mut();
         if state.dpi == dpi && state.edit_font.is_some() {
             return (
                 state.edit,
-                state.list,
                 Vec::new(),
                 (state.edit_font, state.name_font, state.detail_font),
             );
@@ -1256,7 +1338,6 @@ fn apply_dpi(window: HWND, dpi: u32) {
         state.detail_font = create_font(scale(11, dpi), FW_NORMAL.0 as i32);
         (
             state.edit,
-            state.list,
             old_fonts,
             (state.edit_font, state.name_font, state.detail_font),
         )
@@ -1277,14 +1358,6 @@ fn apply_dpi(window: HWND, dpi: u32) {
                 EM_SETMARGINS,
                 Some(WPARAM(3)),
                 Some(LPARAM(((right << 16) | left) as isize)),
-            );
-        }
-        if let Some(list) = list {
-            let _ = windows::Win32::UI::WindowsAndMessaging::SendMessageW(
-                list,
-                LB_SETITEMHEIGHT,
-                Some(WPARAM(0)),
-                Some(LPARAM(scale(ROW_HEIGHT, dpi) as isize)),
             );
         }
         for font in old_fonts {
@@ -1536,25 +1609,79 @@ unsafe fn draw_everything_flag_badges(
     }
 }
 
+/// 絞り込みなし一覧の区分見出し行を描く。アイコンは持たず、小さめの
+/// ラベルを行の下寄せで置き、下端に 1px の区切り線を引いて次の項目行と
+/// 分ける (Spotlight のセクション見出しに近い見た目)。
+unsafe fn draw_section_header(
+    hdc: HDC,
+    label: &str,
+    rect: RECT,
+    dpi: u32,
+    detail_font: Option<HFONT>,
+) {
+    unsafe {
+        if let Some(font) = detail_font {
+            let old_font = SelectObject(hdc, font.into());
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, TEXT_MUTED);
+            let mut text_rect = RECT {
+                left: rect.left + scale(ICON_LEFT, dpi),
+                top: rect.top,
+                right: rect.right - scale(8, dpi),
+                bottom: rect.bottom - scale(6, dpi),
+            };
+            draw_text(hdc, label, &mut text_rect);
+            SelectObject(hdc, old_font);
+        }
+
+        let divider = CreateSolidBrush(SURFACE_HOVER);
+        let divider_rect = RECT {
+            left: rect.left + scale(ICON_LEFT, dpi),
+            top: rect.bottom - scale(1, dpi),
+            right: rect.right - scale(8, dpi),
+            bottom: rect.bottom,
+        };
+        FillRect(hdc, &divider_rect, divider);
+        let _ = DeleteObject(divider.into());
+    }
+}
+
+/// セクション見出し行 (`RowKind::Header`) は通常項目より低く測る。
+/// リストボックスは `itemData` を持たないため `itemID` で `state.rows` を引く。
+unsafe fn measure_list_item(measure: &mut MEASUREITEMSTRUCT) {
+    let (row, dpi) = STATE.with(|state| {
+        let state = state.borrow();
+        (state.rows.get(measure.itemID as usize).copied(), state.dpi)
+    });
+    measure.itemHeight = match row {
+        Some(RowKind::Header(_)) => scale(HEADER_HEIGHT, dpi) as u32,
+        _ => scale(ROW_HEIGHT, dpi) as u32,
+    };
+}
+
 unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
     if draw.itemID == u32::MAX {
         return;
     }
-    let Some((entry, empty_message, name_font, detail_font, dpi, badge)) = STATE.with(|state| {
-        let state = state.borrow();
-        let entry = state.results.get(draw.itemID as usize).cloned();
-        if entry.is_none() && state.empty_message.is_none() {
-            return None;
-        }
-        Some((
-            entry,
-            state.empty_message.clone(),
-            state.name_font,
-            state.detail_font,
-            state.dpi,
-            state.badge,
-        ))
-    }) else {
+    let Some((row, entry, empty_message, name_font, detail_font, dpi, badge)) =
+        STATE.with(|state| {
+            let state = state.borrow();
+            let row = state.rows.get(draw.itemID as usize).copied()?;
+            let entry = match row {
+                RowKind::Item(index) => Some(state.results.get(index)?.clone()),
+                RowKind::Header(_) | RowKind::Message => None,
+            };
+            Some((
+                row,
+                entry,
+                state.empty_message.clone(),
+                state.name_font,
+                state.detail_font,
+                state.dpi,
+                state.badge,
+            ))
+        })
+    else {
         return;
     };
 
@@ -1563,6 +1690,11 @@ unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
         let background = CreateSolidBrush(BACKGROUND);
         FillRect(draw.hDC, &draw.rcItem, background);
         let _ = DeleteObject(background.into());
+
+        if let RowKind::Header(label) = row {
+            draw_section_header(draw.hDC, label, draw.rcItem, dpi, detail_font);
+            return;
+        }
 
         let Some(entry) = entry else {
             if let (Some(message), Some(font)) = (empty_message, detail_font) {
@@ -1912,9 +2044,21 @@ fn scale(value: i32, dpi: u32) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        AzureIconKind, accepts_azure_work_item_reply, accepts_everything_reply, azure_icon_kind,
-        next_everything_reply_id, word_start_before,
+        AzureIconKind, RowKind, accepts_azure_work_item_reply, accepts_everything_reply,
+        azure_icon_kind, build_rows, next_everything_reply_id, word_start_before,
     };
+    use crate::config::OpenMode;
+    use crate::quick_launch::{Action, Entry};
+
+    fn folder_entry(name: &str) -> Entry {
+        Entry {
+            name: name.to_string(),
+            breadcrumb: String::new(),
+            path: format!(r"C:\{name}"),
+            action: Action::OpenFolder(OpenMode::NewWindow),
+            branch: None,
+        }
+    }
 
     fn to_utf16(s: &str) -> Vec<u16> {
         s.encode_utf16().collect()
@@ -2005,5 +2149,35 @@ mod tests {
             azure_icon_kind(Some("BOOKMARKS"), "https://dev.azure.com/org/project"),
             None
         );
+    }
+
+    #[test]
+    fn build_rows_without_headers_is_a_flat_one_to_one_mapping() {
+        let results = vec![folder_entry("a"), folder_entry("b")];
+        let (labels, rows) = build_rows(&results, &[]);
+        assert_eq!(labels.len(), 2);
+        assert!(matches!(
+            rows.as_slice(),
+            [RowKind::Item(0), RowKind::Item(1)]
+        ));
+    }
+
+    #[test]
+    fn build_rows_inserts_a_header_row_before_each_section_start() {
+        let results = vec![folder_entry("a"), folder_entry("b"), folder_entry("c")];
+        // "Folders" は results[0] の直前、"Apps" は results[2] の直前に挿入される想定
+        let section_headers = [(0, "Folders"), (2, "Apps")];
+        let (labels, rows) = build_rows(&results, &section_headers);
+        assert_eq!(labels.len(), 5);
+        assert!(matches!(
+            rows.as_slice(),
+            [
+                RowKind::Header("Folders"),
+                RowKind::Item(0),
+                RowKind::Item(1),
+                RowKind::Header("Apps"),
+                RowKind::Item(2),
+            ]
+        ));
     }
 }

@@ -441,6 +441,29 @@ impl Index {
         search_entries(&self.entries, query, self.search_paths, &self.ranking)
     }
 
+    /// 絞り込みなし (空クエリ) のときに、Spotlight 風の区分見出し付き一覧を返す。
+    /// 区分ごとに使用頻度順の上位 `SECTION_LIMIT` 件だけを載せ、一覧が
+    /// 縦に伸びすぎないようにする。空の区分は含めない。
+    pub fn sections(&self) -> Vec<(&'static str, Vec<&Entry>)> {
+        const SECTION_LIMIT: usize = 6;
+        [
+            ("Folders", &self.entries),
+            ("Open Windows", &self.windows),
+            ("Bookmarks", &self.bookmarks),
+            ("History", &self.history),
+            ("Apps", &self.apps),
+        ]
+        .into_iter()
+        .filter_map(|(label, source)| {
+            let top = search_entries(source, "", self.search_paths, &self.ranking)
+                .into_iter()
+                .take(SECTION_LIMIT)
+                .collect::<Vec<_>>();
+            (!top.is_empty()).then_some((label, top))
+        })
+        .collect()
+    }
+
     /// Work Item キャッシュは Index 構築時に読み込み済み。Quick Launch の
     /// キー入力経路では SQLite に触れず、ここで即時に候補の有無を判定する。
     pub fn search_cached_work_items(&self, query: &str) -> Vec<&Entry> {
@@ -912,6 +935,48 @@ mod tests {
     fn without_the_apps_prefix_apps_are_not_searched() {
         let index = index();
         assert!(index.search("code").is_empty());
+    }
+
+    /// 絞り込みなしの一覧は、データを持つ区分だけを由来別に分けて返す。
+    /// フィクスチャの `index()` は Azure DevOps も持つが、区分見出し
+    /// 一覧には含めない (プレフィックス検索でしか出さない設計)。
+    #[test]
+    fn sections_group_results_by_source_and_skip_empty_ones() {
+        let index = index();
+        let sections = index.sections();
+        assert_eq!(
+            sections.iter().map(|(label, _)| *label).collect::<Vec<_>>(),
+            ["Folders", "Open Windows", "Bookmarks", "History", "Apps"]
+        );
+        let folders = &sections
+            .iter()
+            .find(|(label, _)| *label == "Folders")
+            .unwrap()
+            .1;
+        assert_eq!(folders.len(), 3);
+    }
+
+    /// 区分ごとの件数を絞る (一覧が縦に伸びすぎないようにするため)。
+    #[test]
+    fn sections_cap_each_source_at_the_section_limit() {
+        let mut index = index();
+        index.entries = (0..10)
+            .map(|n| Entry {
+                name: format!("Folder {n}"),
+                breadcrumb: String::new(),
+                path: format!(r"C:\folder{n}"),
+                action: Action::OpenFolder(OpenMode::NewWindow),
+                branch: None,
+            })
+            .collect();
+
+        let sections = index.sections();
+        let folders = &sections
+            .iter()
+            .find(|(label, _)| *label == "Folders")
+            .unwrap()
+            .1;
+        assert_eq!(folders.len(), 6);
     }
 
     #[test]

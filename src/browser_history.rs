@@ -60,7 +60,9 @@ fn read_profile(profile: &Profile) -> rusqlite::Result<Vec<(i64, Visit)>> {
     );
     let connection = Connection::open_with_flags(
         uri,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI,
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_URI,
     )?;
     read_connection(&connection, profile.browser)
 }
