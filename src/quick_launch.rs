@@ -2,9 +2,17 @@
 //!
 //! Win32 の表示部分とは分離し、キー入力中はこのメモリ上のデータだけを検索する。
 
+use std::cmp::Reverse;
+
+use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
+
 use crate::config::{Config, Item, OpenMode};
 use crate::dynamic::Menus;
 use crate::quick_launch_history::Ranking;
+
+/// Skim の matcher は内部キャッシュを持つ。キー入力のたびに作り直さず共有する。
+static FUZZY_MATCHER: std::sync::LazyLock<SkimMatcherV2> =
+    std::sync::LazyLock::new(SkimMatcherV2::default);
 
 /// ブックマーク検索モードに入るプレフィックス (末尾の半角スペース込み)。
 const BOOKMARK_PREFIX: &str = "b ";
@@ -367,6 +375,13 @@ impl Index {
         if query == AZURE_DEVOPS_PREFIX {
             return azure_command_entries().iter().collect();
         }
+        if let Some(command_text) = incomplete_azure_command(query) {
+            let completions =
+                search_entries(azure_command_entries(), command_text, false, &self.ranking);
+            if !completions.is_empty() {
+                return completions;
+            }
+        }
         if let Some((command, rest)) = azure_command(query) {
             return match command {
                 AzureCommand::All => search_entries(
@@ -446,6 +461,18 @@ impl Index {
     }
 }
 
+/// 未確定の Azure コマンドだけを補完候補の検索語として取り出す。
+/// 例えば `az pln` は `az pipeline` を候補にする一方、`az wp` は通常の
+/// Azure 横断検索を維持する。
+fn incomplete_azure_command(query: &str) -> Option<&str> {
+    let text = query.strip_prefix(AZURE_DEVOPS_PREFIX)?;
+    if text.is_empty() || text.contains(char::is_whitespace) {
+        return None;
+    }
+    let (command, _) = azure_command(query)?;
+    (command == AzureCommand::All).then_some(text)
+}
+
 /// `az ` の直後に出すコマンド候補。候補を決定しても検索欄を補完するだけで、
 /// URL を開いたり API を呼んだりはしない。
 fn azure_command_entries() -> &'static [Entry] {
@@ -485,6 +512,9 @@ fn azure_candidate_entry(candidate: crate::azure_devops::Candidate) -> Entry {
     }
 }
 
+/// 検索一致の質、Fuzzy スコア、使用履歴、元の順序と候補本体。
+type SearchMatch<'a> = (u8, i64, (u64, u64), usize, &'a Entry);
+
 fn search_entries<'a>(
     entries: impl IntoIterator<Item = &'a Entry>,
     query: &str,
@@ -492,30 +522,35 @@ fn search_entries<'a>(
     ranking: &Ranking,
 ) -> Vec<&'a Entry> {
     let terms: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
-    let mut matches: Vec<(u8, (u64, u64), usize, &Entry)> = entries
+    let mut matches: Vec<SearchMatch<'a>> = entries
         .into_iter()
         .enumerate()
         .filter_map(|(order, entry)| {
             let name = entry.name.to_lowercase();
             let breadcrumb = entry.breadcrumb.to_lowercase();
             let path = search_paths.then(|| entry.path.to_lowercase());
-            let scores: Option<Vec<u8>> = terms
+            let scores: Option<Vec<(u8, i64)>> = terms
                 .iter()
                 .map(|term| match_score(&name, &breadcrumb, path.as_deref(), term))
                 .collect();
             scores.map(|scores| {
-                (
-                    scores.into_iter().max().unwrap_or(0),
-                    ranking.rank(entry),
-                    order,
-                    entry,
-                )
+                let (tier, fuzzy_score) = scores
+                    .into_iter()
+                    // 複数語では一番弱い一致を順位に使う。
+                    .max_by_key(|(tier, fuzzy_score)| (*tier, Reverse(*fuzzy_score)))
+                    .unwrap_or((0, 0));
+                (tier, fuzzy_score, ranking.rank(entry), order, entry)
             })
         })
         .collect();
     // 文字列一致の質を最優先し、同点内では使用頻度・最近使った順で並べる
-    matches.sort_by_key(|(score, usage, order, _)| (*score, *usage, *order));
-    matches.into_iter().map(|(_, _, _, entry)| entry).collect()
+    matches.sort_by_key(|(tier, fuzzy_score, usage, order, _)| {
+        (*tier, Reverse(*fuzzy_score), *usage, *order)
+    });
+    matches
+        .into_iter()
+        .map(|(_, _, _, _, entry)| entry)
+        .collect()
 }
 
 /// 同じパスを指す項目 (config の Folder / Recent Folders / Frequent
@@ -623,40 +658,33 @@ fn collect_items(
     }
 }
 
-fn match_score(name: &str, breadcrumb: &str, path: Option<&str>, term: &str) -> Option<u8> {
+fn match_score(name: &str, breadcrumb: &str, path: Option<&str>, term: &str) -> Option<(u8, i64)> {
     if name == term {
-        Some(0)
+        Some((0, 0))
     } else if name.starts_with(term) {
-        Some(1)
+        Some((1, 0))
     } else if name
         .match_indices(term)
         .any(|(index, _)| index == 0 || name[..index].ends_with([' ', '-', '_', '.']))
     {
-        Some(2)
+        Some((2, 0))
     } else if name.contains(term) {
-        Some(3)
+        Some((3, 0))
     } else if breadcrumb.contains(term) {
-        Some(4)
+        Some((4, 0))
     } else if path.is_some_and(|path| path.contains(term)) {
-        Some(5)
-    } else if is_subsequence(name, term) {
-        Some(6)
+        Some((5, 0))
+    } else if let Some(score) = FUZZY_MATCHER.fuzzy_match(name, term) {
+        Some((6, score))
+    } else if let Some(score) = FUZZY_MATCHER.fuzzy_match(breadcrumb, term) {
+        Some((7, score))
+    } else if let Some(score) = path.and_then(|path| FUZZY_MATCHER.fuzzy_match(path, term)) {
+        Some((8, score))
     } else if crate::romaji::kana_name_matches(name, term) {
-        Some(7)
+        Some((9, 0))
     } else {
         None
     }
-}
-
-/// `term` の文字が `text` に順序通り (連続でなくてよい) すべて現れるか。
-/// fzf などの Fuzzy 検索と同じサブシーケンス一致。
-fn is_subsequence(text: &str, term: &str) -> bool {
-    if term.is_empty() {
-        return true;
-    }
-    let mut chars = text.chars();
-    term.chars()
-        .all(|term_char| chars.any(|text_char| text_char == term_char))
 }
 
 #[cfg(test)]
@@ -1100,6 +1128,21 @@ mod tests {
             ]
         );
         assert_eq!(found[3].action, Action::ReplaceQuery("az wit ".to_string()));
+    }
+
+    #[test]
+    fn incomplete_azure_command_uses_fuzzy_completion() {
+        let index = index();
+        let found = index.search("az pln");
+        assert_eq!(
+            found
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            ["az pipeline"]
+        );
+        // コマンド候補に当たらない文字列は、従来どおり Azure 全体を検索する。
+        assert_eq!(index.search("az wp")[0].name, "PR 42: Add Azure search");
     }
 
     /// showBranch が真の Folder は、このリポジトリ自身を指せば
