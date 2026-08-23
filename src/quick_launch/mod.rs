@@ -125,12 +125,17 @@ impl Entry {
 #[derive(Debug, Clone, Default)]
 pub struct Index {
     pub(crate) entries: Vec<Entry>,
+    pub(crate) entries_lower: Vec<search::LowerKeys>,
     pub(crate) bookmarks: Vec<Entry>,
+    pub(crate) bookmarks_lower: Vec<search::LowerKeys>,
     pub(crate) history: Vec<Entry>,
+    pub(crate) history_lower: Vec<search::LowerKeys>,
     pub(crate) azure: Vec<AzureIndexed>,
     pub(crate) azure_work_items: Vec<Entry>,
     pub(crate) windows: Vec<Entry>,
+    pub(crate) windows_lower: Vec<search::LowerKeys>,
     pub(crate) apps: Vec<Entry>,
+    pub(crate) apps_lower: Vec<search::LowerKeys>,
     pub(crate) search_paths: bool,
     pub(crate) ranking: Ranking,
 }

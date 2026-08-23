@@ -11,20 +11,65 @@ use super::{
 };
 use crate::quick_launch_history::Ranking;
 
+/// `Entry::name` / `breadcrumb` / `path` の小文字化済みキャッシュ。
+///
+/// `Index::build` 時に候補 1 件につき 1 回だけ計算する。キー入力のたびに
+/// 全候補分の `to_lowercase` を再アロケーションしていたのが検索の主要な
+/// コストだったため (候補数千件規模で無視できない遅延になる)、`entries` /
+/// `bookmarks` / `history` など件数が伸びやすい候補群にはこれを使う。
+#[derive(Debug, Clone, Default)]
+pub(crate) struct LowerKeys {
+    name: String,
+    breadcrumb: String,
+    path: String,
+}
+
+impl LowerKeys {
+    pub(crate) fn new(entry: &Entry) -> Self {
+        Self {
+            name: entry.name.to_lowercase(),
+            breadcrumb: entry.breadcrumb.to_lowercase(),
+            path: entry.path.to_lowercase(),
+        }
+    }
+
+    pub(crate) fn build_for(entries: &[Entry]) -> Vec<Self> {
+        entries.iter().map(Self::new).collect()
+    }
+}
+
 impl Index {
     /// プレフィックス入力中は、対応する検索対象だけを検索する。
     pub fn search(&self, query: &str) -> Vec<&Entry> {
         if let Some(rest) = query.strip_prefix(BOOKMARK_PREFIX) {
-            return search_entries(&self.bookmarks, rest, true, &self.ranking);
+            return search_entries_cached(
+                &self.bookmarks,
+                &self.bookmarks_lower,
+                rest,
+                true,
+                &self.ranking,
+            );
         }
         if let Some(rest) = query.strip_prefix(HISTORY_PREFIX) {
-            return search_entries(&self.history, rest, true, &self.ranking);
+            return search_entries_cached(
+                &self.history,
+                &self.history_lower,
+                rest,
+                true,
+                &self.ranking,
+            );
         }
         if let Some(rest) = query.strip_prefix(WINDOW_PREFIX) {
-            return search_entries(&self.windows, rest, false, &self.ranking);
+            return search_entries_cached(
+                &self.windows,
+                &self.windows_lower,
+                rest,
+                false,
+                &self.ranking,
+            );
         }
         if let Some(rest) = query.strip_prefix(APPS_PREFIX) {
-            return search_entries(&self.apps, rest, false, &self.ranking);
+            return search_entries_cached(&self.apps, &self.apps_lower, rest, false, &self.ranking);
         }
         if query == AZURE_DEVOPS_PREFIX {
             return azure_command_entries().iter().collect();
@@ -92,7 +137,13 @@ impl Index {
                 AzureCommand::WorkItems => Vec::new(),
             };
         }
-        search_entries(&self.entries, query, self.search_paths, &self.ranking)
+        search_entries_cached(
+            &self.entries,
+            &self.entries_lower,
+            query,
+            self.search_paths,
+            &self.ranking,
+        )
     }
 
     /// 絞り込みなし (空クエリ) のときに、Spotlight 風の区分見出し付き一覧を返す。
@@ -101,15 +152,15 @@ impl Index {
     pub fn sections(&self) -> Vec<(&'static str, Vec<&Entry>)> {
         const SECTION_LIMIT: usize = 6;
         [
-            ("Folders", &self.entries),
-            ("Open Windows", &self.windows),
-            ("Bookmarks", &self.bookmarks),
-            ("History", &self.history),
-            ("Apps", &self.apps),
+            ("Folders", &self.entries, &self.entries_lower),
+            ("Open Windows", &self.windows, &self.windows_lower),
+            ("Bookmarks", &self.bookmarks, &self.bookmarks_lower),
+            ("History", &self.history, &self.history_lower),
+            ("Apps", &self.apps, &self.apps_lower),
         ]
         .into_iter()
-        .filter_map(|(label, source)| {
-            let top = search_entries(source, "", self.search_paths, &self.ranking)
+        .filter_map(|(label, source, lower)| {
+            let top = search_entries_cached(source, lower, "", self.search_paths, &self.ranking)
                 .into_iter()
                 .take(SECTION_LIMIT)
                 .collect::<Vec<_>>();
@@ -147,29 +198,82 @@ pub(crate) fn search_entries<'a>(
     search_paths: bool,
     ranking: &Ranking,
 ) -> Vec<&'a Entry> {
-    let terms: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
-    let mut matches: Vec<SearchMatch<'a>> = entries
-        .into_iter()
-        .enumerate()
-        .filter_map(|(order, entry)| {
-            let name = entry.name.to_lowercase();
-            let breadcrumb = entry.breadcrumb.to_lowercase();
-            let path = search_paths.then(|| entry.path.to_lowercase());
-            let scores: Option<Vec<(u8, i64)>> = terms
-                .iter()
-                .map(|term| match_score(&name, &breadcrumb, path.as_deref(), term))
-                .collect();
-            scores.map(|scores| {
-                let (tier, fuzzy_score) = scores
-                    .into_iter()
-                    // 複数語では一番弱い一致を順位に使う。
-                    .max_by_key(|(tier, fuzzy_score)| (*tier, Reverse(*fuzzy_score)))
-                    .unwrap_or((0, 0));
-                (tier, fuzzy_score, ranking.rank(entry), order, entry)
-            })
-        })
+    let terms = lower_terms(query);
+    rank_matches(
+        entries
+            .into_iter()
+            .enumerate()
+            .filter_map(|(order, entry)| {
+                let name = entry.name.to_lowercase();
+                let breadcrumb = entry.breadcrumb.to_lowercase();
+                let path = search_paths.then(|| entry.path.to_lowercase());
+                score_entry(entry, &name, &breadcrumb, path.as_deref(), &terms, ranking)
+                    .map(|score| (score, order, entry))
+            }),
+    )
+}
+
+/// `LowerKeys` で事前計算済みの候補群を検索する。`entries` と `lower_keys`
+/// は同じ順序・同じ長さである前提 (`Index::build` が対で作る)。長さが
+/// 合わない場合 (テストで `Index` を直接組み立て、キャッシュだけ未構築で
+/// 残した場合など) は安全側に倒し、都度計算の `search_entries` へ回す。
+pub(crate) fn search_entries_cached<'a>(
+    entries: &'a [Entry],
+    lower_keys: &[LowerKeys],
+    query: &str,
+    search_paths: bool,
+    ranking: &Ranking,
+) -> Vec<&'a Entry> {
+    if entries.len() != lower_keys.len() {
+        return search_entries(entries, query, search_paths, ranking);
+    }
+    let terms = lower_terms(query);
+    rank_matches(
+        entries
+            .iter()
+            .zip(lower_keys)
+            .enumerate()
+            .filter_map(|(order, (entry, keys))| {
+                let path = search_paths.then_some(keys.path.as_str());
+                score_entry(entry, &keys.name, &keys.breadcrumb, path, &terms, ranking)
+                    .map(|score| (score, order, entry))
+            }),
+    )
+}
+
+fn lower_terms(query: &str) -> Vec<String> {
+    query.split_whitespace().map(str::to_lowercase).collect()
+}
+
+/// 全語をスコアリングし、複数語のときは一番弱い一致を順位に使う。
+fn score_entry(
+    entry: &Entry,
+    name: &str,
+    breadcrumb: &str,
+    path: Option<&str>,
+    terms: &[String],
+    ranking: &Ranking,
+) -> Option<(u8, i64, (u64, u64))> {
+    let scores: Option<Vec<(u8, i64)>> = terms
+        .iter()
+        .map(|term| match_score(name, breadcrumb, path, term))
         .collect();
-    // 文字列一致の質を最優先し、同点内では使用頻度・最近使った順で並べる
+    scores.map(|scores| {
+        let (tier, fuzzy_score) = scores
+            .into_iter()
+            .max_by_key(|(tier, fuzzy_score)| (*tier, Reverse(*fuzzy_score)))
+            .unwrap_or((0, 0));
+        (tier, fuzzy_score, ranking.rank(entry))
+    })
+}
+
+/// 文字列一致の質を最優先し、同点内では使用頻度・最近使った順で並べる。
+fn rank_matches<'a>(
+    scored: impl Iterator<Item = ((u8, i64, (u64, u64)), usize, &'a Entry)>,
+) -> Vec<&'a Entry> {
+    let mut matches: Vec<SearchMatch<'a>> = scored
+        .map(|((tier, fuzzy_score, usage), order, entry)| (tier, fuzzy_score, usage, order, entry))
+        .collect();
     matches.sort_by_key(|(tier, fuzzy_score, usage, order, _)| {
         (*tier, Reverse(*fuzzy_score), *usage, *order)
     });

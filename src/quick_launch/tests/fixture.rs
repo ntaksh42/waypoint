@@ -2,7 +2,7 @@ use super::super::azure::AzureIndexed;
 use super::super::*;
 
 pub(super) fn index() -> Index {
-    Index {
+    let mut index = Index {
         entries: vec![
             Entry {
                 name: "Release".into(),
@@ -81,5 +81,12 @@ pub(super) fn index() -> Index {
         }],
         search_paths: false,
         ranking: Ranking::default(),
-    }
+        ..Default::default()
+    };
+    index.entries_lower = super::super::search::LowerKeys::build_for(&index.entries);
+    index.bookmarks_lower = super::super::search::LowerKeys::build_for(&index.bookmarks);
+    index.history_lower = super::super::search::LowerKeys::build_for(&index.history);
+    index.windows_lower = super::super::search::LowerKeys::build_for(&index.windows);
+    index.apps_lower = super::super::search::LowerKeys::build_for(&index.apps);
+    index
 }

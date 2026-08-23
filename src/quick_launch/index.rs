@@ -132,14 +132,26 @@ impl Index {
             Vec::new()
         };
 
+        let entries = dedup_by_path(entries);
+        let entries_lower = super::search::LowerKeys::build_for(&entries);
+        let bookmarks_lower = super::search::LowerKeys::build_for(&bookmarks);
+        let history_lower = super::search::LowerKeys::build_for(&history);
+        let windows_lower = super::search::LowerKeys::build_for(&windows);
+        let apps_lower = super::search::LowerKeys::build_for(&apps);
+
         Self {
-            entries: dedup_by_path(entries),
+            entries,
+            entries_lower,
             bookmarks,
+            bookmarks_lower,
             history,
+            history_lower,
             azure,
             azure_work_items,
             windows,
+            windows_lower,
             apps,
+            apps_lower,
             search_paths: settings.search_paths,
             ranking: Ranking::load(),
         }
