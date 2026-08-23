@@ -26,6 +26,7 @@ pub mod process;
 pub mod quick_launch;
 pub mod quick_launch_history;
 pub mod quick_launch_window;
+pub mod romaji;
 pub mod shell;
 pub mod single;
 pub mod theme;
