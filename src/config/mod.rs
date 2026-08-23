@@ -243,6 +243,14 @@ pub fn config_path() -> Option<PathBuf> {
     dirs::config_dir().map(|d| d.join("waypoint").join("config.json"))
 }
 
+/// 環境非依存な設定 (`Settings`) だけを複製する先。`%APPDATA%\waypoint\shared.json`
+///
+/// Git やクラウド同期フォルダへユーザー自身が置くことで、複数マシン間の
+/// 設定持ち出しに使う (FR-7.7)。waypoint は同期処理そのものは行わない。
+pub fn shared_settings_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|d| d.join("waypoint").join("shared.json"))
+}
+
 /// 読み込み結果。パース失敗でもアプリは起動する (FR-7.4) 。
 pub enum LoadOutcome {
     Loaded(Config),
@@ -281,11 +289,34 @@ pub fn load() -> LoadOutcome {
 
     match std::fs::read_to_string(&path) {
         Ok(text) => match serde_json::from_str::<Config>(&text) {
-            Ok(cfg) => LoadOutcome::Loaded(cfg),
+            Ok(mut cfg) => {
+                apply_shared_settings(&mut cfg);
+                LoadOutcome::Loaded(cfg)
+            }
             // 壊れた設定を上書きしないよう、ここでは書き込まない (FR-7.4)
             Err(e) => LoadOutcome::Failed(format!("config.json の解析に失敗: {e}")),
         },
         Err(e) => LoadOutcome::Failed(format!("config.json を読めない: {e}")),
+    }
+}
+
+/// `shared.json` が存在すればその `settings` で上書きする (FR-7.7)。
+/// 無い、またはパースできない場合は `config.json` 側の設定をそのまま使う。
+fn apply_shared_settings(cfg: &mut Config) {
+    let Some(path) = shared_settings_path() else {
+        return;
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    merge_shared_settings_text(cfg, &text);
+}
+
+/// `apply_shared_settings` からパス解決を切り離した本体。
+/// テキストが `Settings` としてパースできれば `cfg.settings` を差し替える。
+fn merge_shared_settings_text(cfg: &mut Config, text: &str) {
+    if let Ok(settings) = serde_json::from_str::<Settings>(text) {
+        cfg.settings = settings;
     }
 }
 
@@ -358,6 +389,10 @@ fn default_config() -> Config {
 }
 
 /// 設定を保存する。temp に書いてから置換し、途中状態を残さない (FR-7.3) 。
+///
+/// 環境非依存な `settings` は `shared.json` へも複製書き出しする (FR-7.7)。
+/// こちらの失敗は致命的ではないため、`config.json` の保存が成功していれば
+/// エラーにしない (ログにのみ残す)。
 pub fn save(cfg: &Config) -> std::io::Result<()> {
     let Some(path) = config_path() else {
         return Err(std::io::Error::other("APPDATA を解決できない"));
@@ -367,6 +402,22 @@ pub fn save(cfg: &Config) -> std::io::Result<()> {
     }
     // 手編集するので整形して書く。日本語はエスケープされない (serde_json の既定)
     let text = serde_json::to_string_pretty(cfg).map_err(std::io::Error::other)?;
+    write_atomic(&path, &text)?;
+
+    if let Err(e) = save_shared_settings(&cfg.settings) {
+        crate::panic_log::record(&format!("shared.json の書き出しに失敗: {e}"));
+    }
+    Ok(())
+}
+
+fn save_shared_settings(settings: &Settings) -> std::io::Result<()> {
+    let Some(path) = shared_settings_path() else {
+        return Err(std::io::Error::other("APPDATA を解決できない"));
+    };
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let text = serde_json::to_string_pretty(settings).map_err(std::io::Error::other)?;
     write_atomic(&path, &text)
 }
 
@@ -433,7 +484,7 @@ fn collect_unresolved(
 
 #[cfg(test)]
 mod tests {
-    use super::write_atomic;
+    use super::{Config, merge_shared_settings_text, write_atomic};
 
     #[test]
     fn atomic_write_replaces_an_existing_file() {
@@ -458,5 +509,46 @@ mod tests {
             "second"
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn shared_settings_override_hotkey_from_config() {
+        let mut cfg = Config::default();
+        assert_eq!(cfg.settings.trigger.hotkey, "Win+W");
+
+        let shared_text = serde_json::to_string(&{
+            let mut settings = cfg.settings.clone();
+            settings.trigger.hotkey = "Ctrl+Alt+Space".to_string();
+            settings
+        })
+        .unwrap();
+
+        merge_shared_settings_text(&mut cfg, &shared_text);
+
+        assert_eq!(cfg.settings.trigger.hotkey, "Ctrl+Alt+Space");
+    }
+
+    #[test]
+    fn invalid_shared_settings_text_leaves_config_untouched() {
+        let mut cfg = Config::default();
+        let original_hotkey = cfg.settings.trigger.hotkey.clone();
+
+        merge_shared_settings_text(&mut cfg, "not valid json");
+
+        assert_eq!(cfg.settings.trigger.hotkey, original_hotkey);
+    }
+
+    #[test]
+    fn shared_settings_do_not_affect_items_or_variables() {
+        let mut cfg = Config::default();
+        cfg.variables
+            .insert("Proj".to_string(), "D:\\work".to_string());
+        let original_items_len = cfg.items.len();
+
+        let shared_text = serde_json::to_string(&cfg.settings).unwrap();
+        merge_shared_settings_text(&mut cfg, &shared_text);
+
+        assert_eq!(cfg.items.len(), original_items_len);
+        assert_eq!(cfg.variables.get("Proj").unwrap(), "D:\\work");
     }
 }
