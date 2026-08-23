@@ -94,6 +94,7 @@ pub(crate) fn pull_request_row(
     let title = item["title"].as_str()?.to_string();
     let status = item["status"].as_str().unwrap_or("unknown").to_string();
     let repository = item["repository"]["name"].as_str().unwrap_or("");
+    let author = item["createdBy"]["displayName"].as_str().unwrap_or("");
     let is_mine = current_user.is_some_and(|user| {
         item["createdBy"]["id"].as_str() == Some(user)
             || item["reviewers"].as_array().is_some_and(|reviewers| {
@@ -119,10 +120,17 @@ pub(crate) fn pull_request_row(
         item_id: id.to_string(),
         status: status.clone(),
         name: format!("PR {id}: {title}"),
-        detail: format!(
-            "Azure DevOps — {}/{} — {}",
-            project.organization, project.project, status
-        ),
+        detail: if author.is_empty() {
+            format!(
+                "Azure DevOps — {}/{} — {}",
+                project.organization, project.project, status
+            )
+        } else {
+            format!(
+                "Azure DevOps — {}/{} — {} — by {author}",
+                project.organization, project.project, status
+            )
+        },
         url,
         is_mine,
     })

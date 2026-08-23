@@ -439,9 +439,13 @@ pub(super) fn detail_primary(entry: &Entry) -> String {
 
 /// breadcrumb の右側に淡色で続けるパス。breadcrumb が無い、または
 /// パスと同じ内容を primary で既に出している場合は None。
+/// Azure DevOps 項目は breadcrumb 自体に作成者などの有益情報を持つため、
+/// 冗長でしかない URL は表示しない。
 pub(super) fn detail_secondary(entry: &Entry) -> Option<String> {
-    (!entry.breadcrumb.is_empty() && !entry.path.is_empty())
-        .then(|| format!("   ›   {}", entry.path))
+    (!entry.breadcrumb.is_empty()
+        && !entry.path.is_empty()
+        && !entry.breadcrumb.starts_with("Azure DevOps —"))
+    .then(|| format!("   ›   {}", entry.path))
 }
 
 /// リストボックスへ渡すプレーンラベル用の補足テキスト。
