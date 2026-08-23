@@ -1794,22 +1794,51 @@ impl SettingsApp {
                     ui.label("Filter");
                     ui.add(
                         egui::TextEdit::singleline(&mut picker.filter)
-                            .hint_text("Filter project names")
+                            .hint_text("Filter by project name or alias")
                             .desired_width(320.0),
                     );
+                    ui.checkbox(&mut picker.show_selected_only, "Selected only");
                     if picker.loading {
                         ui.spinner();
                         ui.label("Loading...");
                     }
                 });
 
+                let configured = parse_azure_projects(&picker.watched_projects).unwrap_or_default();
+                let aliases_of = |project: &str| -> Vec<String> {
+                    configured
+                        .iter()
+                        .find(|entry| {
+                            entry.organization.eq_ignore_ascii_case(&picker.loaded_organization)
+                                && entry.project.eq_ignore_ascii_case(project)
+                        })
+                        .map(|entry| entry.aliases.clone())
+                        .unwrap_or_default()
+                };
+
                 let filter = picker.filter.to_lowercase();
-                let filtered: Vec<_> = picker
+                let mut filtered: Vec<_> = picker
                     .available_projects
                     .iter()
-                    .filter(|project| filter.is_empty() || project.to_lowercase().contains(&filter))
+                    .filter(|project| picker.selected_projects.contains(*project) || !picker.show_selected_only)
+                    .filter(|project| {
+                        filter.is_empty()
+                            || project.to_lowercase().contains(&filter)
+                            || aliases_of(project)
+                                .iter()
+                                .any(|alias| alias.to_lowercase().contains(&filter))
+                    })
                     .cloned()
                     .collect();
+                // 選択済みを先頭に集め、大量の候補の中でも今の選択状態がすぐ見える。
+                filtered.sort_by(|a, b| {
+                    let a_selected = picker.selected_projects.contains(a);
+                    let b_selected = picker.selected_projects.contains(b);
+                    b_selected
+                        .cmp(&a_selected)
+                        .then_with(|| a.to_lowercase().cmp(&b.to_lowercase()))
+                });
+
                 ui.horizontal(|ui| {
                     ui.label(format!(
                         "{} of {} projects shown; {} selected.",
@@ -1825,19 +1854,28 @@ impl SettingsApp {
                             picker.selected_projects.remove(project);
                         }
                     }
+                    if ui.button("Clear all").clicked() {
+                        picker.selected_projects.clear();
+                    }
                 });
                 egui::ScrollArea::vertical()
                     .max_height(300.0)
                     .show(ui, |ui| {
                         for project in &filtered {
                             let mut checked = picker.selected_projects.contains(project);
-                            if ui.checkbox(&mut checked, project).changed() {
-                                if checked {
-                                    picker.selected_projects.insert(project.clone());
-                                } else {
-                                    picker.selected_projects.remove(project);
+                            ui.horizontal(|ui| {
+                                if ui.checkbox(&mut checked, project).changed() {
+                                    if checked {
+                                        picker.selected_projects.insert(project.clone());
+                                    } else {
+                                        picker.selected_projects.remove(project);
+                                    }
                                 }
-                            }
+                                let aliases = aliases_of(project);
+                                if !aliases.is_empty() {
+                                    ui.weak(format!("({})", aliases.join(", ")));
+                                }
+                            });
                         }
                     });
                 ui.label("Advanced (aliases and priority; one project per line)");
@@ -2286,6 +2324,7 @@ struct AzureProjectPicker {
     organization: String,
     pat: String,
     filter: String,
+    show_selected_only: bool,
     available_projects: Vec<String>,
     selected_projects: std::collections::BTreeSet<String>,
     loaded_organization: String,
@@ -2347,6 +2386,7 @@ impl AzureProjectPicker {
             organization,
             pat: String::new(),
             filter: String::new(),
+            show_selected_only: false,
             available_projects: Vec::new(),
             selected_projects: std::collections::BTreeSet::new(),
             loaded_organization: String::new(),
