@@ -58,9 +58,10 @@ fn main() {
     // host を見つけられるよう登録だけを済ませ、手作業を発生させない。
     let _ = waypoint::browser_tabs::register_native_host();
 
-    tray::load_state();
-
-    let hwnd = match tray::install() {
+    // トレイアイコンが見えてからホットキーが使えるまでの間に、ユーザーが
+    // 触れる隙を作らない。先に受け口ウィンドウだけ作り (アイコンはまだ
+    // 出ない)、設定読込とホットキー登録を終えてからアイコンを表示する。
+    let hwnd = match tray::create_window() {
         Ok(hwnd) => hwnd,
         Err(err) => {
             if selftest {
@@ -70,12 +71,17 @@ fn main() {
         }
     };
 
-    // 設定は tray::load_state() で読み込み済み。ここで再読み込みしない
+    tray::load_state();
+
     let hotkey = tray::register_hotkey_from_config(hwnd);
     let quick_launch_hotkey = tray::register_quick_launch_hotkey_from_config(hwnd);
     tray::set_hotkey_failed(!hotkey.is_active());
     tray::set_quick_launch_hotkey_failed(!quick_launch_hotkey.is_active());
     let hook = trigger::install_mouse_hook(hwnd).ok();
+
+    if !selftest && tray::show_icon(hwnd).is_err() {
+        return;
+    }
 
     if selftest {
         write_selftest_result(&selftest_report(hwnd, hotkey, hook.is_some()));

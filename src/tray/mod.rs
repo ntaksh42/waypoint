@@ -213,8 +213,13 @@ pub fn set_quick_launch_hotkey_failed(failed: bool) {
     });
 }
 
-/// トレイに常駐する。戻り値は受け口ウィンドウのハンドル。
-pub fn install() -> Result<HWND> {
+/// 受け口ウィンドウだけを作る。トレイアイコンはまだ出さない。
+///
+/// ホットキー登録には既にこのウィンドウが要る。アイコンが見えてから
+/// ホットキーが使えるまでの間にユーザーが触れる隙を作らないよう、
+/// 先にウィンドウだけ作って呼び出し側で設定読込・ホットキー登録を
+/// 済ませ、その後で `show_icon` を呼ぶ運用にする (main.rs 参照)。
+pub fn create_window() -> Result<HWND> {
     unsafe {
         let instance = GetModuleHandleW(None)?;
         let icon_resource = PCWSTR(std::ptr::without_provenance(1));
@@ -249,6 +254,18 @@ pub fn install() -> Result<HWND> {
             None,
         )?;
 
+        Ok(hwnd)
+    }
+}
+
+/// トレイアイコンを表示する。`create_window` で作ったハンドルを渡す。
+pub fn show_icon(hwnd: HWND) -> Result<()> {
+    unsafe {
+        let instance = GetModuleHandleW(None)?;
+        let icon_resource = PCWSTR(std::ptr::without_provenance(1));
+        let app_icon = LoadIconW(Some(instance.into()), icon_resource)
+            .or_else(|_| LoadIconW(None, IDI_APPLICATION))?;
+
         let mut data = NOTIFYICONDATAW {
             cbSize: size_of::<NOTIFYICONDATAW>() as u32,
             hWnd: hwnd,
@@ -262,7 +279,7 @@ pub fn install() -> Result<HWND> {
 
         Shell_NotifyIconW(NIM_ADD, &data).ok()?;
 
-        Ok(hwnd)
+        Ok(())
     }
 }
 
