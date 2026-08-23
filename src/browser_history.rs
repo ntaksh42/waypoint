@@ -54,12 +54,26 @@ pub fn scan() -> Vec<Visit> {
 /// `immutable=1` の URI 接続はロックを一切取らないため、ブラウザが開いたままでも読める
 /// (実測: 通常オープンは `database is locked` で毎回失敗し、`h ` 検索が常に 0 件になっていた)。
 fn read_profile(profile: &Profile) -> rusqlite::Result<Vec<(i64, Visit)>> {
-    let uri = format!("file:{}?immutable=1", profile.path.display());
+    let uri = format!(
+        "file:{}?immutable=1",
+        encode_uri_path(&profile.path.display().to_string())
+    );
     let connection = Connection::open_with_flags(
         uri,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI,
     )?;
     read_connection(&connection, profile.browser)
+}
+
+/// SQLite の URI フィルタ (`file:...?query`) はパス中の `?` / `#` を
+/// クエリ・フラグメント区切りとして解釈してしまう。ユーザー名やプロファイル
+/// フォルダ名にこれらの文字が含まれると `unable to open database file` で
+/// 失敗するため、URI の区切りとして意味を持つ文字だけ `%XX` にエスケープする。
+/// `%` 自身も先にエスケープしないと、エスケープ後の文字列を誤って再解釈される。
+fn encode_uri_path(path: &str) -> String {
+    path.replace('%', "%25")
+        .replace('?', "%3F")
+        .replace('#', "%23")
 }
 
 fn read_connection(connection: &Connection, browser: &str) -> rusqlite::Result<Vec<(i64, Visit)>> {
@@ -134,5 +148,22 @@ mod tests {
         assert_eq!(visits.len(), 2);
         assert_eq!(visits[0].title, "WayPoint");
         assert_eq!(visits[1].title, "https://example.com/no-title");
+    }
+
+    /// プロファイルパスに `#` / `?` / `%` が含まれると、SQLite の URI フィルタが
+    /// クエリ・フラグメント区切りと誤認して `immutable=1` 接続に失敗していた。
+    #[test]
+    fn encode_uri_path_escapes_uri_delimiters() {
+        assert_eq!(
+            encode_uri_path(
+                r"C:\Users\alice#1\AppData\Local\Google\Chrome\User Data\Default\History"
+            ),
+            r"C:\Users\alice%231\AppData\Local\Google\Chrome\User Data\Default\History"
+        );
+        assert_eq!(encode_uri_path("100%done"), "100%25done");
+        assert_eq!(
+            encode_uri_path(r"C:\normal path\History"),
+            r"C:\normal path\History"
+        );
     }
 }
