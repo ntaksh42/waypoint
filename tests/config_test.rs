@@ -138,6 +138,8 @@ fn missing_optional_fields_use_defaults() {
     assert!(cfg.settings.quick_launch.include_recent_folders);
     assert!(cfg.settings.quick_launch.include_frequent_folders);
     assert!(cfg.settings.quick_launch.include_browser_history);
+    assert!(!cfg.settings.quick_launch.azure_devops.enabled);
+    assert!(cfg.settings.quick_launch.azure_devops.projects.is_empty());
     assert!(!cfg.settings.quick_launch.search_paths);
     assert_eq!(cfg.settings.quick_launch.visible_results, 12);
 }

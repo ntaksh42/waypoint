@@ -1,6 +1,8 @@
 //! 標準 Win32 コントロールだけで構成する Quick Launch 画面。
 
 use std::cell::RefCell;
+use std::thread;
+use std::time::Duration;
 
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{
@@ -92,9 +94,15 @@ pub const WM_QUICK_LAUNCH_EXECUTE: u32 = WM_APP + 4;
 const EVERYTHING_REPLY_ID_START: u32 = WM_APP + 5;
 /// `Ctrl+Shift+Enter` で選択項目を config へ登録するよう常駐部へ依頼する。
 pub const WM_QUICK_LAUNCH_ADD_TO_FAVORITES: u32 = WM_APP + 6;
+/// Azure DevOps の Work Item 検索スレッドが結果を返す通知。
+pub const WM_QUICK_LAUNCH_AZURE_RESULTS: u32 = WM_APP + 7;
+/// WIT 入力のデバウンス完了通知。ネットワーク要求はこのメッセージで初めて始める。
+const WM_QUICK_LAUNCH_AZURE_START: u32 = WM_APP + 9;
 /// Quick Launch が一度に Everything へ要求する最大件数。
 /// 全件表示はしない (`visible_results` の上限と同じ枠で足りる)。
 const EVERYTHING_MAX_RESULTS: u32 = 24;
+/// WIT 検索は入力が止まってから始める。各キー入力ごとの API 呼び出しを防ぐ。
+const AZURE_WIT_DEBOUNCE: Duration = Duration::from_millis(180);
 const CLASS_NAME: PCWSTR = w!("WaypointQuickLaunchWindow");
 
 thread_local! {
@@ -127,6 +135,7 @@ struct State {
     background_brush: Option<HBRUSH>,
     surface_brush: Option<HBRUSH>,
     everything_enabled: bool,
+    azure_devops: crate::config::AzureDevOpsSettings,
     /// `f ` プレフィックスの間だけ立てる。プレフィックスを抜けた後に
     /// 遅れて届く Everything の応答を、無関係な検索結果へ混ぜないための
     /// ガード。
@@ -138,6 +147,12 @@ struct State {
     /// (`everything::MATCH_CASE` 等の OR 合成)。モードを抜けても値は保持し、
     /// 次に `f ` へ入ったときも同じ絞り込みを引き継ぐ。
     everything_flags: u32,
+    /// `az wit ` 中だけ立てる。古い検索スレッドの結果を捨てるために使う。
+    azure_work_items_active: bool,
+    azure_work_item_reply_id: u32,
+    azure_work_item_query: String,
+    /// 非同期検索中・0 件時に結果一覧へ出す説明。実行対象にはしない。
+    empty_message: Option<String>,
     /// 現在の入力が `b `/`w `/`a `/`f ` のいずれかに入っていれば
     /// そのモード名。検索窓のバッジ表示に使う。
     badge: Option<&'static str>,
@@ -151,6 +166,7 @@ pub fn configure(config: &Config, dynamic: &Menus) {
             state.index = Index::build(config, dynamic);
             state.visible_results = config.settings.quick_launch.visible_results.clamp(12, 24);
             state.everything_enabled = config.settings.quick_launch.include_everything;
+            state.azure_devops = config.settings.quick_launch.azure_devops.clone();
             state.window.is_some()
         };
         if has_window {
@@ -505,6 +521,14 @@ fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT
             hide_window(Some(hwnd));
             LRESULT(0)
         }
+        WM_QUICK_LAUNCH_AZURE_START => {
+            start_debounced_azure_work_item_query(wparam.0 as u32);
+            LRESULT(0)
+        }
+        WM_QUICK_LAUNCH_AZURE_RESULTS => {
+            handle_azure_work_item_results(wparam.0 as u32);
+            LRESULT(0)
+        }
         windows::Win32::UI::WindowsAndMessaging::WM_COPYDATA => {
             if lparam.0 != 0 {
                 unsafe {
@@ -591,11 +615,19 @@ fn update_results(state: &RefCell<State>) {
         start_everything_query(state, rest);
         return;
     }
+    if let Some((crate::quick_launch::AzureCommand::WorkItems, rest)) =
+        crate::quick_launch::azure_command(&query)
+    {
+        start_azure_work_item_query(state, rest);
+        return;
+    }
 
     let (list, labels, has_results) = {
         let mut state = state.borrow_mut();
         // プレフィックスを外れたら、遅れて届く Everything の応答を無視させる
         state.everything_active = false;
+        state.azure_work_items_active = false;
+        state.empty_message = None;
         state.copy_feedback = false;
         state.results = state.index.search(&query).into_iter().cloned().collect();
         let labels: Vec<HSTRING> = state
@@ -639,6 +671,143 @@ fn start_everything_query(state: &RefCell<State>, text: &str) {
         return;
     };
     crate::everything::query(window, reply_id, text, EVERYTHING_MAX_RESULTS, flags);
+}
+
+/// `az wit ` に入った。入力が止まるまで待ってから API を呼び、入力中に
+/// プロジェクト数分の通信が積み上がらないようにする。
+fn start_azure_work_item_query(state: &RefCell<State>, text: &str) {
+    let (window, list, reply_id) = {
+        let mut state = state.borrow_mut();
+        state.everything_active = false;
+        state.azure_work_items_active = true;
+        state.results.clear();
+        state.empty_message = Some(if text.trim().is_empty() {
+            "Type words after az wit to search work items.".to_string()
+        } else {
+            "Searching Azure DevOps work items…".to_string()
+        });
+        state.azure_work_item_reply_id = next_azure_reply_id(state.azure_work_item_reply_id);
+        state.azure_work_item_query = text.trim().to_string();
+        (state.window, state.list, state.azure_work_item_reply_id)
+    };
+    if let Some(list) = list {
+        let message = state.borrow().empty_message.clone();
+        populate_empty_message(list, message.as_deref());
+    }
+    let (Some(window), false) = (window, text.trim().is_empty()) else {
+        return;
+    };
+    let notify = window.0 as isize;
+    thread::spawn(move || {
+        thread::sleep(AZURE_WIT_DEBOUNCE);
+        unsafe {
+            let _ = PostMessageW(
+                Some(HWND(notify as *mut _)),
+                WM_QUICK_LAUNCH_AZURE_START,
+                WPARAM(reply_id as usize),
+                LPARAM(0),
+            );
+        }
+    });
+}
+
+/// デバウンス済みの WIT 要求だけをネットワークスレッドへ渡す。
+fn start_debounced_azure_work_item_query(reply_id: u32) {
+    let request = STATE.with(|state| {
+        let state = state.borrow();
+        if accepts_azure_work_item_reply(
+            state.azure_work_items_active,
+            state.azure_work_item_reply_id,
+            reply_id,
+        ) {
+            state.window.map(|window| {
+                (
+                    state.azure_devops.clone(),
+                    state.azure_work_item_query.clone(),
+                    window,
+                )
+            })
+        } else {
+            None
+        }
+    });
+    let Some((settings, query, window)) = request else {
+        return;
+    };
+    if !settings.enabled {
+        set_azure_empty_message("Azure DevOps search is disabled in Settings.");
+        return;
+    }
+    if query.is_empty() {
+        return;
+    }
+    crate::azure_devops::search_work_items_async(
+        settings,
+        query,
+        reply_id,
+        window,
+        WM_QUICK_LAUNCH_AZURE_RESULTS,
+    );
+}
+
+fn set_azure_empty_message(message: &str) {
+    let outcome = STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        state.empty_message = Some(message.to_string());
+        state.list
+    });
+    if let Some(list) = outcome {
+        populate_empty_message(list, Some(message));
+    }
+}
+
+fn handle_azure_work_item_results(reply_id: u32) {
+    let Some(reply) = crate::azure_devops::take_work_item_results(reply_id) else {
+        return;
+    };
+    let outcome = STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        if !accepts_azure_work_item_reply(
+            state.azure_work_items_active,
+            state.azure_work_item_reply_id,
+            reply_id,
+        ) {
+            return None;
+        }
+        state.results = reply
+            .candidates
+            .into_iter()
+            .map(|candidate| Entry {
+                name: candidate.name,
+                breadcrumb: candidate.detail,
+                path: candidate.url.clone(),
+                action: Action::OpenUrl(candidate.url),
+                branch: None,
+            })
+            .collect();
+        state.empty_message = reply.message;
+        let labels: Vec<HSTRING> = state
+            .results
+            .iter()
+            .map(|entry| HSTRING::from(format!("{}    {}", entry.name, entry_context(entry))))
+            .collect();
+        Some((
+            state.list,
+            labels,
+            !state.results.is_empty(),
+            state.empty_message.clone(),
+        ))
+    });
+    let Some((list, labels, has_results, empty_message)) = outcome else {
+        return;
+    };
+    if let Some(list) = list {
+        if has_results {
+            populate_list(list, &labels, true);
+        } else {
+            populate_empty_message(list, empty_message.as_deref());
+        }
+    }
 }
 
 /// Everything から届いた `WM_COPYDATA` を結果リストへ反映する。
@@ -689,7 +858,15 @@ fn next_everything_reply_id(current: u32) -> u32 {
         .unwrap_or(EVERYTHING_REPLY_ID_START)
 }
 
+fn next_azure_reply_id(current: u32) -> u32 {
+    current.checked_add(1).filter(|id| *id != 0).unwrap_or(1)
+}
+
 fn accepts_everything_reply(active: bool, expected: u32, received: u32) -> bool {
+    active && expected == received
+}
+
+fn accepts_azure_work_item_reply(active: bool, expected: u32, received: u32) -> bool {
     active && expected == received
 }
 
@@ -720,6 +897,12 @@ fn populate_list(list: HWND, labels: &[HSTRING], has_results: bool) {
             );
         }
     }
+}
+
+/// 説明用の 1 行を出す。`results` には追加しないため Enter で実行されない。
+fn populate_empty_message(list: HWND, message: Option<&str>) {
+    let labels = message.map(HSTRING::from).into_iter().collect::<Vec<_>>();
+    populate_list(list, &labels, false);
 }
 
 fn read_text(hwnd: HWND) -> String {
@@ -1253,11 +1436,15 @@ unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
     if draw.itemID == u32::MAX {
         return;
     }
-    let Some((entry, name_font, detail_font, dpi, badge)) = STATE.with(|state| {
+    let Some((entry, empty_message, name_font, detail_font, dpi, badge)) = STATE.with(|state| {
         let state = state.borrow();
-        let entry = state.results.get(draw.itemID as usize)?.clone();
+        let entry = state.results.get(draw.itemID as usize).cloned();
+        if entry.is_none() && state.empty_message.is_none() {
+            return None;
+        }
         Some((
             entry,
+            state.empty_message.clone(),
             state.name_font,
             state.detail_font,
             state.dpi,
@@ -1272,6 +1459,19 @@ unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
         let background = CreateSolidBrush(BACKGROUND);
         FillRect(draw.hDC, &draw.rcItem, background);
         let _ = DeleteObject(background.into());
+
+        let Some(entry) = entry else {
+            if let (Some(message), Some(font)) = (empty_message, detail_font) {
+                let old = SelectObject(draw.hDC, font.into());
+                SetBkMode(draw.hDC, TRANSPARENT);
+                SetTextColor(draw.hDC, TEXT_SECONDARY);
+                let mut rect = draw.rcItem;
+                rect.left += scale(16, dpi);
+                draw_text(draw.hDC, &message, &mut rect);
+                SelectObject(draw.hDC, old);
+            }
+            return;
+        };
 
         // 選択行はカード風に少し内側へ収め、角を丸めて他の行から浮かせる
         if selected {
@@ -1506,7 +1706,10 @@ fn scale(value: i32, dpi: u32) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{accepts_everything_reply, next_everything_reply_id, word_start_before};
+    use super::{
+        accepts_azure_work_item_reply, accepts_everything_reply, next_everything_reply_id,
+        word_start_before,
+    };
 
     fn to_utf16(s: &str) -> Vec<u16> {
         s.encode_utf16().collect()
@@ -1557,5 +1760,12 @@ mod tests {
         assert!(!accepts_everything_reply(true, second, first));
         assert!(accepts_everything_reply(true, second, second));
         assert!(!accepts_everything_reply(false, second, second));
+    }
+
+    #[test]
+    fn stale_azure_work_item_request_is_rejected_after_more_typing() {
+        assert!(!accepts_azure_work_item_reply(true, 8, 7));
+        assert!(!accepts_azure_work_item_reply(false, 8, 8));
+        assert!(accepts_azure_work_item_reply(true, 8, 8));
     }
 }

@@ -3,7 +3,9 @@
 #![windows_subsystem = "windows"]
 
 use eframe::egui;
-use waypoint::config::{Config, Item, LoadOutcome, OpenMode};
+use waypoint::config::{
+    AzureDevOpsProject, AzureDevOpsSettings, Config, Item, LoadOutcome, OpenMode,
+};
 use waypoint::hotkey_capture;
 
 fn main() -> eframe::Result<()> {
@@ -190,6 +192,7 @@ struct SettingsApp {
     move_to_menu_draft: Option<MoveToMenuDraft>,
     variables_draft: Option<VariablesDraft>,
     trigger_draft: Option<TriggerDraft>,
+    azure_project_picker: Option<AzureProjectPicker>,
     import_draft: Option<ImportDraft>,
     /// アプリ内クリップボード。Ctrl+C でコピーした項目を保持する。
     clipboard: Vec<Item>,
@@ -232,6 +235,7 @@ impl SettingsApp {
             move_to_menu_draft: None,
             variables_draft: None,
             trigger_draft: None,
+            azure_project_picker: None,
             import_draft: None,
             clipboard: Vec::new(),
             add_pending: false,
@@ -721,6 +725,7 @@ impl SettingsApp {
             || self.move_to_menu_draft.is_some()
             || self.variables_draft.is_some()
             || self.trigger_draft.is_some()
+            || self.azure_project_picker.is_some()
             || self.import_draft.is_some()
             || self.add_pending
             || self.move_pending
@@ -1424,7 +1429,7 @@ impl SettingsApp {
                 }
                 ui.separator();
                 ui.horizontal(|ui| {
-                    apply = ui.button("OK").clicked();
+                    apply = ui.button("Save").clicked();
                     cancel = ui.button("Cancel").clicked();
                 });
             });
@@ -1559,18 +1564,25 @@ impl SettingsApp {
     }
 
     fn show_trigger_editor(&mut self, ctx: &egui::Context) {
+        // 子画面が開いている間は、背後の Esc / Enter を消費しない。
+        if self.azure_project_picker.is_some() {
+            return;
+        }
         let Some(draft) = self.trigger_draft.as_mut() else {
             return;
         };
         poll_hotkey_capture(ctx, draft);
         let mut apply = false;
         let mut cancel = false;
+        let mut open_picker = false;
         let window = egui::Window::new("Trigger")
             .collapsible(false)
-            .resizable(false)
-            .default_width(440.0)
+            .resizable(true)
+            .default_width(520.0)
+            .default_height(680.0)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.checkbox(&mut draft.middle_click, "Enable middle click");
                 ui.label("Hotkey");
                 hotkey_row(ui, draft, HotkeyField::Menu);
@@ -1601,6 +1613,24 @@ impl SettingsApp {
                     &mut draft.include_everything,
                     "Search all files via Everything (type \"f \" to search; requires Everything to be running)",
                 );
+                ui.separator();
+                ui.strong("Azure DevOps");
+                ui.checkbox(
+                    &mut draft.azure_enabled,
+                    "Enable Azure DevOps search (type \"az \" to search)",
+                );
+                ui.label(format!("Watching {} project(s).", azure_project_count(draft)));
+                let azure_status = waypoint::azure_devops::cache_status(&AzureDevOpsSettings {
+                    enabled: draft.azure_enabled,
+                    projects: parse_azure_projects(&draft.azure_projects).unwrap_or_default(),
+                });
+                ui.weak(waypoint::azure_devops::cache_status_label(&azure_status));
+                if let Some(error) = azure_status.last_error {
+                    ui.weak(format!("Last Azure DevOps error: {error}"));
+                }
+                if ui.button("Choose watched projects...").clicked() {
+                    open_picker = true;
+                }
                 ui.checkbox(&mut draft.search_paths, "Search folder paths");
                 ui.horizontal(|ui| {
                     ui.label("Visible results");
@@ -1621,8 +1651,13 @@ impl SettingsApp {
                     apply = ui.button("OK").clicked();
                     cancel = ui.button("Cancel").clicked();
                 });
+                });
             });
         lock_modal_focus(ctx, &window);
+
+        if open_picker {
+            self.azure_project_picker = Some(AzureProjectPicker::new(draft));
+        }
 
         // 除外プロセス欄が複数行なので Enter は改行に譲り、Esc だけ受ける。
         // 記録中の打鍵はフックが握り潰すため、ここには Esc は届かない
@@ -1644,7 +1679,11 @@ impl SettingsApp {
                 .eq_ignore_ascii_case(draft.quick_launch_hotkey.trim())
             {
                 draft.error = Some("The two hotkeys must be different.".to_string());
+            } else if let Err(error) = parse_azure_projects(&draft.azure_projects) {
+                draft.error = Some(error);
             } else {
+                let azure_projects = parse_azure_projects(&draft.azure_projects)
+                    .expect("validated Azure DevOps project lines");
                 self.config.settings.trigger.middle_click = draft.middle_click;
                 self.config.settings.trigger.hotkey = draft.hotkey.trim().to_string();
                 self.config.settings.trigger.excluded_processes = draft
@@ -1665,16 +1704,188 @@ impl SettingsApp {
                 self.config.settings.quick_launch.include_browser_history =
                     draft.include_browser_history;
                 self.config.settings.quick_launch.include_apps = draft.include_apps;
+                self.config.settings.quick_launch.azure_devops = AzureDevOpsSettings {
+                    enabled: draft.azure_enabled,
+                    projects: azure_projects,
+                };
                 self.config.settings.quick_launch.include_everything = draft.include_everything;
                 self.config.settings.quick_launch.search_paths = draft.search_paths;
                 self.config.settings.quick_launch.visible_results =
                     draft.visible_results.clamp(12, 24);
-                self.trigger_draft = None;
                 self.dirty = true;
                 self.status = None;
+                if self.save() {
+                    self.trigger_draft = None;
+                }
             }
         } else if cancel {
             self.trigger_draft = None;
+        }
+    }
+
+    fn show_azure_project_picker(&mut self, ctx: &egui::Context) {
+        let Some(picker) = self.azure_project_picker.as_mut() else {
+            return;
+        };
+        picker.poll_load();
+        if picker.loading {
+            // 受信スレッドは egui のイベントループを起こせないため、取得中だけ再描画する。
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+
+        let mut apply = false;
+        let mut cancel = false;
+        let window = egui::Window::new("Azure DevOps projects")
+            .collapsible(false)
+            .resizable(true)
+            .default_size([620.0, 640.0])
+            .min_size([500.0, 420.0])
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Organization");
+                    ui.add(egui::TextEdit::singleline(&mut picker.organization).desired_width(240.0));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("PAT");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut picker.pat)
+                            .password(true)
+                            .desired_width(300.0),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    if ui.button("Save PAT and load projects").clicked() {
+                        match waypoint::azure_devops::save_pat(&picker.organization, &picker.pat) {
+                            Ok(()) => {
+                                picker.pat.clear();
+                                picker.start_load();
+                            }
+                            Err(error) => {
+                                picker.status = None;
+                                picker.error = Some(error);
+                            }
+                        }
+                    }
+                    if ui
+                        .add_enabled(!picker.loading, egui::Button::new("Load projects"))
+                        .clicked()
+                    {
+                        picker.start_load();
+                    }
+                    if ui.button("Delete PAT").clicked() {
+                        match waypoint::azure_devops::delete_pat(&picker.organization) {
+                            Ok(()) => {
+                                picker.error = None;
+                                picker.status = Some(
+                                    "PAT removed from Windows Credential Manager.".to_string(),
+                                );
+                            }
+                            Err(error) => {
+                                picker.status = None;
+                                picker.error = Some(error);
+                            }
+                        }
+                    }
+                });
+                ui.weak("Required PAT scopes: Code (Read), Build (Read), Work Items (Read), Project and Team (Read).");
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("Filter");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut picker.filter)
+                            .hint_text("Filter project names")
+                            .desired_width(320.0),
+                    );
+                    if picker.loading {
+                        ui.spinner();
+                        ui.label("Loading...");
+                    }
+                });
+
+                let filter = picker.filter.to_lowercase();
+                let filtered: Vec<_> = picker
+                    .available_projects
+                    .iter()
+                    .filter(|project| filter.is_empty() || project.to_lowercase().contains(&filter))
+                    .cloned()
+                    .collect();
+                ui.horizontal(|ui| {
+                    ui.label(format!(
+                        "{} of {} projects shown; {} selected.",
+                        filtered.len(),
+                        picker.available_projects.len(),
+                        picker.selected_projects.len()
+                    ));
+                    if ui.button("Select shown").clicked() {
+                        picker.selected_projects.extend(filtered.iter().cloned());
+                    }
+                    if ui.button("Clear shown").clicked() {
+                        for project in &filtered {
+                            picker.selected_projects.remove(project);
+                        }
+                    }
+                });
+                egui::ScrollArea::vertical()
+                    .max_height(300.0)
+                    .show(ui, |ui| {
+                        for project in &filtered {
+                            let mut checked = picker.selected_projects.contains(project);
+                            if ui.checkbox(&mut checked, project).changed() {
+                                if checked {
+                                    picker.selected_projects.insert(project.clone());
+                                } else {
+                                    picker.selected_projects.remove(project);
+                                }
+                            }
+                        }
+                    });
+                ui.label("Advanced (aliases and priority; one project per line)");
+                ui.add(
+                    egui::TextEdit::multiline(&mut picker.watched_projects)
+                        .desired_rows(3)
+                        .desired_width(f32::INFINITY),
+                );
+                ui.weak("Example: contoso/Waypoint | wp, launcher | 10 | pr,pipelines,wit");
+                if let Some(status) = &picker.status {
+                    ui.colored_label(egui::Color32::LIGHT_GREEN, status);
+                }
+                if let Some(error) = &picker.error {
+                    ui.colored_label(egui::Color32::RED, error);
+                }
+                ui.separator();
+                ui.horizontal(|ui| {
+                    apply = ui.button("Apply").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+        lock_modal_focus(ctx, &window);
+
+        let (_, dismiss) = dialog_keys(ctx, false);
+        cancel |= dismiss;
+        let applied_projects = if apply {
+            match merge_selected_azure_projects(
+                &picker.watched_projects,
+                &picker.loaded_organization,
+                &picker.selected_projects,
+            ) {
+                Ok(projects) => Some(projects),
+                Err(error) => {
+                    picker.error = Some(error);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        if let Some(projects) = applied_projects {
+            if let Some(trigger) = self.trigger_draft.as_mut() {
+                trigger.azure_projects = projects;
+                trigger.error = None;
+            }
+            self.azure_project_picker = None;
+        } else if cancel {
+            self.azure_project_picker = None;
         }
     }
 
@@ -1944,6 +2155,7 @@ impl eframe::App for SettingsApp {
         self.show_move_to_menu_editor(&ctx);
         self.show_variables_editor(&ctx);
         self.show_trigger_editor(&ctx);
+        self.show_azure_project_picker(&ctx);
         self.show_import_editor(&ctx);
         self.show_confirmations(&ctx);
     }
@@ -2045,6 +2257,8 @@ fn poll_hotkey_capture(ctx: &egui::Context, draft: &mut TriggerDraft) {
     }
 }
 
+type AzureProjectLoad = (String, Result<Vec<String>, String>);
+
 struct TriggerDraft {
     middle_click: bool,
     hotkey: String,
@@ -2056,12 +2270,29 @@ struct TriggerDraft {
     include_bookmarks: bool,
     include_browser_history: bool,
     include_apps: bool,
+    azure_enabled: bool,
+    azure_projects: String,
     include_everything: bool,
     search_paths: bool,
     visible_results: usize,
     error: Option<String>,
     /// キー入力から記録中の欄 (FR-6.8.1) 。
     recording: Option<HotkeyField>,
+}
+
+/// 多数の Azure DevOps プロジェクトを検索して選ぶ専用画面の状態。
+struct AzureProjectPicker {
+    watched_projects: String,
+    organization: String,
+    pat: String,
+    filter: String,
+    available_projects: Vec<String>,
+    selected_projects: std::collections::BTreeSet<String>,
+    loaded_organization: String,
+    loader: Option<std::sync::mpsc::Receiver<AzureProjectLoad>>,
+    loading: bool,
+    status: Option<String>,
+    error: Option<String>,
 }
 
 /// ホットキーを持つ欄。記録先の指定に使う。
@@ -2093,6 +2324,8 @@ impl TriggerDraft {
             include_bookmarks: quick_launch.include_bookmarks,
             include_browser_history: quick_launch.include_browser_history,
             include_apps: quick_launch.include_apps,
+            azure_enabled: quick_launch.azure_devops.enabled,
+            azure_projects: format_azure_projects(&quick_launch.azure_devops.projects),
             include_everything: quick_launch.include_everything,
             search_paths: quick_launch.search_paths,
             visible_results: quick_launch.visible_results,
@@ -2100,6 +2333,271 @@ impl TriggerDraft {
             recording: None,
         }
     }
+}
+
+impl AzureProjectPicker {
+    fn new(trigger: &TriggerDraft) -> Self {
+        let projects = parse_azure_projects(&trigger.azure_projects).unwrap_or_default();
+        let organization = projects
+            .first()
+            .map(|project| project.organization.clone())
+            .unwrap_or_default();
+        Self {
+            watched_projects: trigger.azure_projects.clone(),
+            organization,
+            pat: String::new(),
+            filter: String::new(),
+            available_projects: Vec::new(),
+            selected_projects: std::collections::BTreeSet::new(),
+            loaded_organization: String::new(),
+            loader: None,
+            loading: false,
+            status: None,
+            error: None,
+        }
+    }
+
+    /// PAT 入力欄または保存済み資格情報を使い、設定画面を止めずに一覧を取る。
+    fn start_load(&mut self) {
+        let organization = self.organization.trim().to_string();
+        if organization.is_empty() {
+            self.error = Some("Organization is required.".to_string());
+            return;
+        }
+
+        let pat = self.pat.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.loader = Some(receiver);
+        self.loading = true;
+        self.error = None;
+        self.status = Some("Loading Azure DevOps projects...".to_string());
+        std::thread::spawn(move || {
+            let result = waypoint::azure_devops::list_projects(&organization, &pat);
+            let _ = sender.send((organization, result));
+        });
+    }
+
+    /// 非同期取得の完了を描画フレームで受け取る。
+    fn poll_load(&mut self) {
+        let Some(receiver) = self.loader.as_ref() else {
+            return;
+        };
+        let result = receiver.try_recv();
+        let (organization, result) = match result {
+            Ok(result) => result,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.loader = None;
+                self.loading = false;
+                self.status = None;
+                self.error = Some("Azure DevOps project loading stopped unexpectedly.".to_string());
+                return;
+            }
+        };
+        self.loader = None;
+        self.loading = false;
+        match result {
+            Ok(projects) => match selected_azure_projects(&self.watched_projects, &organization) {
+                Ok(selected) => {
+                    self.selected_projects = projects
+                        .iter()
+                        .filter(|project| {
+                            selected
+                                .iter()
+                                .any(|name| name.eq_ignore_ascii_case(project))
+                        })
+                        .cloned()
+                        .collect();
+                    self.available_projects = projects;
+                    self.loaded_organization = organization;
+                    self.error = None;
+                    self.status = Some(format!(
+                        "Loaded {} Azure DevOps projects.",
+                        self.available_projects.len()
+                    ));
+                }
+                Err(error) => self.error = Some(error),
+            },
+            Err(error) => {
+                self.status = None;
+                self.error = Some(error);
+            }
+        }
+    }
+}
+
+fn format_azure_projects(projects: &[AzureDevOpsProject]) -> String {
+    projects
+        .iter()
+        .map(|project| {
+            format!(
+                "{}/{} | {} | {} | {}",
+                project.organization,
+                project.project,
+                project.aliases.join(", "),
+                project.priority,
+                format_azure_scopes(project)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn format_azure_scopes(project: &AzureDevOpsProject) -> String {
+    [
+        (project.include_pull_requests, "pr"),
+        (project.include_pipelines, "pipelines"),
+        (project.include_work_items, "wit"),
+    ]
+    .into_iter()
+    .filter_map(|(included, label)| included.then_some(label))
+    .collect::<Vec<_>>()
+    .join(",")
+}
+
+fn parse_azure_projects(text: &str) -> Result<Vec<AzureDevOpsProject>, String> {
+    let mut projects = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for (line_number, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let mut columns = line.split('|').map(str::trim);
+        let target = columns.next().unwrap_or_default();
+        let aliases = columns.next().unwrap_or_default();
+        let priority = columns.next().unwrap_or_default();
+        let scopes = columns.next().unwrap_or_default();
+        if columns.next().is_some() {
+            return Err(format!(
+                "Azure DevOps project line {} has too many columns.",
+                line_number + 1
+            ));
+        }
+        let Some((organization, project)) = target.split_once('/') else {
+            return Err(format!(
+                "Azure DevOps project line {} must be organization/project.",
+                line_number + 1
+            ));
+        };
+        let organization = organization.trim();
+        let project = project.trim();
+        if organization.is_empty() || project.is_empty() {
+            return Err(format!(
+                "Azure DevOps project line {} must name both organization and project.",
+                line_number + 1
+            ));
+        }
+        let key = format!(
+            "{}/{}",
+            organization.to_ascii_lowercase(),
+            project.to_ascii_lowercase()
+        );
+        if !seen.insert(key) {
+            return Err(format!(
+                "Azure DevOps project line {} duplicates an earlier project.",
+                line_number + 1
+            ));
+        }
+        let priority = if priority.is_empty() {
+            0
+        } else {
+            priority.parse().map_err(|_| {
+                format!(
+                    "Azure DevOps project line {} has an invalid priority.",
+                    line_number + 1
+                )
+            })?
+        };
+        let scopes: Vec<_> = scopes
+            .split(',')
+            .map(|scope| scope.trim().to_ascii_lowercase())
+            .filter(|scope| !scope.is_empty())
+            .collect();
+        let valid_scopes = ["pr", "pipelines", "wit"];
+        if scopes
+            .iter()
+            .any(|scope| !valid_scopes.contains(&scope.as_str()))
+        {
+            return Err(format!(
+                "Azure DevOps project line {} has an invalid sync scope.",
+                line_number + 1
+            ));
+        }
+        let all_scopes = scopes.is_empty();
+        projects.push(AzureDevOpsProject {
+            organization: organization.to_string(),
+            project: project.to_string(),
+            aliases: aliases
+                .split(',')
+                .map(str::trim)
+                .filter(|alias| !alias.is_empty())
+                .map(str::to_string)
+                .collect(),
+            priority,
+            include_pull_requests: all_scopes || scopes.iter().any(|scope| scope == "pr"),
+            include_pipelines: all_scopes || scopes.iter().any(|scope| scope == "pipelines"),
+            include_work_items: all_scopes || scopes.iter().any(|scope| scope == "wit"),
+        });
+    }
+    Ok(projects)
+}
+
+/// 設定済みのうち、指定 Organization に属するプロジェクト名を抜き出す。
+fn selected_azure_projects(
+    text: &str,
+    organization: &str,
+) -> Result<std::collections::BTreeSet<String>, String> {
+    Ok(parse_azure_projects(text)?
+        .into_iter()
+        .filter(|project| project.organization.eq_ignore_ascii_case(organization))
+        .map(|project| project.project)
+        .collect())
+}
+
+/// チェック結果を設定本文へ反映する。他 Organization の設定と、選択済み項目の
+/// aliases / priority はそのまま残す。
+fn merge_selected_azure_projects(
+    text: &str,
+    organization: &str,
+    selected: &std::collections::BTreeSet<String>,
+) -> Result<String, String> {
+    let organization = organization.trim();
+    if organization.is_empty() {
+        return Err("Load an Azure DevOps project list first.".to_string());
+    }
+    let configured = parse_azure_projects(text)?;
+    let mut updated: Vec<_> = configured
+        .iter()
+        .filter(|project| !project.organization.eq_ignore_ascii_case(organization))
+        .cloned()
+        .collect();
+
+    for project_name in selected {
+        if let Some(existing) = configured.iter().find(|project| {
+            project.organization.eq_ignore_ascii_case(organization)
+                && project.project.eq_ignore_ascii_case(project_name)
+        }) {
+            updated.push(existing.clone());
+        } else {
+            updated.push(AzureDevOpsProject {
+                organization: organization.to_string(),
+                project: project_name.clone(),
+                aliases: Vec::new(),
+                priority: 0,
+                include_pull_requests: true,
+                include_pipelines: true,
+                include_work_items: true,
+            });
+        }
+    }
+    Ok(format_azure_projects(&updated))
+}
+
+fn azure_project_count(draft: &TriggerDraft) -> usize {
+    parse_azure_projects(&draft.azure_projects)
+        .map(|projects| projects.len())
+        .unwrap_or_default()
 }
 
 impl TriggerDraft {
@@ -2468,6 +2966,7 @@ mod tests {
             move_to_menu_draft: None,
             variables_draft: None,
             trigger_draft: None,
+            azure_project_picker: None,
             import_draft: None,
             clipboard: Vec::new(),
             add_pending: false,
@@ -2593,5 +3092,51 @@ mod tests {
         app.move_selected_to_menu(&[0]);
         // 何も起きない: Sub はまだルートに残ったまま
         assert_eq!(names(&app), vec!["Sub"]);
+    }
+
+    #[test]
+    fn parses_multiple_azure_devops_projects_with_aliases_and_priority() {
+        let projects = parse_azure_projects(
+            "contoso/Waypoint | wp, launcher | 10\ncontoso/Platform | infra | 20",
+        )
+        .unwrap();
+        assert_eq!(projects.len(), 2);
+        assert_eq!(projects[0].organization, "contoso");
+        assert_eq!(projects[0].aliases, ["wp", "launcher"]);
+        assert_eq!(projects[1].priority, 20);
+    }
+
+    #[test]
+    fn rejects_duplicate_azure_devops_projects() {
+        let error = parse_azure_projects("contoso/Waypoint\nCONTOSO/waypoint")
+            .expect_err("duplicate project should fail");
+        assert!(error.contains("duplicates"));
+    }
+
+    #[test]
+    fn applying_checked_azure_projects_keeps_other_organizations_and_metadata() {
+        let watched_projects =
+            "contoso/Waypoint | wp | 10\nfabrikam/Platform | platform | 20".to_string();
+        let selected = ["New Project".to_string(), "Waypoint".to_string()]
+            .into_iter()
+            .collect();
+
+        let updated =
+            merge_selected_azure_projects(&watched_projects, "contoso", &selected).unwrap();
+
+        let projects = parse_azure_projects(&updated).unwrap();
+        assert_eq!(projects.len(), 3);
+        assert_eq!(projects[0].organization, "fabrikam");
+        assert_eq!(projects[1].project, "New Project");
+        assert_eq!(projects[2].aliases, ["wp"]);
+        assert_eq!(projects[2].priority, 10);
+    }
+
+    #[test]
+    fn parses_per_project_azure_sync_scopes() {
+        let projects = parse_azure_projects("contoso/Waypoint | wp | 10 | pr,wit").unwrap();
+        assert!(projects[0].include_pull_requests);
+        assert!(!projects[0].include_pipelines);
+        assert!(projects[0].include_work_items);
     }
 }

@@ -10,6 +10,8 @@ use crate::quick_launch_history::Ranking;
 const BOOKMARK_PREFIX: &str = "b ";
 /// ブラウザ履歴検索モードに入るプレフィックス (末尾の半角スペース込み)。
 const HISTORY_PREFIX: &str = "h ";
+/// Azure DevOps 検索モードに入るプレフィックス (末尾の半角スペース込み)。
+pub const AZURE_DEVOPS_PREFIX: &str = "az ";
 /// Open Windows 検索モードに入るプレフィックス (末尾の半角スペース込み)。
 const WINDOW_PREFIX: &str = "w ";
 /// Everything 検索モードに入るプレフィックス (末尾の半角スペース込み)。
@@ -28,6 +30,8 @@ pub fn prefix_badge(query: &str) -> Option<&'static str> {
         Some("BOOKMARKS")
     } else if query.starts_with(HISTORY_PREFIX) {
         Some("HISTORY")
+    } else if query.starts_with(AZURE_DEVOPS_PREFIX) {
+        Some("AZURE DEVOPS")
     } else if query.starts_with(WINDOW_PREFIX) {
         Some("WINDOWS")
     } else if query.starts_with(APPS_PREFIX) {
@@ -105,10 +109,72 @@ pub struct Index {
     entries: Vec<Entry>,
     bookmarks: Vec<Entry>,
     history: Vec<Entry>,
+    azure: Vec<AzureIndexed>,
     windows: Vec<Entry>,
     apps: Vec<Entry>,
     search_paths: bool,
     ranking: Ranking,
+}
+
+#[derive(Debug, Clone)]
+struct AzureIndexed {
+    entry: Entry,
+    kind: crate::azure_devops::Kind,
+    status: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AzureCommand {
+    All,
+    PullRequests(crate::azure_devops::PullRequestStatus),
+    Pipelines(PipelineFilter),
+    Projects,
+    WorkItems,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PipelineFilter {
+    All,
+    Definitions,
+    Failed,
+}
+
+/// `az` のサブコマンドを分解する。未知の先頭語は検索語として扱うので、
+/// `az waypoint` は横断検索、`az pr waypoint` は PR 検索になる。
+pub fn azure_command(query: &str) -> Option<(AzureCommand, &str)> {
+    let rest = query.strip_prefix(AZURE_DEVOPS_PREFIX)?;
+    let (first, remaining) = rest
+        .split_once(char::is_whitespace)
+        .map_or((rest, ""), |(first, remaining)| {
+            (first, remaining.trim_start())
+        });
+    let command = match first.to_ascii_lowercase().as_str() {
+        "pr" | "prs" => Some(AzureCommand::PullRequests(
+            crate::azure_devops::PullRequestStatus::All,
+        )),
+        "pr-a" => Some(AzureCommand::PullRequests(
+            crate::azure_devops::PullRequestStatus::Active,
+        )),
+        "pr-c" => Some(AzureCommand::PullRequests(
+            crate::azure_devops::PullRequestStatus::Completed,
+        )),
+        "pr-ab" => Some(AzureCommand::PullRequests(
+            crate::azure_devops::PullRequestStatus::Abandoned,
+        )),
+        "pipeline" | "pipelines" | "pipe" | "build" | "builds" => {
+            Some(AzureCommand::Pipelines(PipelineFilter::All))
+        }
+        "pipeline-def" | "pipeline-definition" | "pipeline-definitions" => {
+            Some(AzureCommand::Pipelines(PipelineFilter::Definitions))
+        }
+        "pipeline-failed" | "pipeline-fail" | "build-failed" => {
+            Some(AzureCommand::Pipelines(PipelineFilter::Failed))
+        }
+        "project" | "projects" => Some(AzureCommand::Projects),
+        "wit" | "wi" | "workitem" | "workitems" => Some(AzureCommand::WorkItems),
+        _ => None,
+    };
+    Some(command.map_or((AzureCommand::All, rest), |command| (command, remaining)))
 }
 
 impl Index {
@@ -193,6 +259,51 @@ impl Index {
             Vec::new()
         };
 
+        let mut azure_candidates = if settings.azure_devops.enabled {
+            crate::azure_devops::project_candidates(&settings.azure_devops)
+        } else {
+            Vec::new()
+        };
+        azure_candidates.extend(crate::azure_devops::cached_candidates(
+            &settings.azure_devops,
+        ));
+        // 優先度を最優先しつつ、同一プロジェクト内では日常的に開く Active PR と
+        // 失敗した Pipeline を先頭へ置く。通常の使用履歴ランキングも後段で効く。
+        azure_candidates.sort_by_key(|candidate| {
+            let urgency = match (&candidate.kind, candidate.status.as_str()) {
+                (crate::azure_devops::Kind::PullRequest, status)
+                    if status.eq_ignore_ascii_case("active") =>
+                {
+                    0
+                }
+                (crate::azure_devops::Kind::Pipeline, status)
+                    if status.eq_ignore_ascii_case("failed") =>
+                {
+                    1
+                }
+                _ => 2,
+            };
+            (candidate.priority, urgency)
+        });
+        let azure = azure_candidates
+            .into_iter()
+            .map(|candidate| AzureIndexed {
+                entry: Entry {
+                    name: candidate.name,
+                    breadcrumb: if candidate.aliases.is_empty() {
+                        candidate.detail
+                    } else {
+                        format!("{} — {}", candidate.detail, candidate.aliases.join(" "))
+                    },
+                    path: candidate.url.clone(),
+                    action: Action::OpenUrl(candidate.url),
+                    branch: None,
+                },
+                kind: candidate.kind,
+                status: candidate.status,
+            })
+            .collect();
+
         let apps = if settings.include_apps {
             crate::apps::scan()
                 .into_iter()
@@ -212,6 +323,7 @@ impl Index {
             entries: dedup_by_path(entries),
             bookmarks,
             history,
+            azure,
             windows,
             apps,
             search_paths: settings.search_paths,
@@ -233,19 +345,71 @@ impl Index {
         if let Some(rest) = query.strip_prefix(APPS_PREFIX) {
             return search_entries(&self.apps, rest, false, &self.ranking);
         }
+        if let Some((command, rest)) = azure_command(query) {
+            return match command {
+                AzureCommand::All => search_entries(
+                    self.azure.iter().map(|entry| &entry.entry),
+                    rest,
+                    true,
+                    &self.ranking,
+                ),
+                AzureCommand::PullRequests(status) => search_entries(
+                    self.azure
+                        .iter()
+                        .filter(|entry| {
+                            entry.kind == crate::azure_devops::Kind::PullRequest
+                                && status.matches(&entry.status)
+                        })
+                        .map(|entry| &entry.entry),
+                    rest,
+                    true,
+                    &self.ranking,
+                ),
+                AzureCommand::Pipelines(filter) => search_entries(
+                    self.azure
+                        .iter()
+                        .filter(|entry| {
+                            entry.kind == crate::azure_devops::Kind::Pipeline
+                                && match filter {
+                                    PipelineFilter::All => true,
+                                    PipelineFilter::Definitions => {
+                                        entry.status.eq_ignore_ascii_case("definition")
+                                    }
+                                    PipelineFilter::Failed => {
+                                        entry.status.eq_ignore_ascii_case("failed")
+                                    }
+                                }
+                        })
+                        .map(|entry| &entry.entry),
+                    rest,
+                    true,
+                    &self.ranking,
+                ),
+                AzureCommand::Projects => search_entries(
+                    self.azure
+                        .iter()
+                        .filter(|entry| entry.kind == crate::azure_devops::Kind::Project)
+                        .map(|entry| &entry.entry),
+                    rest,
+                    true,
+                    &self.ranking,
+                ),
+                AzureCommand::WorkItems => Vec::new(),
+            };
+        }
         search_entries(&self.entries, query, self.search_paths, &self.ranking)
     }
 }
 
 fn search_entries<'a>(
-    entries: &'a [Entry],
+    entries: impl IntoIterator<Item = &'a Entry>,
     query: &str,
     search_paths: bool,
     ranking: &Ranking,
 ) -> Vec<&'a Entry> {
     let terms: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
     let mut matches: Vec<(u8, (u64, u64), usize, &Entry)> = entries
-        .iter()
+        .into_iter()
         .enumerate()
         .filter_map(|(order, entry)| {
             let name = entry.name.to_lowercase();
@@ -447,6 +611,19 @@ mod tests {
                 path: "https://github.com/example/waypoint/pull/1".into(),
                 action: Action::OpenUrl("https://github.com/example/waypoint/pull/1".into()),
                 branch: None,
+            }],
+            azure: vec![AzureIndexed {
+                entry: Entry {
+                    name: "PR 42: Add Azure search".into(),
+                    breadcrumb: "Azure DevOps — org/Waypoint — active — wp".into(),
+                    path: "https://dev.azure.com/org/Waypoint/_git/app/pullrequest/42".into(),
+                    action: Action::OpenUrl(
+                        "https://dev.azure.com/org/Waypoint/_git/app/pullrequest/42".into(),
+                    ),
+                    branch: None,
+                },
+                kind: crate::azure_devops::Kind::PullRequest,
+                status: "active".into(),
             }],
             windows: vec![Entry {
                 name: "waypoint - Notepad".into(),
@@ -654,6 +831,14 @@ mod tests {
     }
 
     #[test]
+    fn azure_pr_status_command_filters_cached_pull_requests() {
+        let index = index();
+        assert_eq!(index.search("az pr-a azure").len(), 1);
+        assert!(index.search("az pr-c azure").is_empty());
+        assert_eq!(index.search("az wp").len(), 1);
+    }
+
+    #[test]
     fn shell_items_are_indexed_and_open_with_default_handler() {
         let config = Config {
             items: vec![Item::Shell {
@@ -721,11 +906,43 @@ mod tests {
     fn prefix_badge_identifies_each_mode() {
         assert_eq!(prefix_badge("b git"), Some("BOOKMARKS"));
         assert_eq!(prefix_badge("h waypoint"), Some("HISTORY"));
+        assert_eq!(prefix_badge("az pr-a waypoint"), Some("AZURE DEVOPS"));
         assert_eq!(prefix_badge("w notepad"), Some("WINDOWS"));
         assert_eq!(prefix_badge("a code"), Some("APPS"));
         assert_eq!(prefix_badge("f cargo.toml"), Some("FILES"));
         assert_eq!(prefix_badge("plain query"), None);
         assert_eq!(prefix_badge(""), None);
+    }
+
+    #[test]
+    fn azure_command_recognizes_all_supported_subcommands() {
+        assert_eq!(
+            azure_command("az pr-c done"),
+            Some((
+                AzureCommand::PullRequests(crate::azure_devops::PullRequestStatus::Completed),
+                "done"
+            ))
+        );
+        assert_eq!(
+            azure_command("az wit bug"),
+            Some((AzureCommand::WorkItems, "bug"))
+        );
+        assert_eq!(
+            azure_command("az pipelines release"),
+            Some((AzureCommand::Pipelines(PipelineFilter::All), "release"))
+        );
+        assert_eq!(
+            azure_command("az pipeline-failed release"),
+            Some((AzureCommand::Pipelines(PipelineFilter::Failed), "release"))
+        );
+        assert_eq!(
+            azure_command("az workitems defect"),
+            Some((AzureCommand::WorkItems, "defect"))
+        );
+        assert_eq!(
+            azure_command("az platform"),
+            Some((AzureCommand::All, "platform"))
+        );
     }
 
     /// showBranch が真の Folder は、このリポジトリ自身を指せば

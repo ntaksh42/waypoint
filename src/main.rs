@@ -74,6 +74,8 @@ fn main() {
         return;
     }
 
+    tray::refresh_azure_devops(hwnd);
+
     run_message_loop();
 
     cleanup(hwnd, hook);

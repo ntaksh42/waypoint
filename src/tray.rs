@@ -38,6 +38,7 @@ use crate::trigger::{self, Registration, WM_TRIGGER_MENU};
 /// トレイアイコンからの通知。WM_APP 以降はアプリが自由に使える。
 const WM_TRAY: u32 = WM_APP + 1;
 const WM_RELOAD_CONFIG: u32 = WM_APP + 3;
+pub const WM_AZURE_DEVOPS_REFRESHED: u32 = WM_APP + 8;
 const TRAY_UID: u32 = 1;
 
 // トレイの右クリックメニューの項目 ID
@@ -45,6 +46,7 @@ const ID_SETTINGS: usize = 9001;
 const ID_RELOAD: usize = 9002;
 const ID_AUTOSTART: usize = 9003;
 const ID_EXIT: usize = 9004;
+const ID_AZURE_REFRESH: usize = 9005;
 const ICON_RELOAD: &[u8] = include_bytes!("../assets/menu/reload.png");
 const ICON_CLOSE: &[u8] = include_bytes!("../assets/menu/close.png");
 
@@ -116,6 +118,24 @@ pub fn reload(hwnd: HWND) {
     set_hotkey_failed(!reg.is_active());
     let quick_reg = register_quick_launch_hotkey_from_config(hwnd);
     set_quick_launch_hotkey_failed(!quick_reg.is_active());
+    refresh_azure_devops(hwnd);
+}
+
+/// Azure DevOps のキャッシュ同期を開始する。完了後の通知で Quick Launch の
+/// 検索インデックスだけを差し替えるため、メニュー表示経路へは入らない。
+pub fn refresh_azure_devops(hwnd: HWND) {
+    STATE.with(|state| {
+        let state = state.borrow();
+        let Some(state) = state.as_ref() else {
+            return;
+        };
+        let _ = crate::azure_devops::prune_cache(&state.config.settings.quick_launch.azure_devops);
+        let _ = crate::azure_devops::refresh_async(
+            state.config.settings.quick_launch.azure_devops.clone(),
+            hwnd,
+            WM_AZURE_DEVOPS_REFRESHED,
+        );
+    });
 }
 
 /// 読み込み済みの設定でホットキーを登録する。
@@ -349,6 +369,15 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
             reload(hwnd);
             LRESULT(0)
         }
+        WM_AZURE_DEVOPS_REFRESHED => {
+            STATE.with(|state| {
+                let state = state.borrow();
+                if let Some(state) = state.as_ref() {
+                    quick_launch_window::configure(&state.config, &state.dynamic);
+                }
+            });
+            LRESULT(0)
+        }
         // ダーク / ライトの切り替えでアイコンの見え方が変わる。
         // 古いビットマップを捨て、次回表示で引き直す
         WM_SETTINGCHANGE | WM_THEMECHANGED => {
@@ -490,6 +519,7 @@ fn show_tray_menu(hwnd: HWND) {
     match selected {
         ID_SETTINGS => open_config_in_editor(),
         ID_RELOAD => reload(hwnd),
+        ID_AZURE_REFRESH => refresh_azure_devops(hwnd),
         ID_AUTOSTART => {
             let now = crate::autostart::is_enabled();
             let _ = crate::autostart::set_enabled(!now);
@@ -583,6 +613,18 @@ unsafe fn build_tray_items(menu: HMENU) -> Result<()> {
                         st.config.settings.quick_launch.hotkey
                     ));
                 }
+                let azure = crate::azure_devops::cache_status(
+                    &st.config.settings.quick_launch.azure_devops,
+                );
+                if azure.refresh_in_progress {
+                    warnings.push("Azure DevOps refresh in progress".to_string());
+                } else if azure.failed_projects > 0 {
+                    warnings.push(format!(
+                        "Azure DevOps refresh failed for {} project(s): {}",
+                        azure.failed_projects,
+                        azure.last_error.unwrap_or_else(|| "see log".to_string())
+                    ));
+                }
             }
         });
         if !warnings.is_empty() {
@@ -607,6 +649,12 @@ unsafe fn build_tray_items(menu: HMENU) -> Result<()> {
         }
         AppendMenuW(menu, MF_STRING, ID_RELOAD, w!("Reload config"))?;
         set_tray_item_icon(menu, ID_RELOAD, "reload", ICON_RELOAD);
+        AppendMenuW(
+            menu,
+            MF_STRING,
+            ID_AZURE_REFRESH,
+            w!("Refresh Azure DevOps"),
+        )?;
 
         let autostart_flags = if crate::autostart::is_enabled() {
             MF_STRING | MF_CHECKED
