@@ -98,24 +98,10 @@ impl Index {
         azure_candidates.extend(crate::azure_devops::cached_candidates(
             &settings.azure_devops,
         ));
-        // 優先度を最優先しつつ、同一プロジェクト内では日常的に開く Active PR と
-        // 失敗した Pipeline を先頭へ置く。通常の使用履歴ランキングも後段で効く。
-        azure_candidates.sort_by_key(|candidate| {
-            let urgency = match (&candidate.kind, candidate.status.as_str()) {
-                (crate::azure_devops::Kind::PullRequest, status)
-                    if status.eq_ignore_ascii_case("active") =>
-                {
-                    0
-                }
-                (crate::azure_devops::Kind::Pipeline, status)
-                    if status.eq_ignore_ascii_case("failed") =>
-                {
-                    1
-                }
-                _ => 2,
-            };
-            (candidate.priority, urgency)
-        });
+        // 優先度を最優先しつつ、同一プロジェクト内では自分が関与する PR、
+        // 日常的に開く Active PR、失敗した Pipeline の順に先頭へ置く。
+        // 通常の使用履歴ランキングも後段で効く。
+        azure_candidates.sort_by_key(|candidate| (candidate.priority, azure_urgency(candidate)));
         let azure = azure_candidates
             .into_iter()
             .map(|candidate| AzureIndexed {
@@ -245,5 +231,62 @@ fn collect_items(
             }
             Item::Separator { .. } => {}
         }
+    }
+}
+
+/// 自分が関与する PR、Active な PR、失敗した Pipeline の順に小さい値を返す。
+/// `azure_candidates.sort_by_key` の第二キーとして使う。
+fn azure_urgency(candidate: &crate::azure_devops::Candidate) -> u8 {
+    match (&candidate.kind, candidate.status.as_str()) {
+        (crate::azure_devops::Kind::PullRequest, _) if candidate.is_mine => 0,
+        (crate::azure_devops::Kind::PullRequest, status)
+            if status.eq_ignore_ascii_case("active") =>
+        {
+            1
+        }
+        (crate::azure_devops::Kind::Pipeline, status) if status.eq_ignore_ascii_case("failed") => 2,
+        _ => 3,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::azure_urgency;
+    use crate::azure_devops::{Candidate, Kind};
+
+    fn candidate(kind: Kind, status: &str, is_mine: bool) -> Candidate {
+        Candidate {
+            kind,
+            status: status.to_string(),
+            name: String::new(),
+            detail: String::new(),
+            url: String::new(),
+            organization: String::new(),
+            project: String::new(),
+            aliases: Vec::new(),
+            priority: 0,
+            is_mine,
+        }
+    }
+
+    #[test]
+    fn own_pull_requests_rank_before_other_active_pull_requests() {
+        let mine = candidate(Kind::PullRequest, "active", true);
+        let others_active = candidate(Kind::PullRequest, "active", false);
+        assert!(azure_urgency(&mine) < azure_urgency(&others_active));
+    }
+
+    #[test]
+    fn own_completed_pull_request_still_ranks_before_active_ones_from_others() {
+        let mine_completed = candidate(Kind::PullRequest, "completed", true);
+        let others_active = candidate(Kind::PullRequest, "active", false);
+        assert!(azure_urgency(&mine_completed) < azure_urgency(&others_active));
+    }
+
+    #[test]
+    fn active_pull_requests_rank_before_failed_pipelines() {
+        let active_pr = candidate(Kind::PullRequest, "active", false);
+        let failed_pipeline = candidate(Kind::Pipeline, "failed", false);
+        assert!(azure_urgency(&active_pr) < azure_urgency(&failed_pipeline));
     }
 }

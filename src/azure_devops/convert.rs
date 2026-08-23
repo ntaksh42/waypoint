@@ -28,6 +28,63 @@ pub(crate) fn sort_and_deduplicate_project_names(names: &mut Vec<String>) {
     names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
 }
 
+/// 1 つの Area ノード。`depth` は描画時のインデントに使う (0 がプロジェクト直下)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AreaNode {
+    pub path: String,
+    pub depth: usize,
+}
+
+/// `_apis/wit/classificationnodes/Areas` のレスポンスを深さ優先で平坦化する。
+/// ルート (プロジェクト名) 自体はノードに含めない。
+pub(crate) fn area_nodes(value: &Value) -> Vec<AreaNode> {
+    let mut nodes = Vec::new();
+    if let Some(children) = value["children"].as_array() {
+        let root = value["name"].as_str().unwrap_or_default();
+        for child in children {
+            collect_area_node(child, root, 0, &mut nodes);
+        }
+    }
+    nodes
+}
+
+fn collect_area_node(value: &Value, parent_path: &str, depth: usize, out: &mut Vec<AreaNode>) {
+    let Some(name) = value["name"].as_str() else {
+        return;
+    };
+    let path = if parent_path.is_empty() {
+        name.to_string()
+    } else {
+        format!("{parent_path}\\{name}")
+    };
+    out.push(AreaNode {
+        path: path.clone(),
+        depth,
+    });
+    if let Some(children) = value["children"].as_array() {
+        for child in children {
+            collect_area_node(child, &path, depth + 1, out);
+        }
+    }
+}
+
+/// `workitemsbatch` のレスポンスから `System.AreaPath` を件数の多い順に集計する。
+/// 自分の担当 Work Item から興味のある Area Path を推薦する材料に使う。
+pub(crate) fn area_path_counts(value: &Value) -> Vec<(String, usize)> {
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for item in value["value"].as_array().into_iter().flatten() {
+        let area = item["fields"]["System.AreaPath"]
+            .as_str()
+            .or_else(|| item["fields"]["system.areapath"].as_str());
+        if let Some(area) = area {
+            *counts.entry(area.to_string()).or_insert(0) += 1;
+        }
+    }
+    let mut counts: Vec<_> = counts.into_iter().collect();
+    counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    counts
+}
+
 pub(crate) fn pull_request_row(
     project: &AzureDevOpsProject,
     item: &Value,
@@ -256,6 +313,7 @@ mod tests {
             include_pull_requests: true,
             include_pipelines: true,
             include_work_items: true,
+            interest_areas: Vec::new(),
         };
         let results = work_item_candidates(
             &project,
@@ -283,6 +341,7 @@ mod tests {
             include_pull_requests: true,
             include_pipelines: true,
             include_work_items: true,
+            interest_areas: Vec::new(),
         };
         let results = work_item_candidates(
             &project,
@@ -303,6 +362,7 @@ mod tests {
             include_pull_requests: true,
             include_pipelines: true,
             include_work_items: true,
+            interest_areas: Vec::new(),
         };
         let results = work_item_batch_candidates(
             &project,
@@ -324,5 +384,84 @@ mod tests {
             ]})),
             ["Alpha", "zebra"]
         );
+    }
+
+    #[test]
+    fn area_nodes_flattens_nested_children_with_depth_and_full_path() {
+        let response = json!({
+            "name": "Waypoint",
+            "children": [
+                {
+                    "name": "Team",
+                    "children": [
+                        { "name": "Launcher" },
+                        { "name": "Search" }
+                    ]
+                },
+                { "name": "Settings UI" }
+            ]
+        });
+        let nodes = area_nodes(&response);
+        assert_eq!(
+            nodes,
+            vec![
+                AreaNode {
+                    path: "Waypoint\\Team".to_string(),
+                    depth: 0
+                },
+                AreaNode {
+                    path: "Waypoint\\Team\\Launcher".to_string(),
+                    depth: 1
+                },
+                AreaNode {
+                    path: "Waypoint\\Team\\Search".to_string(),
+                    depth: 1
+                },
+                AreaNode {
+                    path: "Waypoint\\Settings UI".to_string(),
+                    depth: 0
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn area_nodes_is_empty_without_children() {
+        assert!(area_nodes(&json!({ "name": "Waypoint" })).is_empty());
+    }
+
+    #[test]
+    fn area_path_counts_orders_by_frequency_then_name() {
+        let response = json!({ "value": [
+            { "fields": { "System.AreaPath": "Waypoint\\Search" } },
+            { "fields": { "System.AreaPath": "Waypoint\\Launcher" } },
+            { "fields": { "System.AreaPath": "Waypoint\\Launcher" } },
+            { "fields": { "System.AreaPath": "Waypoint\\Settings UI" } },
+        ]});
+        assert_eq!(
+            area_path_counts(&response),
+            vec![
+                ("Waypoint\\Launcher".to_string(), 2),
+                ("Waypoint\\Search".to_string(), 1),
+                ("Waypoint\\Settings UI".to_string(), 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn area_path_counts_ignores_items_without_an_area_path() {
+        let response = json!({ "value": [
+            { "fields": {} },
+            { "fields": { "System.AreaPath": "Waypoint" } },
+        ]});
+        assert_eq!(
+            area_path_counts(&response),
+            vec![("Waypoint".to_string(), 1)]
+        );
+    }
+
+    #[test]
+    fn area_path_counts_is_empty_without_values() {
+        assert!(area_path_counts(&json!({})).is_empty());
     }
 }

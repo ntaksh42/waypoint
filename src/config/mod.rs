@@ -118,6 +118,9 @@ pub struct AzureDevOpsProject {
     /// Work Item のオンライン検索対象にするか。既存設定との互換性のため既定は有効。
     #[serde(default = "default_true")]
     pub include_work_items: bool,
+    /// 興味のある Area Path (WIQL の `UNDER` 条件に使う)。空なら絞り込まずプロジェクト全体を対象にする。
+    #[serde(default)]
+    pub interest_areas: Vec<String>,
 }
 
 impl Default for MenuSettings {

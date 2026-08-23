@@ -1,10 +1,15 @@
 //! Azure DevOps プロジェクト選択画面の描画。
+//!
+//! 左に検索・選択可能なプロジェクト一覧、右に選択中プロジェクトの詳細編集
+//! (エイリアス・優先度・同期スコープ・興味のある Area Path) を並べる。
+//! 大規模な組織でも一覧はフィルタで絞り込め、詳細は 1 プロジェクトずつ
+//! 個別に設定できる。
 
 use eframe::egui;
 
 use super::app::SettingsApp;
+use super::azure_draft::{AzureProjectPicker, Scope};
 use super::keys::{dialog_keys, lock_modal_focus};
-use super::trigger_draft::{merge_selected_azure_projects, parse_azure_projects};
 
 impl SettingsApp {
     pub(super) fn show_azure_project_picker(&mut self, ctx: &egui::Context) {
@@ -12,7 +17,7 @@ impl SettingsApp {
             return;
         };
         picker.poll_load();
-        if picker.loading {
+        if picker.loading || picker.area_loading {
             // 受信スレッドは egui のイベントループを起こせないため、取得中だけ再描画する。
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
@@ -22,187 +27,76 @@ impl SettingsApp {
         let window = egui::Window::new("Azure DevOps projects")
             .collapsible(false)
             .resizable(true)
-            .default_size([620.0, 640.0])
-            .min_size([500.0, 420.0])
+            .default_size([1000.0, 820.0])
+            .min_size([760.0, 520.0])
+            .max_height(
+                ctx.input(|input| input.viewport().outer_rect)
+                    .map_or(900.0, |rect| rect.height() * 0.92),
+            )
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Organization");
-                    ui.add(egui::TextEdit::singleline(&mut picker.organization).desired_width(240.0));
-                });
-                ui.horizontal(|ui| {
-                    ui.label("PAT");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut picker.pat)
-                            .password(true)
-                            .desired_width(300.0),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    if ui.button("Save PAT and load projects").clicked() {
-                        match waypoint::azure_devops::save_pat(&picker.organization, &picker.pat) {
-                            Ok(()) => {
-                                picker.pat.clear();
-                                picker.start_load();
-                            }
-                            Err(error) => {
-                                picker.status = None;
-                                picker.error = Some(error);
-                            }
-                        }
-                    }
-                    if ui
-                        .add_enabled(!picker.loading, egui::Button::new("Load projects"))
-                        .clicked()
-                    {
-                        picker.start_load();
-                    }
-                    if ui.button("Delete PAT").clicked() {
-                        match waypoint::azure_devops::delete_pat(&picker.organization) {
-                            Ok(()) => {
-                                picker.error = None;
-                                picker.status = Some(
-                                    "PAT removed from Windows Credential Manager.".to_string(),
-                                );
-                            }
-                            Err(error) => {
-                                picker.status = None;
-                                picker.error = Some(error);
-                            }
-                        }
-                    }
-                });
-                ui.weak("Required PAT scopes: Code (Read), Build (Read), Work Items (Read), Project and Team (Read).");
+                show_connection_row(ui, picker);
                 ui.separator();
+                // Apply/Cancel とステータス行の高さを確保してから、残りを一覧・詳細に回す。
+                let footer_height = 76.0;
+                let body_height = (ui.available_height() - footer_height).max(240.0);
                 ui.horizontal(|ui| {
-                    ui.label("Filter");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut picker.filter)
-                            .hint_text("Filter by project name or alias")
-                            .desired_width(320.0),
-                    );
-                    ui.checkbox(&mut picker.show_selected_only, "Selected only");
-                    if picker.loading {
-                        ui.spinner();
-                        ui.label("Loading...");
-                    }
-                });
-
-                let configured = parse_azure_projects(&picker.watched_projects).unwrap_or_default();
-                let aliases_of = |project: &str| -> Vec<String> {
-                    configured
-                        .iter()
-                        .find(|entry| {
-                            entry.organization.eq_ignore_ascii_case(&picker.loaded_organization)
-                                && entry.project.eq_ignore_ascii_case(project)
-                        })
-                        .map(|entry| entry.aliases.clone())
-                        .unwrap_or_default()
-                };
-
-                let filter = picker.filter.to_lowercase();
-                let mut filtered: Vec<_> = picker
-                    .available_projects
-                    .iter()
-                    .filter(|project| picker.selected_projects.contains(*project) || !picker.show_selected_only)
-                    .filter(|project| {
-                        filter.is_empty()
-                            || project.to_lowercase().contains(&filter)
-                            || aliases_of(project)
-                                .iter()
-                                .any(|alias| alias.to_lowercase().contains(&filter))
-                    })
-                    .cloned()
-                    .collect();
-                // 選択済みを先頭に集め、大量の候補の中でも今の選択状態がすぐ見える。
-                filtered.sort_by(|a, b| {
-                    let a_selected = picker.selected_projects.contains(a);
-                    let b_selected = picker.selected_projects.contains(b);
-                    b_selected
-                        .cmp(&a_selected)
-                        .then_with(|| a.to_lowercase().cmp(&b.to_lowercase()))
-                });
-
-                ui.horizontal(|ui| {
-                    ui.label(format!(
-                        "{} of {} projects shown; {} selected.",
-                        filtered.len(),
-                        picker.available_projects.len(),
-                        picker.selected_projects.len()
-                    ));
-                    if ui.button("Select shown").clicked() {
-                        picker.selected_projects.extend(filtered.iter().cloned());
-                    }
-                    if ui.button("Clear shown").clicked() {
-                        for project in &filtered {
-                            picker.selected_projects.remove(project);
-                        }
-                    }
-                    if ui.button("Clear all").clicked() {
-                        picker.selected_projects.clear();
-                    }
-                });
-                egui::ScrollArea::vertical()
-                    .max_height(300.0)
-                    .show(ui, |ui| {
-                        for project in &filtered {
-                            let mut checked = picker.selected_projects.contains(project);
-                            ui.horizontal(|ui| {
-                                if ui.checkbox(&mut checked, project).changed() {
-                                    if checked {
-                                        picker.selected_projects.insert(project.clone());
-                                    } else {
-                                        picker.selected_projects.remove(project);
-                                    }
-                                }
-                                let aliases = aliases_of(project);
-                                if !aliases.is_empty() {
-                                    ui.weak(format!("({})", aliases.join(", ")));
-                                }
-                            });
-                        }
+                    ui.set_min_height(body_height);
+                    ui.vertical(|ui| {
+                        ui.set_width(ui.available_width() * 0.38);
+                        show_project_list(ui, picker, body_height);
                     });
-                ui.label("Advanced (aliases and priority; one project per line)");
-                ui.add(
-                    egui::TextEdit::multiline(&mut picker.watched_projects)
-                        .desired_rows(3)
-                        .desired_width(f32::INFINITY),
-                );
-                ui.weak("Example: contoso/Waypoint | wp, launcher | 10 | pr,pipelines,wit");
+                    ui.separator();
+                    ui.vertical(|ui| {
+                        ui.set_width(ui.available_width());
+                        egui::ScrollArea::vertical()
+                            .id_salt("azure_detail_panel")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                show_detail_panel(ui, picker);
+                            });
+                    });
+                });
+                ui.separator();
                 if let Some(status) = &picker.status {
                     ui.colored_label(egui::Color32::LIGHT_GREEN, status);
                 }
                 if let Some(error) = &picker.error {
                     ui.colored_label(egui::Color32::RED, error);
                 }
-                ui.separator();
                 ui.horizontal(|ui| {
-                    apply = ui.button("Apply").clicked();
-                    cancel = ui.button("Cancel").clicked();
+                    if ui
+                        .button("Export...")
+                        .on_hover_text("Save the watched project list to a JSON file")
+                        .clicked()
+                    {
+                        picker.export_to_file();
+                    }
+                    if ui
+                        .button("Import...")
+                        .on_hover_text(
+                            "Replace the watched project list with one loaded from a JSON file",
+                        )
+                        .clicked()
+                    {
+                        picker.import_from_file();
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        cancel = ui.button("Cancel").clicked();
+                        apply = ui.button("Apply").clicked();
+                    });
                 });
             });
         lock_modal_focus(ctx, &window);
 
         let (_, dismiss) = dialog_keys(ctx, false);
         cancel |= dismiss;
-        let applied_projects = if apply {
-            match merge_selected_azure_projects(
-                &picker.watched_projects,
-                &picker.loaded_organization,
-                &picker.selected_projects,
-            ) {
-                Ok(projects) => Some(projects),
-                Err(error) => {
-                    picker.error = Some(error);
-                    None
-                }
-            }
-        } else {
-            None
-        };
-        if let Some(projects) = applied_projects {
+        if apply {
+            picker.commit_text_fields();
+        }
+        if apply {
             if let Some(trigger) = self.trigger_draft.as_mut() {
-                trigger.azure_projects = projects;
+                trigger.azure_projects = picker.projects.clone();
                 trigger.error = None;
             }
             self.azure_project_picker = None;
@@ -210,4 +104,330 @@ impl SettingsApp {
             self.azure_project_picker = None;
         }
     }
+}
+
+fn show_connection_row(ui: &mut egui::Ui, picker: &mut AzureProjectPicker) {
+    ui.horizontal(|ui| {
+        ui.label("Organization");
+        ui.add(egui::TextEdit::singleline(&mut picker.organization).desired_width(200.0));
+        ui.label("PAT");
+        ui.add(
+            egui::TextEdit::singleline(&mut picker.pat)
+                .password(true)
+                .desired_width(220.0),
+        );
+        if ui.button("Save PAT and load projects").clicked() {
+            match waypoint::azure_devops::save_pat(&picker.organization, &picker.pat) {
+                Ok(()) => {
+                    picker.pat.clear();
+                    picker.start_load();
+                }
+                Err(error) => {
+                    picker.status = None;
+                    picker.error = Some(error);
+                }
+            }
+        }
+        if ui
+            .add_enabled(!picker.loading, egui::Button::new("Load projects"))
+            .clicked()
+        {
+            picker.start_load();
+        }
+        if ui.button("Delete PAT").clicked() {
+            match waypoint::azure_devops::delete_pat(&picker.organization) {
+                Ok(()) => {
+                    picker.error = None;
+                    picker.status =
+                        Some("PAT removed from Windows Credential Manager.".to_string());
+                }
+                Err(error) => {
+                    picker.status = None;
+                    picker.error = Some(error);
+                }
+            }
+        }
+        if picker.loading {
+            ui.spinner();
+            ui.label("Loading...");
+        }
+    });
+    ui.weak("Required PAT scopes: Code (Read), Build (Read), Work Items (Read), Project and Team (Read).");
+}
+
+/// 左ペイン: フィルタ・一括操作・チェックボックス一覧。
+fn show_project_list(ui: &mut egui::Ui, picker: &mut AzureProjectPicker, available_height: f32) {
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::TextEdit::singleline(&mut picker.filter)
+                .hint_text("Filter by project name or alias")
+                .desired_width(ui.available_width().min(220.0)),
+        );
+    });
+    ui.checkbox(&mut picker.show_selected_only, "Selected only");
+
+    let organization = picker.loaded_organization.clone();
+    let aliases_by_project: std::collections::HashMap<String, Vec<String>> = picker
+        .projects
+        .iter()
+        .filter(|entry| entry.organization.eq_ignore_ascii_case(&organization))
+        .map(|entry| (entry.project.to_lowercase(), entry.aliases.clone()))
+        .collect();
+    let aliases_of = |project: &str| -> Vec<String> {
+        aliases_by_project
+            .get(&project.to_lowercase())
+            .cloned()
+            .unwrap_or_default()
+    };
+
+    let filter = picker.filter.to_lowercase();
+    let mut filtered: Vec<_> = picker
+        .available_projects
+        .iter()
+        .filter(|project| picker.is_selected(&organization, project) || !picker.show_selected_only)
+        .filter(|project| {
+            filter.is_empty()
+                || project.to_lowercase().contains(&filter)
+                || aliases_of(project)
+                    .iter()
+                    .any(|alias| alias.to_lowercase().contains(&filter))
+        })
+        .cloned()
+        .collect();
+    // 選択済みを先頭に集め、大量の候補の中でも今の選択状態がすぐ見える。
+    filtered.sort_by(|a, b| {
+        let a_selected = picker.is_selected(&organization, a);
+        let b_selected = picker.is_selected(&organization, b);
+        b_selected
+            .cmp(&a_selected)
+            .then_with(|| a.to_lowercase().cmp(&b.to_lowercase()))
+    });
+
+    ui.horizontal(|ui| {
+        ui.label(format!(
+            "{} of {} shown; {} selected",
+            filtered.len(),
+            picker.available_projects.len(),
+            picker
+                .projects
+                .iter()
+                .filter(|entry| entry.organization.eq_ignore_ascii_case(&organization))
+                .count()
+        ));
+    });
+    ui.horizontal(|ui| {
+        if ui.button("Select shown").clicked() {
+            for project in &filtered {
+                picker.set_selected(project, true);
+            }
+        }
+        if ui.button("Clear shown").clicked() {
+            for project in &filtered {
+                picker.set_selected(project, false);
+            }
+        }
+        if ui.button("Clear all").clicked() {
+            for project in picker.available_projects.clone() {
+                picker.set_selected(&project, false);
+            }
+        }
+    });
+
+    let list_height = (available_height - ui.min_rect().height()).max(160.0);
+    egui::ScrollArea::vertical()
+        .id_salt("azure_project_list")
+        .max_height(list_height)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            for project in &filtered {
+                let mut checked = picker.is_selected(&organization, project);
+                let is_open = picker.selected.as_ref().is_some_and(|(org, proj)| {
+                    org.eq_ignore_ascii_case(&organization) && proj == project
+                });
+                ui.horizontal(|ui| {
+                    if ui.checkbox(&mut checked, "").changed() {
+                        picker.set_selected(project, checked);
+                    }
+                    let label = ui.selectable_label(is_open, project);
+                    if label.clicked() && checked {
+                        picker.open_detail(&organization, project);
+                    }
+                    let aliases = aliases_of(project);
+                    if !aliases.is_empty() {
+                        ui.weak(format!("({})", aliases.join(", ")));
+                    }
+                });
+            }
+        });
+}
+
+/// 右ペイン: 選択中プロジェクトのエイリアス・優先度・スコープ・Area Path。
+fn show_detail_panel(ui: &mut egui::Ui, picker: &mut AzureProjectPicker) {
+    let Some((organization, project)) = picker.selected.clone() else {
+        ui.weak("Select a checked project on the left to edit its details.");
+        return;
+    };
+    ui.strong(format!("{organization}/{project}"));
+    ui.add_space(4.0);
+
+    ui.horizontal(|ui| {
+        ui.label("Aliases");
+        ui.add(
+            egui::TextEdit::singleline(&mut picker.aliases_text)
+                .hint_text("comma, separated")
+                .desired_width(220.0),
+        );
+    });
+    ui.horizontal(|ui| {
+        ui.label("Priority");
+        ui.add(egui::TextEdit::singleline(&mut picker.priority_text).desired_width(60.0));
+        ui.weak("Lower sorts first");
+    });
+    picker.commit_text_fields();
+
+    ui.add_space(6.0);
+    ui.label("Sync");
+    let current = picker.projects.iter().find(|entry| {
+        entry.organization.eq_ignore_ascii_case(&organization) && entry.project == project
+    });
+    let mut include_pr = current.is_some_and(|entry| entry.include_pull_requests);
+    let mut include_pipelines = current.is_some_and(|entry| entry.include_pipelines);
+    let mut include_wit = current.is_some_and(|entry| entry.include_work_items);
+    ui.horizontal(|ui| {
+        if ui.checkbox(&mut include_pr, "Pull Requests").changed() {
+            picker.set_scope(&organization, &project, Scope::PullRequests, include_pr);
+        }
+        if ui.checkbox(&mut include_pipelines, "Pipelines").changed() {
+            picker.set_scope(&organization, &project, Scope::Pipelines, include_pipelines);
+        }
+        if ui.checkbox(&mut include_wit, "Work Items").changed() {
+            picker.set_scope(&organization, &project, Scope::WorkItems, include_wit);
+        }
+    });
+
+    ui.add_space(6.0);
+    show_area_path_picker(ui, picker);
+}
+
+/// Area Path ツリー: 検索フィルタ + インデント付きチェックボックス。
+fn show_area_path_picker(ui: &mut egui::Ui, picker: &mut AzureProjectPicker) {
+    ui.horizontal(|ui| {
+        ui.label("Interest areas");
+        ui.weak("(empty = whole project)");
+        if picker.area_loading {
+            ui.spinner();
+        }
+    });
+    if let Some(error) = &picker.area_error {
+        ui.colored_label(egui::Color32::RED, format!("Could not load areas: {error}"));
+        return;
+    }
+
+    let selected_areas = picker.selected_interest_areas();
+    if !selected_areas.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            for area in &selected_areas {
+                ui.weak(format!("[{area}]"));
+            }
+            if ui.small_button("Clear").clicked() {
+                picker.clear_interest_areas();
+            }
+        });
+    }
+
+    show_area_suggestions(ui, picker, &selected_areas);
+
+    ui.add(
+        egui::TextEdit::singleline(&mut picker.area_filter)
+            .hint_text("Filter area paths")
+            .desired_width(260.0),
+    );
+
+    let filter = picker.area_filter.to_lowercase();
+    let nodes: Vec<_> = picker
+        .area_nodes
+        .iter()
+        .filter(|node| filter.is_empty() || node.path.to_lowercase().contains(&filter))
+        .cloned()
+        .collect();
+
+    ui.horizontal(|ui| {
+        ui.label(format!("{} shown", nodes.len()));
+        if ui.button("Select shown").clicked() {
+            for node in &nodes {
+                picker.toggle_interest_area(&node.path, true);
+            }
+        }
+        if ui.button("Clear shown").clicked() {
+            for node in &nodes {
+                picker.toggle_interest_area(&node.path, false);
+            }
+        }
+    });
+
+    egui::ScrollArea::vertical()
+        .id_salt("azure_area_tree")
+        .max_height(260.0)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            if nodes.is_empty() && !picker.area_loading {
+                ui.weak("No areas found (or none match the filter).");
+            }
+            for node in &nodes {
+                let mut checked = selected_areas.contains(&node.path);
+                ui.horizontal(|ui| {
+                    ui.add_space(node.depth as f32 * 16.0);
+                    let name = node.path.rsplit('\\').next().unwrap_or(&node.path);
+                    if ui.checkbox(&mut checked, name).changed() {
+                        picker.toggle_interest_area(&node.path, checked);
+                    }
+                });
+            }
+        });
+}
+
+/// 自分に割り当てられた Work Item から集計した Area Path 候補。
+/// ボタンを押すまでは何も取得しない (明示的な操作のみ API を呼ぶ)。
+fn show_area_suggestions(
+    ui: &mut egui::Ui,
+    picker: &mut AzureProjectPicker,
+    selected_areas: &std::collections::BTreeSet<String>,
+) {
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(
+                !picker.area_suggestion_loading,
+                egui::Button::new("Suggest from my assigned work items"),
+            )
+            .clicked()
+        {
+            picker.suggest_areas_from_my_work_items();
+        }
+        if picker.area_suggestion_loading {
+            ui.spinner();
+        }
+    });
+    if let Some(error) = &picker.area_suggestion_error {
+        ui.weak(error);
+    }
+    if picker.area_suggestions.is_empty() {
+        return;
+    }
+    ui.weak("Suggested (from your assigned work items):");
+    egui::ScrollArea::vertical()
+        .id_salt("azure_area_suggestions")
+        .max_height(120.0)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            for (path, count) in picker.area_suggestions.clone() {
+                let mut checked = selected_areas.contains(&path);
+                if ui
+                    .checkbox(&mut checked, format!("{path} ({count})"))
+                    .changed()
+                {
+                    picker.toggle_interest_area(&path, checked);
+                }
+            }
+        });
+    ui.separator();
 }

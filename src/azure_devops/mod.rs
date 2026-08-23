@@ -26,6 +26,8 @@ use convert::{
 use credential::credential_for_request;
 use sync::REFRESHING;
 
+pub use api::{fetch_area_nodes, fetch_my_area_suggestions};
+pub use convert::AreaNode;
 pub use credential::{delete_pat, save_pat};
 pub use sync::{WorkItemReply, refresh_async, search_work_items_async, take_work_item_results};
 
