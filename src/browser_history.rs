@@ -1,11 +1,12 @@
 //! Chrome / Edge の閲覧履歴を読む。
 //!
-//! Chromium の `History` は SQLite DB で、ブラウザ起動中でも読み取り専用で
-//! 開ける。Quick Launch の索引構築時だけ読み、検索・描画の経路では触らない。
+//! Chromium の `History` は SQLite DB。ブラウザ起動中は書き込みロックが
+//! 掛かっていることが多いため `immutable=1` の URI 接続で読む
+//! (`read_profile` 参照)。Quick Launch の索引構築時だけ読み、検索・描画の
+//! 経路では触らない。
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::Duration;
 
 use rusqlite::{Connection, OpenFlags};
 
@@ -48,12 +49,16 @@ pub fn scan() -> Vec<Visit> {
     visits.into_iter().map(|(_, visit)| visit).collect()
 }
 
+/// ブラウザ起動中は `History` が `History-journal` 付きのトランザクション中に
+/// なっていることが多く、通常の読み取り専用オープンは `SQLITE_BUSY` で失敗する。
+/// `immutable=1` の URI 接続はロックを一切取らないため、ブラウザが開いたままでも読める
+/// (実測: 通常オープンは `database is locked` で毎回失敗し、`h ` 検索が常に 0 件になっていた)。
 fn read_profile(profile: &Profile) -> rusqlite::Result<Vec<(i64, Visit)>> {
+    let uri = format!("file:{}?immutable=1", profile.path.display());
     let connection = Connection::open_with_flags(
-        &profile.path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        uri,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI,
     )?;
-    connection.busy_timeout(Duration::from_millis(100))?;
     read_connection(&connection, profile.browser)
 }
 
