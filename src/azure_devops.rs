@@ -68,6 +68,7 @@ pub struct Candidate {
     pub project: String,
     pub aliases: Vec<String>,
     pub priority: u32,
+    pub is_mine: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -138,6 +139,7 @@ pub fn project_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
             project: project.project.trim().to_string(),
             aliases: project.aliases.clone(),
             priority: project.priority,
+            is_mine: false,
         })
         .collect()
 }
@@ -151,7 +153,7 @@ pub fn cached_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
         return Vec::new();
     };
     let Ok(mut statement) = connection.prepare(
-        "SELECT organization, project, kind, item_id, status, name, detail, url
+        "SELECT organization, project, kind, item_id, status, name, detail, url, is_mine
          FROM candidates",
     ) else {
         return Vec::new();
@@ -166,6 +168,7 @@ pub fn cached_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
             name: row.get(5)?,
             detail: row.get(6)?,
             url: row.get(7)?,
+            is_mine: row.get::<_, i64>(8)? != 0,
         })
     }) else {
         return Vec::new();
@@ -211,6 +214,7 @@ pub fn cached_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
                 project: row.project,
                 aliases,
                 priority,
+                is_mine: row.is_mine,
             })
         })
         .collect()
@@ -482,7 +486,13 @@ fn refresh_project(
 ) -> Result<(), String> {
     let mut rows = Vec::new();
     if project.include_pull_requests {
-        rows.extend(fetch_pull_requests(client, project, pat)?);
+        let current_user = current_user_id(client, &project.organization, pat).ok();
+        rows.extend(fetch_pull_requests(
+            client,
+            project,
+            pat,
+            current_user.as_deref(),
+        )?);
     }
     if project.include_pipelines {
         rows.extend(fetch_pipelines(client, project, pat)?);
@@ -495,6 +505,7 @@ fn fetch_pull_requests(
     client: &reqwest::blocking::Client,
     project: &AzureDevOpsProject,
     pat: &str,
+    current_user: Option<&str>,
 ) -> Result<Vec<CachedRow>, String> {
     let mut rows = Vec::new();
     let mut skip = 0;
@@ -509,7 +520,7 @@ fn fetch_pull_requests(
         let count = page.len();
         rows.extend(
             page.into_iter()
-                .filter_map(|item| pull_request_row(project, &item)),
+                .filter_map(|item| pull_request_row(project, &item, current_user)),
         );
         if count < PR_PAGE_SIZE {
             break;
@@ -519,11 +530,23 @@ fn fetch_pull_requests(
     Ok(rows)
 }
 
-fn pull_request_row(project: &AzureDevOpsProject, item: &Value) -> Option<CachedRow> {
+fn pull_request_row(
+    project: &AzureDevOpsProject,
+    item: &Value,
+    current_user: Option<&str>,
+) -> Option<CachedRow> {
     let id = item["pullRequestId"].as_i64()?;
     let title = item["title"].as_str()?.to_string();
     let status = item["status"].as_str().unwrap_or("unknown").to_string();
     let repository = item["repository"]["name"].as_str().unwrap_or("");
+    let is_mine = current_user.is_some_and(|user| {
+        item["createdBy"]["id"].as_str() == Some(user)
+            || item["reviewers"].as_array().is_some_and(|reviewers| {
+                reviewers
+                    .iter()
+                    .any(|reviewer| reviewer["id"].as_str() == Some(user))
+            })
+    });
     let url = item["_links"]["web"]["href"]
         .as_str()
         .map(str::to_string)
@@ -546,7 +569,23 @@ fn pull_request_row(project: &AzureDevOpsProject, item: &Value) -> Option<Cached
             project.organization, project.project, status
         ),
         url,
+        is_mine,
     })
+}
+
+fn current_user_id(
+    client: &reqwest::blocking::Client,
+    organization: &str,
+    pat: &str,
+) -> Result<String, String> {
+    let url = format!(
+        "https://dev.azure.com/{}/_apis/connectionData?connectOptions=1&lastChangeId=-1&lastChangeId64=-1&api-version={API_VERSION}",
+        encode_segment(organization)
+    );
+    get_json(client, &url, pat)?["authenticatedUser"]["id"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| "Azure DevOps did not return the authenticated user.".to_string())
 }
 
 fn fetch_pipelines(
@@ -643,6 +682,7 @@ fn pipeline_row(
         ),
         name,
         url,
+        is_mine: false,
     }
 }
 
@@ -695,6 +735,7 @@ fn work_item_candidates(project: &AzureDevOpsProject, value: &Value) -> Vec<Cand
                 project: project.project.trim().to_string(),
                 aliases: project.aliases.clone(),
                 priority: project.priority,
+                is_mine: false,
             })
         })
         .collect()
@@ -810,6 +851,7 @@ fn open_cache() -> Result<Connection, String> {
                 name TEXT NOT NULL,
                 detail TEXT NOT NULL,
                 url TEXT NOT NULL,
+                is_mine INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (organization, project, kind, item_id)
             );
             CREATE TABLE IF NOT EXISTS project_state (
@@ -826,6 +868,11 @@ fn open_cache() -> Result<Connection, String> {
             INSERT OR REPLACE INTO cache_meta (key, value) VALUES ('schema_version', '2');",
         )
         .map_err(|error| error.to_string())?;
+    // v1 のキャッシュをそのまま移行する。既に列がある場合のエラーは無視する。
+    let _ = connection.execute(
+        "ALTER TABLE candidates ADD COLUMN is_mine INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
     Ok(connection)
 }
 
@@ -844,8 +891,8 @@ fn replace_project_cache(project: &AzureDevOpsProject, rows: &[CachedRow]) -> Re
         transaction
             .execute(
                 "INSERT INTO candidates
-                 (organization, project, kind, item_id, status, name, detail, url)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                 (organization, project, kind, item_id, status, name, detail, url, is_mine)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     row.organization,
                     row.project,
@@ -855,6 +902,7 @@ fn replace_project_cache(project: &AzureDevOpsProject, rows: &[CachedRow]) -> Re
                     row.name,
                     row.detail,
                     row.url,
+                    row.is_mine as i64,
                 ],
             )
             .map_err(|error| error.to_string())?;
@@ -977,6 +1025,7 @@ struct CachedRow {
     name: String,
     detail: String,
     url: String,
+    is_mine: bool,
 }
 
 fn pending_work_items() -> &'static Mutex<HashMap<u32, WorkItemReply>> {

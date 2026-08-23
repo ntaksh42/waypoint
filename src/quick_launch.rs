@@ -121,15 +121,22 @@ struct AzureIndexed {
     entry: Entry,
     kind: crate::azure_devops::Kind,
     status: String,
+    is_mine: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AzureCommand {
     All,
-    PullRequests(crate::azure_devops::PullRequestStatus),
+    PullRequests(PullRequestFilter),
     Pipelines(PipelineFilter),
     Projects,
     WorkItems,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PullRequestFilter {
+    status: crate::azure_devops::PullRequestStatus,
+    mine: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,18 +156,30 @@ pub fn azure_command(query: &str) -> Option<(AzureCommand, &str)> {
             (first, remaining.trim_start())
         });
     let command = match first.to_ascii_lowercase().as_str() {
-        "pr" | "prs" => Some(AzureCommand::PullRequests(
-            crate::azure_devops::PullRequestStatus::All,
-        )),
-        "pr-a" => Some(AzureCommand::PullRequests(
-            crate::azure_devops::PullRequestStatus::Active,
-        )),
-        "pr-c" => Some(AzureCommand::PullRequests(
-            crate::azure_devops::PullRequestStatus::Completed,
-        )),
-        "pr-ab" => Some(AzureCommand::PullRequests(
-            crate::azure_devops::PullRequestStatus::Abandoned,
-        )),
+        "pr" | "prs" => Some(AzureCommand::PullRequests(PullRequestFilter {
+            status: crate::azure_devops::PullRequestStatus::All,
+            mine: false,
+        })),
+        "pr-a" => Some(AzureCommand::PullRequests(PullRequestFilter {
+            status: crate::azure_devops::PullRequestStatus::Active,
+            mine: false,
+        })),
+        "pr-c" => Some(AzureCommand::PullRequests(PullRequestFilter {
+            status: crate::azure_devops::PullRequestStatus::Completed,
+            mine: false,
+        })),
+        "pr-ab" => Some(AzureCommand::PullRequests(PullRequestFilter {
+            status: crate::azure_devops::PullRequestStatus::Abandoned,
+            mine: false,
+        })),
+        "pr-mine" | "pr-me" => Some(AzureCommand::PullRequests(PullRequestFilter {
+            status: crate::azure_devops::PullRequestStatus::All,
+            mine: true,
+        })),
+        "pr-a-mine" | "pr-a-me" => Some(AzureCommand::PullRequests(PullRequestFilter {
+            status: crate::azure_devops::PullRequestStatus::Active,
+            mine: true,
+        })),
         "pipeline" | "pipelines" | "pipe" | "build" | "builds" => {
             Some(AzureCommand::Pipelines(PipelineFilter::All))
         }
@@ -301,6 +320,7 @@ impl Index {
                 },
                 kind: candidate.kind,
                 status: candidate.status,
+                is_mine: candidate.is_mine,
             })
             .collect();
 
@@ -353,12 +373,13 @@ impl Index {
                     true,
                     &self.ranking,
                 ),
-                AzureCommand::PullRequests(status) => search_entries(
+                AzureCommand::PullRequests(filter) => search_entries(
                     self.azure
                         .iter()
                         .filter(|entry| {
                             entry.kind == crate::azure_devops::Kind::PullRequest
-                                && status.matches(&entry.status)
+                                && filter.status.matches(&entry.status)
+                                && (!filter.mine || entry.is_mine)
                         })
                         .map(|entry| &entry.entry),
                     rest,
@@ -624,6 +645,7 @@ mod tests {
                 },
                 kind: crate::azure_devops::Kind::PullRequest,
                 status: "active".into(),
+                is_mine: true,
             }],
             windows: vec![Entry {
                 name: "waypoint - Notepad".into(),
@@ -834,6 +856,7 @@ mod tests {
     fn azure_pr_status_command_filters_cached_pull_requests() {
         let index = index();
         assert_eq!(index.search("az pr-a azure").len(), 1);
+        assert_eq!(index.search("az pr-a-mine azure").len(), 1);
         assert!(index.search("az pr-c azure").is_empty());
         assert_eq!(index.search("az wp").len(), 1);
     }
@@ -919,7 +942,10 @@ mod tests {
         assert_eq!(
             azure_command("az pr-c done"),
             Some((
-                AzureCommand::PullRequests(crate::azure_devops::PullRequestStatus::Completed),
+                AzureCommand::PullRequests(PullRequestFilter {
+                    status: crate::azure_devops::PullRequestStatus::Completed,
+                    mine: false,
+                }),
                 "done"
             ))
         );
@@ -934,6 +960,16 @@ mod tests {
         assert_eq!(
             azure_command("az pipeline-failed release"),
             Some((AzureCommand::Pipelines(PipelineFilter::Failed), "release"))
+        );
+        assert_eq!(
+            azure_command("az pr-a-mine launcher"),
+            Some((
+                AzureCommand::PullRequests(PullRequestFilter {
+                    status: crate::azure_devops::PullRequestStatus::Active,
+                    mine: true,
+                }),
+                "launcher"
+            ))
         );
         assert_eq!(
             azure_command("az workitems defect"),
