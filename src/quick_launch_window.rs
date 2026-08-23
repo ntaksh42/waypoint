@@ -10,9 +10,9 @@ use windows::Win32::Graphics::Dwm::{
 use windows::Win32::Graphics::Gdi::{
     AC_SRC_ALPHA, AC_SRC_OVER, AlphaBlend, BLENDFUNCTION, BeginPaint, CLEARTYPE_QUALITY,
     CLIP_DEFAULT_PRECIS, CreateCompatibleDC, CreateFontW, CreatePen, CreateSolidBrush,
-    DEFAULT_CHARSET, DEFAULT_PITCH, DT_CENTER, DT_END_ELLIPSIS, DT_NOPREFIX, DT_SINGLELINE,
-    DT_VCENTER, DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint, FW_NORMAL, FW_SEMIBOLD,
-    FillRect, GetMonitorInfoW, HBITMAP, HBRUSH, HDC, HFONT, InvalidateRect,
+    DEFAULT_CHARSET, DEFAULT_PITCH, DT_CALCRECT, DT_CENTER, DT_END_ELLIPSIS, DT_NOPREFIX,
+    DT_SINGLELINE, DT_VCENTER, DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint, FW_NORMAL,
+    FW_SEMIBOLD, FillRect, GetMonitorInfoW, HBITMAP, HBRUSH, HDC, HFONT, InvalidateRect,
     MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow, OUT_DEFAULT_PRECIS, PAINTSTRUCT,
     PS_SOLID, RoundRect, SelectObject, SetBkColor, SetBkMode, SetTextColor, TRANSPARENT,
 };
@@ -57,32 +57,30 @@ const ICON_TEXT_GAP: i32 = 10;
 const TEXT_LEFT: i32 = ICON_LEFT + ICON_SIZE + ICON_TEXT_GAP;
 
 const BACKGROUND: COLORREF = rgb(13, 13, 13);
-const SURFACE: COLORREF = rgb(30, 30, 30);
-const SURFACE_HOVER: COLORREF = rgb(42, 42, 42);
-const ACCENT: COLORREF = rgb(0, 120, 212);
+const SURFACE: COLORREF = rgb(32, 30, 28);
+const SURFACE_HOVER: COLORREF = rgb(44, 41, 38);
+const ACCENT: COLORREF = rgb(111, 168, 201);
 const TEXT_PRIMARY: COLORREF = rgb(245, 245, 245);
 const TEXT_SECONDARY: COLORREF = rgb(166, 166, 166);
+/// breadcrumb 用。detail 行の中でもさらに一段控えめにする (FR-9.6 の補助情報)。
+const TEXT_MUTED: COLORREF = rgb(117, 112, 106);
 
-/// モードバッジの背景色。プレフィックスごとに見分けが付くよう変える。
+/// モードバッジの背景色。プレフィックスごとに見分けは付けるが、
+/// 彩度・明度は揃えた寒色2トーンに統一し、原色の乱立を避ける。
 fn badge_color(badge: &str) -> COLORREF {
     match badge {
-        "BOOKMARKS" => rgb(191, 90, 242), // 紫
-        "WINDOWS" => rgb(48, 176, 199),   // シアン
-        "APPS" => rgb(255, 159, 10),      // オレンジ
-        "FILES" => rgb(52, 199, 89),      // 緑
+        "WINDOWS" | "APPS" => rgb(143, 168, 118), // 緑寄りの寒色
+        "BOOKMARKS" | "HISTORY" | "FILES" | "AZURE DEVOPS" => rgb(95, 157, 176), // 青寄りの寒色
         _ => ACCENT,
     }
 }
 
-/// 候補のアクション種別を表す色。バッジと同じ配色を流用し、
-/// モードで絞り込む前 (通常検索の混在リスト) でも種別が一目で分かるようにする。
+/// 候補のアクション種別を表す色。種別の判別はアイコン自体の形が担うため、
+/// 背景色は原則アクセント 1 色に寄せて静かにする。
 fn action_color(action: &Action) -> COLORREF {
     match action {
-        Action::OpenFolder(_) => ACCENT,                  // 青 (フォルダ)
-        Action::FocusWindow(_) => badge_color("WINDOWS"), // シアン
-        Action::OpenUrl(_) => badge_color("BOOKMARKS"),   // 紫
-        Action::LaunchApp => badge_color("APPS"),         // オレンジ
-        Action::OpenWithDefaultHandler => badge_color("FILES"), // 緑 (Everything のファイル)
+        Action::FocusWindow(_) | Action::LaunchApp => badge_color("WINDOWS"),
+        Action::OpenFolder(_) | Action::OpenUrl(_) | Action::OpenWithDefaultHandler => ACCENT,
     }
 }
 
@@ -1129,7 +1127,10 @@ unsafe fn draw_badge(hdc: HDC, badge: &str, search: RECT, dpi: u32, detail_font:
             right: search.right - scale(10, dpi),
             bottom: search.top + (search.bottom - search.top - height) / 2 + height,
         };
-        let brush = CreateSolidBrush(color);
+        // バッジ地はカードと同じ低彩度トーンにし、縁取りだけモード色を残す。
+        // 塗りつぶし全体を原色にすると検索窓から浮いて見えるため
+        // (計画: 検索窓・バッジ周りの調整)。
+        let brush = CreateSolidBrush(backdrop_tint(color));
         let radius = height / 2;
         let old_brush = SelectObject(hdc, brush.into());
         let pen = CreatePen(PS_SOLID, 1, color);
@@ -1151,7 +1152,7 @@ unsafe fn draw_badge(hdc: HDC, badge: &str, search: RECT, dpi: u32, detail_font:
         if let Some(font) = detail_font {
             let old_font = SelectObject(hdc, font.into());
             SetBkMode(hdc, TRANSPARENT);
-            SetTextColor(hdc, TEXT_PRIMARY);
+            SetTextColor(hdc, color);
             let mut text_rect = rect;
             draw_text_centered(hdc, badge, &mut text_rect);
             SelectObject(hdc, old_font);
@@ -1283,8 +1284,11 @@ unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
                 right: draw.rcItem.right - inset,
                 bottom: draw.rcItem.bottom - scale(1, dpi),
             };
+            // 枠線を地の SURFACE_HOVER より一段明るくし、選択カードに
+            // 「押せる」輪郭を持たせる (計画: 選択行の演出強化)。
+            let card_pen_color = rgb(58, 90, 110);
             let card_brush = CreateSolidBrush(SURFACE_HOVER);
-            let card_pen = CreatePen(PS_SOLID, 1, SURFACE_HOVER);
+            let card_pen = CreatePen(PS_SOLID, 1, card_pen_color);
             let old_brush = SelectObject(draw.hDC, card_brush.into());
             let old_pen = SelectObject(draw.hDC, card_pen.into());
             let radius = scale(8, dpi);
@@ -1343,30 +1347,74 @@ unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
 
         if let Some(font) = detail_font {
             let old = SelectObject(draw.hDC, font.into());
-            SetTextColor(draw.hDC, TEXT_SECONDARY);
-            let detail = entry_context(&entry);
             let mut rect = RECT {
                 left: text_left,
                 top: draw.rcItem.top + scale(20, dpi),
                 right: text_right,
                 bottom: draw.rcItem.bottom - scale(1, dpi),
             };
-            draw_text(draw.hDC, &detail, &mut rect);
+            // breadcrumb を主、path を一段暗い色の補足として続ける。
+            // 両方を同じ色で "—" 連結していた旧描画は、長いパスがあると
+            // breadcrumb まで埋もれて読みにくかった (計画時の指摘)。
+            SetTextColor(draw.hDC, TEXT_SECONDARY);
+            let primary = detail_primary(&entry);
+            let primary_width = measured_width(draw.hDC, &primary, &rect);
+            draw_text(draw.hDC, &primary, &mut rect);
+            if let Some(path) = detail_secondary(&entry) {
+                let mut secondary_rect = rect;
+                secondary_rect.left = (rect.left + primary_width).min(rect.right);
+                if secondary_rect.left < secondary_rect.right {
+                    SetTextColor(draw.hDC, TEXT_MUTED);
+                    draw_text(draw.hDC, &path, &mut secondary_rect);
+                }
+            }
             SelectObject(draw.hDC, old);
         }
     }
 }
 
-/// リスト・詳細行に出す補足テキスト。パスが無い (ウィンドウ項目) 場合は
-/// breadcrumb だけを出す。
-fn entry_context(entry: &Entry) -> String {
-    if entry.path.is_empty() {
-        entry.breadcrumb.clone()
-    } else if entry.breadcrumb.is_empty() {
+/// 詳細行の主要テキスト。breadcrumb があればそれを、無ければパスを出す
+/// (ウィンドウ項目のように breadcrumb しか持たない候補もあるため)。
+fn detail_primary(entry: &Entry) -> String {
+    if entry.breadcrumb.is_empty() {
         entry.path.clone()
     } else {
-        format!("{}  —  {}", entry.breadcrumb, entry.path)
+        entry.breadcrumb.clone()
     }
+}
+
+/// breadcrumb の右側に淡色で続けるパス。breadcrumb が無い、または
+/// パスと同じ内容を primary で既に出している場合は None。
+fn detail_secondary(entry: &Entry) -> Option<String> {
+    (!entry.breadcrumb.is_empty() && !entry.path.is_empty())
+        .then(|| format!("   ›   {}", entry.path))
+}
+
+/// リストボックスへ渡すプレーンラベル用の補足テキスト。
+/// 実描画は `draw_list_item` (オーナードロー) が行うため、ここは
+/// アクセシビリティ・内部データとしての文字列表現に過ぎない。
+fn entry_context(entry: &Entry) -> String {
+    match detail_secondary(entry) {
+        Some(secondary) => format!("{}{}", detail_primary(entry), secondary),
+        None => detail_primary(entry),
+    }
+}
+
+/// `text` を `bounds` の幅制約 (`DT_END_ELLIPSIS` 込み) で描いたときの実幅を測る。
+/// 実際には描画しない (`DT_CALCRECT`)。詳細行で breadcrumb (primary) の直後に
+/// path (secondary) を続けて描く開始 x 座標を決めるために使う。
+unsafe fn measured_width(hdc: HDC, text: &str, bounds: &RECT) -> i32 {
+    let mut wide: Vec<u16> = text.encode_utf16().collect();
+    let mut calc_rect = *bounds;
+    unsafe {
+        DrawTextW(
+            hdc,
+            &mut wide,
+            &mut calc_rect,
+            DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX | DT_CALCRECT,
+        );
+    }
+    calc_rect.right - calc_rect.left
 }
 
 unsafe fn draw_text(hdc: HDC, text: &str, rect: &mut RECT) {
