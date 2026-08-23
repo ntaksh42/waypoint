@@ -137,9 +137,13 @@ impl Index {
                 AzureCommand::WorkItems => Vec::new(),
             };
         }
-        search_entries_cached(
-            &self.entries,
-            &self.entries_lower,
+        search_entries_cached_multi(
+            &[
+                (&self.entries, &self.entries_lower),
+                (&self.windows, &self.windows_lower),
+                (&self.bookmarks, &self.bookmarks_lower),
+                (&self.apps, &self.apps_lower),
+            ],
             query,
             self.search_paths,
             &self.ranking,
@@ -224,21 +228,50 @@ pub(crate) fn search_entries_cached<'a>(
     search_paths: bool,
     ranking: &Ranking,
 ) -> Vec<&'a Entry> {
-    if entries.len() != lower_keys.len() {
-        return search_entries(entries, query, search_paths, ranking);
-    }
+    search_entries_cached_multi(&[(entries, lower_keys)], query, search_paths, ranking)
+}
+
+/// 複数の候補群 (`entries` と対応する `lower_keys` の組) を横断して検索する。
+/// 無接頭辞の通常検索が Folders / Open Windows / Bookmarks / Apps を
+/// 一括で検索する経路向け。組ごとに `entries.len() != lower_keys.len()`
+/// なら都度計算にフォールバックする (`search_entries_cached` と同じ規約)。
+/// `order` はソースをまたいで通し番号にし、ソース内の元の並びと
+/// ソースの列挙順を同点時の並び順として保つ。
+pub(crate) fn search_entries_cached_multi<'a>(
+    sources: &[(&'a [Entry], &[LowerKeys])],
+    query: &str,
+    search_paths: bool,
+    ranking: &Ranking,
+) -> Vec<&'a Entry> {
     let terms = lower_terms(query);
-    rank_matches(
-        entries
-            .iter()
-            .zip(lower_keys)
-            .enumerate()
-            .filter_map(|(order, (entry, keys))| {
+    let mut order = 0usize;
+    let mut scored = Vec::new();
+    for &(entries, lower_keys) in sources {
+        if entries.len() == lower_keys.len() {
+            for (entry, keys) in entries.iter().zip(lower_keys) {
                 let path = search_paths.then_some(keys.path.as_str());
-                score_entry(entry, &keys.name, &keys.breadcrumb, path, &terms, ranking)
-                    .map(|score| (score, order, entry))
-            }),
-    )
+                if let Some(score) =
+                    score_entry(entry, &keys.name, &keys.breadcrumb, path, &terms, ranking)
+                {
+                    scored.push((score, order, entry));
+                }
+                order += 1;
+            }
+        } else {
+            for entry in entries {
+                let name = entry.name.to_lowercase();
+                let breadcrumb = entry.breadcrumb.to_lowercase();
+                let path = search_paths.then(|| entry.path.to_lowercase());
+                if let Some(score) =
+                    score_entry(entry, &name, &breadcrumb, path.as_deref(), &terms, ranking)
+                {
+                    scored.push((score, order, entry));
+                }
+                order += 1;
+            }
+        }
+    }
+    rank_matches(scored.into_iter())
 }
 
 fn lower_terms(query: &str) -> Vec<String> {
