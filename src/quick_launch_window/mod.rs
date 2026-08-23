@@ -109,6 +109,9 @@ struct State {
     origin: Option<HWND>,
     index: Index,
     results: Vec<Entry>,
+    /// 直前に同期検索した入力。末尾への文字追加だけなら、前回の候補を
+    /// 起点に再検索して全索引の走査を避けるために使う。
+    previous_query: Option<String>,
     /// リストボックスの行番号ごとの内訳。通常検索時は `Item(0), Item(1), ...`
     /// のフラットな並び (見出しなし)。行番号と `results` の対応を一箇所の
     /// 配列に固定することで、描画・選択移動・実行の各所で見出し行と項目行の
@@ -160,6 +163,7 @@ pub fn configure(config: &Config, dynamic: &Menus) {
         let has_window = {
             let mut state = state.borrow_mut();
             state.index = Index::build(config, dynamic);
+            state.previous_query = None;
             state.visible_results = config.settings.quick_launch.visible_results.clamp(12, 24);
             state.everything_enabled = config.settings.quick_launch.include_everything;
             state.azure_devops = config.settings.quick_launch.azure_devops.clone();
