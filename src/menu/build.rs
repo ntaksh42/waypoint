@@ -1,173 +1,28 @@
-//! 設定の項目からネイティブのポップアップメニューを組み立てる。
-//!
-//! 表示は `TrackPopupMenuEx`。WPF 等のウィンドウを使わないので
-//! 描画も挙動もシステム標準のまま得られる。
+//! Win32 の `HMENU` を構築する処理。
 
-use std::collections::BTreeMap;
-
-use windows::Win32::Foundation::{HWND, POINT};
+use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Gdi::HBITMAP;
-use windows::Win32::UI::Shell::{
-    SHSTOCKICONID, SIID_DOCASSOC, SIID_DOCNOASSOC, SIID_FOLDER, SIID_FOLDEROPEN, SIID_STACK,
-};
+use windows::Win32::UI::Shell::SIID_FOLDER;
+use windows::Win32::UI::Shell::SIID_STACK;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreatePopupMenu, DestroyMenu, GetMenuItemCount, HMENU, InsertMenuItemW, MENU_ITEM_FLAGS,
-    MENUITEMINFOW, MF_DISABLED, MF_GRAYED, MF_POPUP, MF_STRING, MFS_DISABLED, MFT_OWNERDRAW,
-    MFT_SEPARATOR, MIIM_DATA, MIIM_FTYPE, MIIM_ID, MIIM_STATE, MIIM_SUBMENU, SetForegroundWindow,
-    TPM_LEFTALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, TPM_TOPALIGN, TrackPopupMenuEx,
+    CreatePopupMenu, GetMenuItemCount, HMENU, InsertMenuItemW, MENU_ITEM_FLAGS, MENUITEMINFOW,
+    MF_DISABLED, MF_GRAYED, MF_POPUP, MF_STRING, MFS_DISABLED, MFT_OWNERDRAW, MFT_SEPARATOR,
+    MIIM_DATA, MIIM_FTYPE, MIIM_ID, MIIM_STATE, MIIM_SUBMENU,
 };
 use windows::core::Result;
 
-use crate::config::{Config, Item, OpenMode};
+use crate::config::{Item, OpenMode};
 use crate::dynamic::{Menus as DynamicMenus, PathEntry, WindowEntry};
 
-/// メニュー項目が選ばれたときに実行する内容。
-/// メニュー ID (usize) からこれを引く。
-#[derive(Debug, Clone, PartialEq)]
-pub enum Action {
-    Open {
-        /// 展開済みの絶対パス。
-        path: String,
-        open: OpenMode,
-    },
-    ActivateWindow {
-        hwnd: isize,
-    },
-    OpenShell {
-        target: String,
-    },
-}
-
-/// ランチャーメニューで選ばれた操作。
-#[derive(Debug, Clone, PartialEq)]
-pub enum Selection {
-    Action(Action),
-    Settings,
-    Reload,
-    Close,
-}
-
-/// 構築したメニューと、ID → 動作の対応表。
-pub struct BuiltMenu {
-    menu: HMENU,
-    actions: BTreeMap<usize, Action>,
-}
-
-impl BuiltMenu {
-    /// 選択された ID に対応する動作を返す。
-    pub fn action(&self, id: usize) -> Option<&Action> {
-        self.actions.get(&id)
-    }
-
-    /// 登録された動作の数。テストと診断用。
-    pub fn action_count(&self) -> usize {
-        self.actions.len()
-    }
-
-    /// 全項目を (ID, 開き方, 解決済みパス) で返す。診断用。
-    pub fn dump(&self) -> Vec<(usize, String, String)> {
-        self.actions
-            .iter()
-            .map(|(id, a)| match a {
-                Action::Open { path, open } => {
-                    let mode = match open {
-                        OpenMode::NewWindow => "newWindow",
-                        OpenMode::Reuse => "reuse",
-                    };
-                    (*id, mode.to_string(), path.clone())
-                }
-                Action::ActivateWindow { hwnd } => {
-                    (*id, "activateWindow".to_string(), hwnd.to_string())
-                }
-                Action::OpenShell { target } => (*id, "openShell".to_string(), target.clone()),
-            })
-            .collect()
-    }
-
-    /// カーソル位置にメニューを表示し、選ばれた動作を返す。
-    ///
-    /// `owner` は必ず事前に前面化する。そうしないとメニュー外を
-    /// クリックしても閉じない (R-2) 。
-    pub fn track(&self, owner: HWND, at: POINT) -> Option<Selection> {
-        let id = unsafe {
-            // これを呼ばないとメニューが閉じなくなる
-            let _ = SetForegroundWindow(owner);
-            TrackPopupMenuEx(
-                self.menu,
-                (TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN).0,
-                at.x,
-                at.y,
-                owner,
-                None,
-            )
-        };
-        if id.0 == 0 {
-            return None; // Esc または領域外クリックで取り消し
-        }
-        match id.0 as usize {
-            ID_SETTINGS => Some(Selection::Settings),
-            ID_RELOAD => Some(Selection::Reload),
-            ID_CLOSE => Some(Selection::Close),
-            id => self.action(id).cloned().map(Selection::Action),
-        }
-    }
-}
-
-impl Drop for BuiltMenu {
-    fn drop(&mut self) {
-        // サブメニューは親の DestroyMenu で連鎖的に破棄される
-        unsafe {
-            let _ = DestroyMenu(self.menu);
-        }
-    }
-}
-
-/// 設定からメニューを構築する。
-///
-/// 変数展開は構築時に一度だけ行う (FR-5.3) 。解決できない項目は
-/// グレー表示にし、選んでも何も起きないようにする (FR-2.6 / FR-5.4) 。
-pub fn build(cfg: &Config, dynamic: &DynamicMenus) -> Result<BuiltMenu> {
-    // アイコン取得より前に反映する。寸法が変わればキャッシュも捨てられる
-    crate::icon::set_icon_size(cfg.settings.menu.icon_size);
-    // 前回の描画内容は使わない。ID を振り直すので必ず捨てる
-    crate::menu_draw::clear();
-    let mut ctx = BuildCtx {
-        vars: &cfg.variables,
-        numeric: cfg.settings.menu.numeric_accelerators,
-        next_id: FIRST_ITEM_ID,
-        actions: BTreeMap::new(),
-    };
-    let menu = unsafe { build_level(&cfg.items, false, &mut ctx)? };
-    unsafe {
-        append_in_the_works(menu, dynamic, &mut ctx)?;
-        append_footer(menu)?;
-    }
-    Ok(BuiltMenu {
-        menu,
-        actions: ctx.actions,
-    })
-}
-
-/// 0 は「取り消し」を表すため、項目 ID は 1 から始める。
-const FIRST_ITEM_ID: usize = 1;
-const ID_SETTINGS: usize = 0xe001;
-const ID_RELOAD: usize = 0xe002;
-const ID_CLOSE: usize = 0xe003;
-const ICON_RELOAD: &[u8] = include_bytes!("../assets/menu/reload.png");
-const ICON_CLOSE: &[u8] = include_bytes!("../assets/menu/close.png");
-const ICON_WINDOW: &[u8] = include_bytes!("../assets/menu/window.png");
-
-struct BuildCtx<'a> {
-    vars: &'a BTreeMap<String, String>,
-    numeric: bool,
-    next_id: usize,
-    actions: BTreeMap<usize, Action>,
-}
+use super::label::{decorate, path_menu_icon};
+use super::{
+    Action, BuildCtx, ICON_CLOSE, ICON_RELOAD, ICON_WINDOW, ID_CLOSE, ID_RELOAD, ID_SETTINGS,
+};
 
 /// `inherited_show_branch` は親 Submenu (祖先を含む) の showBranch が
 /// 真だったかどうか。真なら配下の Folder は自身の showBranch を問わず
 /// ブランチ名を表示する (FR-2.14) 。
-unsafe fn build_level(
+pub(crate) unsafe fn build_level(
     items: &[Item],
     inherited_show_branch: bool,
     ctx: &mut BuildCtx,
@@ -268,7 +123,7 @@ unsafe fn build_level(
 
 /// 葉 (フォルダ / 特殊フォルダ) を追加する。
 /// パスが解決できなければグレー表示にして ID を振らない。
-unsafe fn append_leaf(
+pub(crate) unsafe fn append_leaf(
     menu: HMENU,
     ctx: &mut BuildCtx,
     name: &str,
@@ -304,7 +159,7 @@ unsafe fn append_leaf(
 }
 
 /// QAP の既定構成に合わせて、動的な作業中メニューを追加する。
-unsafe fn append_in_the_works(
+pub(crate) unsafe fn append_in_the_works(
     menu: HMENU,
     dynamic: &DynamicMenus,
     ctx: &mut BuildCtx,
@@ -343,7 +198,7 @@ unsafe fn append_in_the_works(
     }
 }
 
-unsafe fn append_path_menu(
+pub(crate) unsafe fn append_path_menu(
     parent: HMENU,
     name: &str,
     entries: &[PathEntry],
@@ -396,7 +251,7 @@ unsafe fn append_path_menu(
     }
 }
 
-unsafe fn append_window_menu(
+pub(crate) unsafe fn append_window_menu(
     parent: HMENU,
     name: &str,
     entries: &[WindowEntry],
@@ -444,7 +299,7 @@ unsafe fn append_window_menu(
     }
 }
 
-unsafe fn append_close(menu: HMENU) -> Result<()> {
+pub(crate) unsafe fn append_close(menu: HMENU) -> Result<()> {
     unsafe {
         append_separator(menu)?;
         append_owner_drawn(
@@ -460,7 +315,7 @@ unsafe fn append_close(menu: HMENU) -> Result<()> {
 }
 
 /// QAP と同様に、頻繁に使う管理操作をルートメニューの末尾へ置く。
-unsafe fn append_footer(menu: HMENU) -> Result<()> {
+pub(crate) unsafe fn append_footer(menu: HMENU) -> Result<()> {
     unsafe {
         append_separator(menu)?;
         // Windows の歯車アイコン。自前 PNG は線が細く 16px で潰れていた
@@ -500,7 +355,7 @@ unsafe fn append_footer(menu: HMENU) -> Result<()> {
 /// (実測) 。行の高さを制御するにはオーナードローしかないので、
 /// 文字列項目はすべてこの経路で追加する。`itemData` に描画内容の ID を
 /// 入れ、`WM_MEASUREITEM` / `WM_DRAWITEM` から引く。
-unsafe fn append_owner_drawn(
+pub(crate) unsafe fn append_owner_drawn(
     menu: HMENU,
     flags: MENU_ITEM_FLAGS,
     id: usize,
@@ -512,7 +367,7 @@ unsafe fn append_owner_drawn(
         let disabled = flags.0 & (MF_DISABLED.0 | MF_GRAYED.0) != 0;
         let data = crate::menu_draw::register(crate::menu_draw::OwnerDrawItem {
             // アクセラレータの & は描画では出さない
-            text: strip_accelerator(label),
+            text: super::label::strip_accelerator(label),
             bitmap: bitmap.map(|b| b.0 as isize),
             submenu,
             disabled,
@@ -548,7 +403,7 @@ unsafe fn append_owner_drawn(
 ///
 /// `MF_SEPARATOR` のままだとシステム色で描かれ、ダーク表示 (FR-2.7) で
 /// 白い線が残る。項目と同じくオーナードローにして自前で引く。
-unsafe fn append_separator(menu: HMENU) -> Result<()> {
+pub(crate) unsafe fn append_separator(menu: HMENU) -> Result<()> {
     unsafe {
         let data = crate::menu_draw::register(crate::menu_draw::OwnerDrawItem::separator());
         let info = MENUITEMINFOW {
@@ -563,111 +418,5 @@ unsafe fn append_separator(menu: HMENU) -> Result<()> {
         let position = GetMenuItemCount(Some(menu)).max(0) as u32;
         InsertMenuItemW(menu, position, true, &info)?;
         Ok(())
-    }
-}
-
-/// `&1  名前` の装飾を描画用の文字列へ直す。
-///
-/// オーナードローでは `&` を自分で解釈しないので、
-/// 単独の `&` は落とし、`&&` はリテラルの `&` に戻す。
-fn strip_accelerator(label: &str) -> String {
-    let mut out = String::with_capacity(label.len());
-    let mut chars = label.chars();
-    while let Some(ch) = chars.next() {
-        if ch != '&' {
-            out.push(ch);
-        } else if chars.clone().next() == Some('&') {
-            chars.next();
-            out.push('&');
-        }
-    }
-    out
-}
-
-/// Recent / Frequent の各サブメニューに割り当てるアイコン。
-///
-/// 「最近」は時計 (履歴)、「よく使う」は星 (お気に入り) に相当する
-/// Windows 標準アイコンが無いため、フォルダ / ファイルの区別に加えて
-/// 開いた・閉じたで最近とよく使うを描き分ける。
-fn path_menu_icon(name: &str) -> SHSTOCKICONID {
-    match (name.starts_with("Recent"), name.ends_with("Folders")) {
-        (true, true) => SIID_FOLDEROPEN,
-        (false, true) => SIID_FOLDER,
-        (true, false) => SIID_DOCASSOC,
-        (false, false) => SIID_DOCNOASSOC,
-    }
-}
-
-/// 上位 9 件に `&1 ` のようなアクセラレータを前置する (FR-2.4) 。
-fn decorate(name: &str, numeric: bool, accel: usize) -> String {
-    // 項目名の & はリテラルの & として出すためエスケープする。
-    // 数字アクセラレータを前置する分岐でこれを忘れると、"R&D" のような
-    // 項目名で strip_accelerator が & をアクセラレータ区切りと誤解釈し、
-    // 文字が欠けて表示される (実測で確認済み)
-    let escaped = name.replace('&', "&&");
-    if numeric && (1..=9).contains(&accel) {
-        format!("&{accel}  {escaped}")
-    } else {
-        escaped
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{decorate, path_menu_icon, strip_accelerator};
-    use crate::git::with_branch;
-
-    /// Recent / Frequent × フォルダ / ファイルの 4 つが別アイコンになること。
-    /// 同じだと In the Works の中で見分けが付かない。
-    #[test]
-    fn path_menu_icons_are_distinct() {
-        let ids: Vec<i32> = [
-            "Recent Folders",
-            "Frequent Folders",
-            "Recent Files",
-            "Frequent Files",
-        ]
-        .iter()
-        .map(|name| path_menu_icon(name).0)
-        .collect();
-
-        let mut unique = ids.clone();
-        unique.sort_unstable();
-        unique.dedup();
-        assert_eq!(unique.len(), 4, "同じアイコンが割り当てられている: {ids:?}");
-    }
-
-    #[test]
-    fn branch_survives_accelerator_decoration() {
-        let label = with_branch("waypoint", Some("feature/x"));
-        assert_eq!(decorate(&label, true, 1), "&1  waypoint  [feature/x]");
-    }
-
-    /// 項目名の & はエスケープされる。アクセラレータ無効時も同じ規則。
-    #[test]
-    fn ampersand_in_name_is_escaped_without_accelerator() {
-        let label = with_branch("R&D", Some("main"));
-        assert_eq!(decorate(&label, false, 1), "R&&D  [main]");
-    }
-
-    /// 数字アクセラレータを前置する上位 9 件でも & はエスケープされる。
-    /// 抜けると strip_accelerator が項目名中の & を区切りと誤解釈し、
-    /// 文字が欠けて表示される (実測で確認済み)。
-    #[test]
-    fn ampersand_in_name_is_escaped_with_numeric_accelerator() {
-        assert_eq!(decorate("R&D Docs", true, 3), "&3  R&&D Docs");
-    }
-
-    /// オーナードローでは & を自分で解釈しないので描画前に落とす。
-    #[test]
-    fn accelerator_marker_is_removed_for_drawing() {
-        assert_eq!(strip_accelerator("&1  Downloads"), "1  Downloads");
-    }
-
-    /// エスケープされた && はリテラルの & に戻す。
-    #[test]
-    fn escaped_ampersand_becomes_literal() {
-        assert_eq!(strip_accelerator("R&&D"), "R&D");
-        assert_eq!(strip_accelerator("&1  R&&D"), "1  R&D");
     }
 }
