@@ -32,8 +32,9 @@ use crate::dynamic::Menus;
 use crate::quick_launch::{Entry, Index};
 use dispatch::dispatch;
 use input::{
-    add_selected_to_favorites, copy_selected_path, delete_word_before_cursor, hide_window,
-    move_selection, queue_selected, reveal_selected_in_explorer, select_at,
+    add_selected_to_favorites, copy_selected_path, delete_word_before_cursor, first_selectable_row,
+    hide_window, last_selectable_row, move_selection, queue_selected, reveal_selected_in_explorer,
+    select_at,
 };
 use layout::{apply_dpi, apply_window_chrome, position_window};
 use search::update_results;
@@ -273,13 +274,26 @@ pub fn handle_message(message: &windows::Win32::UI::WindowsAndMessaging::MSG) ->
         0x1b => hide_window(STATE.with(|state| state.borrow().window)), // Esc
         0x26 => move_selection(-1),
         0x28 => move_selection(1),
-        0x24 => select_at(STATE.with(|state| state.borrow().list), 0),
-        0x23 => {
-            let (list, count) = STATE.with(|state| {
+        // 見出し行 (区分見出し) は選択対象外。results.len() を直接使うと
+        // 見出しの数だけ結果がずれる不具合になる (実測で End が最終項目
+        // 手前に着地した)。first/last_selectable_row で行番号ベースに揃える。
+        0x24 => {
+            let (list, rows) = STATE.with(|state| {
                 let state = state.borrow();
-                (state.list, state.results.len())
+                (state.list, state.rows.clone())
             });
-            select_at(list, count.saturating_sub(1));
+            if let Some(row) = first_selectable_row(&rows) {
+                select_at(list, row);
+            }
+        }
+        0x23 => {
+            let (list, rows) = STATE.with(|state| {
+                let state = state.borrow();
+                (state.list, state.rows.clone())
+            });
+            if let Some(row) = last_selectable_row(&rows) {
+                select_at(list, row);
+            }
         }
         0x21 => move_selection(-10),
         0x22 => move_selection(10),

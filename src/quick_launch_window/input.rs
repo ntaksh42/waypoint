@@ -97,29 +97,48 @@ pub(super) fn select_at(list: Option<HWND>, index: usize) {
 }
 
 /// 選択を相対移動する。借用は最初に済ませ、以降は Win32 のみ触る。
-/// 区分見出し行は選択対象外なので、着地点がそれに重なったら同じ方向へ
-/// さらに進めて次の項目行を探す (見出しが連続することはない前提)。
 pub(super) fn move_selection(delta: isize) {
     let (list, rows) = STATE.with(|state| {
         let state = state.borrow();
         (state.list, state.rows.clone())
     });
-    if rows.is_empty() {
+    let current = current_selection(list).unwrap_or(0);
+    let Some(next) = next_selectable_row(&rows, current, delta) else {
         return;
+    };
+    select_at(list, next);
+}
+
+/// `move_selection` の索引計算だけを取り出した純粋関数。区分見出し行は
+/// 選択対象外なので、着地点がそれに重なったら同じ方向へさらに進めて
+/// 次の項目行を探す (見出しが連続することはない前提)。
+pub(super) fn next_selectable_row(rows: &[RowKind], current: usize, delta: isize) -> Option<usize> {
+    if rows.is_empty() {
+        return None;
     }
     let step = if delta < 0 { -1isize } else { 1isize };
-    let current = current_selection(list).unwrap_or(0);
     let mut next = current.saturating_add_signed(delta).min(rows.len() - 1);
     while matches!(rows.get(next), Some(RowKind::Header(_))) {
-        let Some(stepped) = next.checked_add_signed(step) else {
-            return;
-        };
+        let stepped = next.checked_add_signed(step)?;
         if stepped >= rows.len() {
-            return;
+            return None;
         }
         next = stepped;
     }
-    select_at(list, next);
+    Some(next)
+}
+
+/// Home キー: 先頭の選択可能な項目行。先頭が見出し行なら後方向へ探す
+/// (`move_selection` と違い、常に先頭からの前進で確定させる)。
+pub(super) fn first_selectable_row(rows: &[RowKind]) -> Option<usize> {
+    rows.iter()
+        .position(|row| !matches!(row, RowKind::Header(_)))
+}
+
+/// End キー: 末尾の選択可能な項目行。末尾が見出し行なら前方向へ探す。
+pub(super) fn last_selectable_row(rows: &[RowKind]) -> Option<usize> {
+    rows.iter()
+        .rposition(|row| !matches!(row, RowKind::Header(_)))
 }
 
 /// `state.rows[row]` が指す項目行の `Entry` を返す。見出し・メッセージ行は `None`。
