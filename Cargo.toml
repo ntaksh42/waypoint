@@ -16,7 +16,7 @@ path = "src/main.rs"
 
 [[bin]]
 name = "waypoint-settings"
-path = "src/settings_main.rs"
+path = "src/settings_main/main.rs"
 
 [dependencies]
 # Win32 API バインディング。必要な feature のみ有効にする
