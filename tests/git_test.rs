@@ -1,6 +1,9 @@
 //! FR-2.14 / FR-2.15 のブランチ表示に関するテスト。
 
+use std::path::{Path, PathBuf};
+
 use waypoint::config::Item;
+use waypoint::git::{parse_head, resolve_gitdir_file, with_branch};
 
 /// このリポジトリ自身を対象にする。作業ツリー内なら何らかの名前が取れる。
 #[test]
@@ -71,6 +74,87 @@ fn show_branch_round_trips_when_true() {
 
     let out = serde_json::to_string(&item).unwrap();
     assert!(out.contains(r#""showBranch":true"#), "{out}");
+}
+
+#[test]
+fn appends_branch_when_present() {
+    assert_eq!(with_branch("waypoint", Some("main")), "waypoint  [main]");
+}
+
+#[test]
+fn leaves_name_alone_outside_repository() {
+    assert_eq!(with_branch("Downloads", None), "Downloads");
+}
+
+#[test]
+fn parses_branch_ref() {
+    assert_eq!(
+        parse_head("ref: refs/heads/main\n").as_deref(),
+        Some("main")
+    );
+}
+
+#[test]
+fn keeps_slashes_in_branch_name() {
+    assert_eq!(
+        parse_head("ref: refs/heads/feature/git-branch\n").as_deref(),
+        Some("feature/git-branch")
+    );
+}
+
+#[test]
+fn shortens_detached_head_sha() {
+    assert_eq!(
+        parse_head("9f8e7d6c5b4a39281706zz").as_deref(),
+        None,
+        "SHA 以外の文字が混ざるものは表示しない"
+    );
+    assert_eq!(
+        parse_head("9f8e7d6c5b4a3928170695e4d3c2b1a098765432\n").as_deref(),
+        Some("9f8e7d6")
+    );
+}
+
+#[test]
+fn ignores_non_branch_refs() {
+    assert_eq!(parse_head("ref: refs/tags/v1.0\n"), None);
+    assert_eq!(parse_head(""), None);
+    assert_eq!(parse_head("ref: refs/heads/\n"), None);
+}
+
+#[test]
+fn resolves_relative_gitdir_file() {
+    let resolved = resolve_gitdir_file(
+        "gitdir: ../.git/worktrees/feature\n",
+        Path::new("C:\\work\\repo-feature"),
+    );
+    assert_eq!(
+        resolved,
+        Some(PathBuf::from(
+            "C:\\work\\repo-feature/../.git/worktrees/feature"
+        ))
+    );
+}
+
+#[test]
+fn resolves_absolute_gitdir_file() {
+    let resolved = resolve_gitdir_file(
+        "gitdir: C:\\work\\repo\\.git\\worktrees\\feature\n",
+        Path::new("C:\\ignored"),
+    );
+    assert_eq!(
+        resolved,
+        Some(PathBuf::from("C:\\work\\repo\\.git\\worktrees\\feature"))
+    );
+}
+
+#[test]
+fn rejects_gitdir_file_without_target() {
+    assert_eq!(resolve_gitdir_file("gitdir:\n", Path::new("C:\\x")), None);
+    assert_eq!(
+        resolve_gitdir_file("something else\n", Path::new("C:\\x")),
+        None
+    );
 }
 
 /// Submenu の showBranch も Folder と同じ規則 (既定は偽・省略) で往復する。

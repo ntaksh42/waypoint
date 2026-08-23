@@ -614,39 +614,14 @@ fn system_small_icon_size() -> SIZE {
 }
 
 /// 96dpi でのメニューアイコン寸法。DPI 倍率はこれを基準に求める。
-const BASE_ICON_SIZE: i32 = 16;
+pub const BASE_ICON_SIZE: i32 = 16;
 
 /// 論理サイズへ DPI 倍率を掛ける。倍率は `system / 16`。
 ///
 /// 100% 表示なら設定値がそのまま出る。極端な値でメニューが
 /// 壊れないよう上下を留める。
-fn scale_icon_size(configured: u32, system_cx: i32) -> i32 {
+pub fn scale_icon_size(configured: u32, system_cx: i32) -> i32 {
     let configured = configured.clamp(16, 64) as i32;
     let scaled = configured * system_cx.max(BASE_ICON_SIZE) / BASE_ICON_SIZE;
     scaled.clamp(BASE_ICON_SIZE, 256)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{BASE_ICON_SIZE, scale_icon_size};
-
-    /// 100% 表示 (SM_CXSMICON が 16) では設定値がそのまま出る。
-    #[test]
-    fn uses_the_configured_size_at_100_percent() {
-        assert_eq!(scale_icon_size(32, BASE_ICON_SIZE), 32);
-        assert_eq!(scale_icon_size(16, BASE_ICON_SIZE), 16);
-    }
-
-    /// 150% 表示 (SM_CXSMICON が 24) では設定値も 1.5 倍になる。
-    #[test]
-    fn scales_with_the_system_metric() {
-        assert_eq!(scale_icon_size(32, 24), 48);
-    }
-
-    /// 設定値が範囲外でもメニューが壊れる寸法にはしない。
-    #[test]
-    fn keeps_out_of_range_values_usable() {
-        assert_eq!(scale_icon_size(0, BASE_ICON_SIZE), 16);
-        assert_eq!(scale_icon_size(4096, BASE_ICON_SIZE), 64);
-    }
 }

@@ -52,7 +52,7 @@ fn find_git_dir(start: &Path) -> Option<PathBuf> {
 
 /// `.git` ファイルの `gitdir:` 行を解決する。
 /// 相対パスは `.git` ファイルのあるディレクトリ基準。
-fn resolve_gitdir_file(text: &str, base: &Path) -> Option<PathBuf> {
+pub fn resolve_gitdir_file(text: &str, base: &Path) -> Option<PathBuf> {
     let target = text.lines().find_map(|l| l.strip_prefix("gitdir:"))?.trim();
     if target.is_empty() {
         return None;
@@ -69,7 +69,7 @@ fn resolve_gitdir_file(text: &str, base: &Path) -> Option<PathBuf> {
 ///
 /// - `ref: refs/heads/<name>` → `<name>` (スラッシュを含む名前もそのまま)
 /// - 40 桁の SHA → detached HEAD。短縮して返す
-fn parse_head(text: &str) -> Option<String> {
+pub fn parse_head(text: &str) -> Option<String> {
     let line = text.lines().next()?.trim();
     if let Some(reference) = line.strip_prefix("ref:") {
         let reference = reference.trim();
@@ -80,90 +80,4 @@ fn parse_head(text: &str) -> Option<String> {
     // detached HEAD。SHA 以外の想定外の内容は表示しない
     let is_sha = line.len() >= SHORT_SHA_LEN && line.chars().all(|c| c.is_ascii_hexdigit());
     is_sha.then(|| line[..SHORT_SHA_LEN].to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn appends_branch_when_present() {
-        assert_eq!(with_branch("waypoint", Some("main")), "waypoint  [main]");
-    }
-
-    #[test]
-    fn leaves_name_alone_outside_repository() {
-        assert_eq!(with_branch("Downloads", None), "Downloads");
-    }
-
-    #[test]
-    fn parses_branch_ref() {
-        assert_eq!(
-            parse_head("ref: refs/heads/main\n").as_deref(),
-            Some("main")
-        );
-    }
-
-    #[test]
-    fn keeps_slashes_in_branch_name() {
-        assert_eq!(
-            parse_head("ref: refs/heads/feature/git-branch\n").as_deref(),
-            Some("feature/git-branch")
-        );
-    }
-
-    #[test]
-    fn shortens_detached_head_sha() {
-        assert_eq!(
-            parse_head("9f8e7d6c5b4a39281706zz").as_deref(),
-            None,
-            "SHA 以外の文字が混ざるものは表示しない"
-        );
-        assert_eq!(
-            parse_head("9f8e7d6c5b4a3928170695e4d3c2b1a098765432\n").as_deref(),
-            Some("9f8e7d6")
-        );
-    }
-
-    #[test]
-    fn ignores_non_branch_refs() {
-        assert_eq!(parse_head("ref: refs/tags/v1.0\n"), None);
-        assert_eq!(parse_head(""), None);
-        assert_eq!(parse_head("ref: refs/heads/\n"), None);
-    }
-
-    #[test]
-    fn resolves_relative_gitdir_file() {
-        let resolved = resolve_gitdir_file(
-            "gitdir: ../.git/worktrees/feature\n",
-            Path::new("C:\\work\\repo-feature"),
-        );
-        assert_eq!(
-            resolved,
-            Some(PathBuf::from(
-                "C:\\work\\repo-feature/../.git/worktrees/feature"
-            ))
-        );
-    }
-
-    #[test]
-    fn resolves_absolute_gitdir_file() {
-        let resolved = resolve_gitdir_file(
-            "gitdir: C:\\work\\repo\\.git\\worktrees\\feature\n",
-            Path::new("C:\\ignored"),
-        );
-        assert_eq!(
-            resolved,
-            Some(PathBuf::from("C:\\work\\repo\\.git\\worktrees\\feature"))
-        );
-    }
-
-    #[test]
-    fn rejects_gitdir_file_without_target() {
-        assert_eq!(resolve_gitdir_file("gitdir:\n", Path::new("C:\\x")), None);
-        assert_eq!(
-            resolve_gitdir_file("something else\n", Path::new("C:\\x")),
-            None
-        );
-    }
 }
