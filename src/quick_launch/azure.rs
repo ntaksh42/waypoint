@@ -1,10 +1,15 @@
 //! Azure DevOps 関連のコマンド解析とインデックス項目。
 
+use super::search::LowerKeys;
 use super::{AZURE_DEVOPS_PREFIX, Action, Entry};
 
 #[derive(Debug, Clone)]
 pub(crate) struct AzureIndexed {
     pub(crate) entry: Entry,
+    /// `entry` の小文字化済みキャッシュ。`az pr` / `az pipeline` 等の
+    /// キー入力のたびに `to_lowercase` を再計算しないための事前計算
+    /// (`Index::build` で 1 回だけ作る。folders/apps 等と同じ方針)。
+    pub(crate) lower: LowerKeys,
     pub(crate) kind: crate::azure_devops::Kind,
     pub(crate) status: String,
     pub(crate) is_mine: bool,

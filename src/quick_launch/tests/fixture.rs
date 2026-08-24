@@ -64,8 +64,8 @@ pub(super) fn index() -> Index {
             action: Action::OpenUrl("https://github.com/example/waypoint/pull/1".into()),
             branch: None,
         }],
-        azure: vec![AzureIndexed {
-            entry: Entry {
+        azure: {
+            let entry = Entry {
                 name: "PR 42: Add Azure search".into(),
                 breadcrumb: "Azure DevOps — org/Waypoint — active — wp".into(),
                 path: "https://dev.azure.com/org/Waypoint/_git/app/pullrequest/42".into(),
@@ -73,11 +73,15 @@ pub(super) fn index() -> Index {
                     "https://dev.azure.com/org/Waypoint/_git/app/pullrequest/42".into(),
                 ),
                 branch: None,
-            },
-            kind: crate::azure_devops::Kind::PullRequest,
-            status: "active".into(),
-            is_mine: true,
-        }],
+            };
+            vec![AzureIndexed {
+                lower: super::super::search::LowerKeys::new(&entry),
+                entry,
+                kind: crate::azure_devops::Kind::PullRequest,
+                status: "active".into(),
+                is_mine: true,
+            }]
+        },
         azure_work_items: Vec::new(),
         azure_work_items_lower: Vec::new(),
         windows: vec![Entry {

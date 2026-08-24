@@ -86,16 +86,20 @@ impl Index {
         }
         if let Some((command, rest)) = azure_command(query) {
             return match command {
-                AzureCommand::All => search_entries(
+                AzureCommand::All => search_indexed(
                     self.azure
                         .iter()
-                        .map(|entry| &entry.entry)
-                        .chain(self.azure_work_items.iter()),
+                        .map(|entry| (&entry.entry, &entry.lower))
+                        .chain(
+                            self.azure_work_items
+                                .iter()
+                                .zip(&self.azure_work_items_lower),
+                        ),
                     rest,
                     true,
                     &self.ranking,
                 ),
-                AzureCommand::PullRequests(filter) => search_entries(
+                AzureCommand::PullRequests(filter) => search_indexed(
                     self.azure
                         .iter()
                         .filter(|entry| {
@@ -103,12 +107,12 @@ impl Index {
                                 && filter.status.matches(&entry.status)
                                 && (!filter.mine || entry.is_mine)
                         })
-                        .map(|entry| &entry.entry),
+                        .map(|entry| (&entry.entry, &entry.lower)),
                     rest,
                     true,
                     &self.ranking,
                 ),
-                AzureCommand::Pipelines(filter) => search_entries(
+                AzureCommand::Pipelines(filter) => search_indexed(
                     self.azure
                         .iter()
                         .filter(|entry| {
@@ -123,16 +127,16 @@ impl Index {
                                     }
                                 }
                         })
-                        .map(|entry| &entry.entry),
+                        .map(|entry| (&entry.entry, &entry.lower)),
                     rest,
                     true,
                     &self.ranking,
                 ),
-                AzureCommand::Projects => search_entries(
+                AzureCommand::Projects => search_indexed(
                     self.azure
                         .iter()
                         .filter(|entry| entry.kind == crate::azure_devops::Kind::Project)
-                        .map(|entry| &entry.entry),
+                        .map(|entry| (&entry.entry, &entry.lower)),
                     rest,
                     true,
                     &self.ranking,
@@ -285,6 +289,29 @@ pub(crate) fn search_entries_cached_multi<'a>(
         }
     }
     rank_matches(scored.into_iter())
+}
+
+/// `az pr` / `az pipeline` 等、ステータスでフィルタしてから検索する経路向け。
+/// フィルタで間引いた後は `entries` と `lower_keys` を対で並べ直せないため
+/// (`search_entries_cached` の「同じ順序・同じ長さ」前提が崩れる)、
+/// 呼び出し側が既に対応付けた `(Entry, LowerKeys)` の組をそのまま渡す。
+pub(crate) fn search_indexed<'a>(
+    items: impl IntoIterator<Item = (&'a Entry, &'a LowerKeys)>,
+    query: &str,
+    search_paths: bool,
+    ranking: &Ranking,
+) -> Vec<&'a Entry> {
+    let terms = lower_terms(query);
+    rank_matches(
+        items
+            .into_iter()
+            .enumerate()
+            .filter_map(|(order, (entry, keys))| {
+                let path = search_paths.then_some(keys.path.as_str());
+                score_entry(entry, &keys.name, &keys.breadcrumb, path, &terms, ranking)
+                    .map(|score| (score, order, entry))
+            }),
+    )
 }
 
 fn lower_terms(query: &str) -> Vec<String> {

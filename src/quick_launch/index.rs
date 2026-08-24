@@ -64,11 +64,15 @@ impl Index {
         azure_candidates.sort_by_key(|candidate| (candidate.priority, azure_urgency(candidate)));
         let azure = azure_candidates
             .into_iter()
-            .map(|candidate| AzureIndexed {
-                entry: azure_candidate_entry(candidate.clone()),
-                kind: candidate.kind,
-                status: candidate.status,
-                is_mine: candidate.is_mine,
+            .map(|candidate| {
+                let entry = azure_candidate_entry(candidate.clone());
+                AzureIndexed {
+                    lower: super::search::LowerKeys::new(&entry),
+                    entry,
+                    kind: candidate.kind,
+                    status: candidate.status,
+                    is_mine: candidate.is_mine,
+                }
             })
             .collect();
         let azure_work_items: Vec<Entry> =
