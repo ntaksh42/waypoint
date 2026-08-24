@@ -31,6 +31,12 @@ pub type PullRequestReply = WorkItemReply;
 pub(crate) static REFRESHING: AtomicBool = AtomicBool::new(false);
 
 /// 起動時・設定再読み込み時に呼ぶ。ネットワークと SQLite 更新は専用スレッドで行う。
+///
+/// 監視プロジェクトはお互いに独立な読み取り・書き込みなので、`az wit` /
+/// `az pr` のライブ検索と同じく `thread::scope` で並列に投げる (実測で
+/// プロジェクト数が増えるほど直列実行の合計待ち時間が積み上がっていた)。
+/// SQLite への書き込みはプロジェクトごとに別接続で行うため、同時書き込みは
+/// ファイルロックにより自動的に順番待ちされるだけで安全。
 pub fn refresh_async(settings: AzureDevOpsSettings, notify: HWND, message: u32) -> bool {
     if !settings.enabled || settings.projects.is_empty() {
         return false;
@@ -42,26 +48,32 @@ pub fn refresh_async(settings: AzureDevOpsSettings, notify: HWND, message: u32) 
     thread::spawn(move || {
         match http_client() {
             Ok(client) => {
-                for project in settings
+                let targets: Vec<_> = settings
                     .projects
                     .iter()
                     .filter(|project| valid_project(project))
-                {
-                    let Ok(pat) = load_pat(&project.organization) else {
-                        let _ = cache::record_project_error(
-                            project,
-                            "No PAT is saved for this organization.",
-                        );
-                        continue;
-                    };
-                    if let Err(error) = refresh_project(&client, project, &pat) {
-                        crate::panic_log::record(&format!(
-                            "azure devops: refresh {}/{} failed: {error}",
-                            project.organization, project.project
-                        ));
-                        let _ = cache::record_project_error(project, &error);
+                    .collect();
+                thread::scope(|scope| {
+                    for project in &targets {
+                        let client = &client;
+                        scope.spawn(move || {
+                            let Ok(pat) = load_pat(&project.organization) else {
+                                let _ = cache::record_project_error(
+                                    project,
+                                    "No PAT is saved for this organization.",
+                                );
+                                return;
+                            };
+                            if let Err(error) = refresh_project(client, project, &pat) {
+                                crate::panic_log::record(&format!(
+                                    "azure devops: refresh {}/{} failed: {error}",
+                                    project.organization, project.project
+                                ));
+                                let _ = cache::record_project_error(project, &error);
+                            }
+                        });
                     }
-                }
+                });
             }
             Err(error) => crate::panic_log::record(&format!(
                 "azure devops: could not initialize refresh client: {error}"

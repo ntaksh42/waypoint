@@ -13,7 +13,7 @@ use super::cache::{CachedRow, record_project_success, replace_project_cache};
 use super::convert::{
     AreaNode, area_nodes, area_path_counts, encode_segment, json_i64, parse_rfc3339_unix,
     pipeline_build_row, pipeline_definition_row, pull_request_row, repository_names_and_ids,
-    unix_timestamp, work_item_batch_candidates, work_item_candidates, work_item_cached_row,
+    unix_timestamp, work_item_batch_candidates, work_item_cached_row, work_item_candidates,
 };
 
 pub(crate) const API_VERSION: &str = "7.1";
@@ -41,31 +41,49 @@ const RECENT_WORK_ITEM_LIMIT: usize = 100;
 const REQUEST_RETRIES: usize = 2;
 const RETRY_DELAY: Duration = Duration::from_millis(350);
 
+/// PR / Pipeline / Work Item は同じプロジェクトに対する互いに独立な読み取り
+/// なので、`thread::scope` で並列に取得してから 1 回のトランザクションで
+/// まとめて書き込む (直列だと 1 プロジェクトあたりの同期時間が 3 系統の
+/// 合計になっていた。実測)。
 pub(crate) fn refresh_project(
     client: &reqwest::blocking::Client,
     project: &AzureDevOpsProject,
     pat: &str,
 ) -> Result<(), String> {
-    let mut rows = Vec::new();
-    if project.include_pull_requests {
-        let current_user = current_user_id(client, &project.organization, pat).ok();
-        rows.extend(fetch_pull_requests(
-            client,
-            project,
-            pat,
-            current_user.as_deref(),
-        )?);
-    }
-    if project.include_pipelines {
-        rows.extend(fetch_pipelines(client, project, pat)?);
-    }
-    if project.include_work_items {
-        rows.extend(
-            fetch_recent_work_items(client, project, pat)?
+    let (pull_requests, pipelines, work_items) = thread::scope(|scope| {
+        let pull_requests = scope.spawn(|| {
+            if !project.include_pull_requests {
+                return Ok(Vec::new());
+            }
+            let current_user = current_user_id(client, &project.organization, pat).ok();
+            fetch_pull_requests(client, project, pat, current_user.as_deref())
+        });
+        let pipelines = scope.spawn(|| {
+            if !project.include_pipelines {
+                return Ok(Vec::new());
+            }
+            fetch_pipelines(client, project, pat)
+        });
+        let work_items = scope.spawn(|| -> Result<Vec<CachedRow>, String> {
+            if !project.include_work_items {
+                return Ok(Vec::new());
+            }
+            Ok(fetch_recent_work_items(client, project, pat)?
                 .iter()
-                .filter_map(work_item_cached_row),
-        );
-    }
+                .filter_map(work_item_cached_row)
+                .collect())
+        });
+        (
+            pull_requests
+                .join()
+                .expect("pull request fetch thread panicked"),
+            pipelines.join().expect("pipeline fetch thread panicked"),
+            work_items.join().expect("work item fetch thread panicked"),
+        )
+    });
+    let mut rows = pull_requests?;
+    rows.extend(pipelines?);
+    rows.extend(work_items?);
     replace_project_cache(project, &rows)?;
     record_project_success(project)
 }
