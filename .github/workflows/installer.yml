@@ -43,10 +43,17 @@ jobs:
           name: waypoint-msi
           path: dist/*.msi
 
-      # タグを打ったときだけ Release に添付する
+      # タグを打ったときだけ Release に添付する。Release がまだ無ければ
+      # (`gh release upload` は既存 Release への追加専用で「release not found」
+      # になるため) 先に作成してからアップロードする。
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')
-        run: gh release upload "${{ github.ref_name }}" (Get-Item dist/*.msi).FullName --clobber
+        run: |
+          gh release view "${{ github.ref_name }}" 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create "${{ github.ref_name }}" --title "${{ github.ref_name }}" --generate-notes
+          }
+          gh release upload "${{ github.ref_name }}" (Get-Item dist/*.msi).FullName --clobber
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
