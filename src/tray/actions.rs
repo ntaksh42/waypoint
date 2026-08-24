@@ -108,6 +108,10 @@ pub(crate) fn refresh_dynamic(hwnd: HWND) {
 }
 
 /// `WM_DYNAMIC_REFRESHED` を受けて、列挙結果をメニューと Quick Launch へ反映する。
+///
+/// Quick Launch 側は `configure_dynamic` (Recent/Frequent Folders と開いている
+/// ウィンドウだけを差し替える軽量版) を使う。`configure` (フル `Index::build`)
+/// を使うと、ここで毎回 apps/bookmarks/history の再スキャンが道連れになる。
 pub(crate) fn handle_dynamic_refreshed() {
     let Some(dynamic) = crate::dynamic::take_refreshed() else {
         return;
@@ -118,7 +122,7 @@ pub(crate) fn handle_dynamic_refreshed() {
             return;
         };
         state.menu = crate::menu::build(&state.config, &dynamic).ok();
-        quick_launch_window::configure(&state.config, &dynamic);
+        quick_launch_window::configure_dynamic(&state.config, &dynamic);
         state.dynamic = dynamic;
     });
 }

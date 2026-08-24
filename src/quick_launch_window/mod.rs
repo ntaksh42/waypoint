@@ -181,6 +181,32 @@ pub fn configure(config: &Config, dynamic: &Menus) {
     });
 }
 
+/// `configure` の軽量版。Recent/Frequent Folders と開いているウィンドウの
+/// 一覧だけを差し替え、apps / bookmarks / history / azure* は保持する
+/// (`Index::refresh_dynamic` 参照)。
+///
+/// `tray::actions::refresh_dynamic` (メニューを閉じるたびに呼ばれる) から
+/// 使う。ここで `configure` と同じフル `Index::build` をやり直すと、
+/// スタートメニューの COM 解決やブラウザ履歴の SQLite クエリまで
+/// 道連れで再実行されて重い (実測)。
+pub fn configure_dynamic(config: &Config, dynamic: &Menus) {
+    STATE.with(|state| {
+        let has_window = {
+            let mut state = state.borrow_mut();
+            state.index.refresh_dynamic(config, dynamic);
+            let tabs = state.browser_tabs.clone();
+            state.index.set_browser_tabs(&tabs);
+            // Index の中身 (entries/windows) が変わったので、前回結果への
+            // 絞り込み最適化 (`refined_search_term`) をそのまま使い回さない
+            state.previous_query = None;
+            state.window.is_some()
+        };
+        if has_window {
+            update_results(state);
+        }
+    });
+}
+
 /// Native Messaging host が届けた 1 ブラウザ分のタブ一覧を入れ替える。
 ///
 /// タブの変更通知時だけ呼ばれる。Quick Launch が表示中なら、現在の `t ` 検索結果も

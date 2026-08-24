@@ -146,6 +146,9 @@ impl Entry {
 
 #[derive(Debug, Clone, Default)]
 pub struct Index {
+    /// config 由来の候補 (Recent/Frequent Folders を含まない)。
+    /// `refresh_dynamic` が Recent/Frequent だけを組み直す際の元データ。
+    pub(crate) config_entries: Vec<Entry>,
     pub(crate) entries: Vec<Entry>,
     pub(crate) entries_lower: Vec<search::LowerKeys>,
     pub(crate) bookmarks: Vec<Entry>,

@@ -10,56 +10,16 @@ use super::{Action, Entry, Index};
 
 impl Index {
     pub fn build(config: &Config, dynamic: &Menus) -> Self {
-        let mut entries = Vec::new();
+        let mut config_entries = Vec::new();
         collect_items(
             &config.items,
             &config.variables,
             &mut Vec::new(),
             false,
-            &mut entries,
+            &mut config_entries,
         );
 
         let settings = &config.settings.quick_launch;
-        if settings.include_recent_folders {
-            entries.extend(dynamic.recent_folders.iter().map(|item| Entry {
-                name: item.name.clone(),
-                breadcrumb: "Recent Folders".to_string(),
-                path: item.path.clone(),
-                action: Action::OpenFolder(OpenMode::NewWindow),
-                branch: None,
-            }));
-        }
-        if settings.include_frequent_folders {
-            entries.extend(dynamic.frequent_folders.iter().map(|item| Entry {
-                name: item.name.clone(),
-                breadcrumb: "Frequent Folders".to_string(),
-                path: item.path.clone(),
-                action: Action::OpenFolder(OpenMode::NewWindow),
-                branch: None,
-            }));
-        }
-        let windows = if settings.include_open_windows {
-            dynamic
-                .all_windows
-                .iter()
-                .map(|window| Entry {
-                    name: window.title.clone(),
-                    // プロセス名も breadcrumb に含めて検索対象にする。
-                    // タイトルにアプリ名が出ないウィンドウも `w chrome` で探せる。
-                    breadcrumb: if window.process_name.is_empty() {
-                        "Open Windows".to_string()
-                    } else {
-                        format!("Open Windows — {}", window.process_name)
-                    },
-                    path: String::new(),
-                    action: Action::FocusWindow(window.hwnd),
-                    branch: None,
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-
         let bookmarks = if settings.include_bookmarks {
             crate::bookmarks::scan()
                 .into_iter()
@@ -132,15 +92,16 @@ impl Index {
             Vec::new()
         };
 
-        let entries = dedup_by_path(entries);
-        let entries_lower = super::search::LowerKeys::build_for(&entries);
         let bookmarks_lower = super::search::LowerKeys::build_for(&bookmarks);
         let history_lower = super::search::LowerKeys::build_for(&history);
-        let windows_lower = super::search::LowerKeys::build_for(&windows);
         let apps_lower = super::search::LowerKeys::build_for(&apps);
         let azure_work_items_lower = super::search::LowerKeys::build_for(&azure_work_items);
 
+        let (entries, entries_lower, windows, windows_lower) =
+            dynamic_entries(&config_entries, settings, dynamic);
+
         Self {
+            config_entries,
             entries,
             entries_lower,
             bookmarks,
@@ -159,6 +120,24 @@ impl Index {
             search_paths: settings.search_paths,
             ranking: Ranking::load(),
         }
+    }
+
+    /// Recent/Frequent Folders と開いているウィンドウの一覧だけを差し替える。
+    ///
+    /// `apps` / `bookmarks` / `history` / `azure*` はスタートメニューの COM 解決や
+    /// SQLite クエリを伴い、メニューを閉じるたびに作り直すには重すぎる
+    /// (実測: スタートメニューの規模次第で数十 ms) 。実際に変わるのは
+    /// Recent/Frequent Folders と開いているウィンドウだけなので、そこだけ
+    /// 差し替えて残りは保持する (`refresh_dynamic` からの呼び出し用、
+    /// `tray::actions::handle_dynamic_refreshed` 参照)。
+    pub fn refresh_dynamic(&mut self, config: &Config, dynamic: &Menus) {
+        let settings = &config.settings.quick_launch;
+        let (entries, entries_lower, windows, windows_lower) =
+            dynamic_entries(&self.config_entries, settings, dynamic);
+        self.entries = entries;
+        self.entries_lower = entries_lower;
+        self.windows = windows;
+        self.windows_lower = windows_lower;
     }
 
     /// 拡張から届いた全ブラウザのタブ一覧で、検索用候補を差し替える。
@@ -187,6 +166,61 @@ impl Index {
             .collect();
         self.tabs_lower = super::search::LowerKeys::build_for(&self.tabs);
     }
+}
+
+/// config 由来の候補 (`config_entries`) に Recent/Frequent Folders を足して
+/// 重複排除し、開いているウィンドウの一覧と合わせて返す。
+/// `Index::build` と `Index::refresh_dynamic` の共通部分。
+fn dynamic_entries(
+    config_entries: &[Entry],
+    settings: &crate::config::QuickLaunchSettings,
+    dynamic: &Menus,
+) -> (Vec<Entry>, Vec<super::search::LowerKeys>, Vec<Entry>, Vec<super::search::LowerKeys>) {
+    let mut entries = config_entries.to_vec();
+    if settings.include_recent_folders {
+        entries.extend(dynamic.recent_folders.iter().map(|item| Entry {
+            name: item.name.clone(),
+            breadcrumb: "Recent Folders".to_string(),
+            path: item.path.clone(),
+            action: Action::OpenFolder(OpenMode::NewWindow),
+            branch: None,
+        }));
+    }
+    if settings.include_frequent_folders {
+        entries.extend(dynamic.frequent_folders.iter().map(|item| Entry {
+            name: item.name.clone(),
+            breadcrumb: "Frequent Folders".to_string(),
+            path: item.path.clone(),
+            action: Action::OpenFolder(OpenMode::NewWindow),
+            branch: None,
+        }));
+    }
+    let windows = if settings.include_open_windows {
+        dynamic
+            .all_windows
+            .iter()
+            .map(|window| Entry {
+                name: window.title.clone(),
+                // プロセス名も breadcrumb に含めて検索対象にする。
+                // タイトルにアプリ名が出ないウィンドウも `w chrome` で探せる。
+                breadcrumb: if window.process_name.is_empty() {
+                    "Open Windows".to_string()
+                } else {
+                    format!("Open Windows — {}", window.process_name)
+                },
+                path: String::new(),
+                action: Action::FocusWindow(window.hwnd),
+                branch: None,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let entries = dedup_by_path(entries);
+    let entries_lower = super::search::LowerKeys::build_for(&entries);
+    let windows_lower = super::search::LowerKeys::build_for(&windows);
+    (entries, entries_lower, windows, windows_lower)
 }
 
 /// `inherited_show_branch` は祖先 Submenu の showBranch が真だったか。
