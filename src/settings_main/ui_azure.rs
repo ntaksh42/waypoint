@@ -1,11 +1,16 @@
-//! Azure DevOps プロジェクト選択画面の描画。
+//! Azure DevOps 設定画面の描画。
 //!
-//! 左に検索・選択可能なプロジェクト一覧、右に選択中プロジェクトの詳細編集
+//! 有効化トグルと監視プロジェクトの選択・詳細編集を 1 つのウィンドウに
+//! まとめる。上部に有効化チェックボックスとキャッシュ鮮度、その下に
+//! 左は検索・選択可能なプロジェクト一覧、右は選択中プロジェクトの詳細編集
 //! (エイリアス・優先度・同期スコープ・興味のある Area Path) を並べる。
 //! 大規模な組織でも一覧はフィルタで絞り込め、詳細は 1 プロジェクトずつ
-//! 個別に設定できる。
+//! 個別に設定できる。OK/Cancel は 1 組だけで、有効化トグルとプロジェクト
+//! 選択の両方を一度にコミットする (以前は 2 段のダイアログにそれぞれ
+//! 独立した OK/Apply があり、片方だけ保存し忘れる罠があった)。
 
 use eframe::egui;
+use waypoint::config::AzureDevOpsSettings;
 
 use super::app::SettingsApp;
 use super::azure_draft::{AzureProjectPicker, Scope};
@@ -24,10 +29,10 @@ impl SettingsApp {
 
         let mut apply = false;
         let mut cancel = false;
-        let window = egui::Window::new("Azure DevOps projects")
+        let window = egui::Window::new("Azure DevOps")
             .collapsible(false)
             .resizable(true)
-            .default_size([1000.0, 820.0])
+            .default_size([1000.0, 860.0])
             .min_size([760.0, 520.0])
             .max_height(
                 ctx.input(|input| input.viewport().outer_rect)
@@ -35,9 +40,22 @@ impl SettingsApp {
             )
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
+                ui.checkbox(
+                    &mut picker.enabled,
+                    "Enable Azure DevOps search (type \"az \" to search)",
+                );
+                let azure_status = waypoint::azure_devops::cache_status(&AzureDevOpsSettings {
+                    enabled: picker.enabled,
+                    projects: picker.projects.clone(),
+                });
+                ui.weak(waypoint::azure_devops::cache_status_label(&azure_status));
+                if let Some(error) = azure_status.last_error {
+                    ui.weak(format!("Last Azure DevOps error: {error}"));
+                }
+                ui.separator();
                 show_connection_row(ui, picker);
                 ui.separator();
-                // Apply/Cancel とステータス行の高さを確保してから、残りを一覧・詳細に回す。
+                // OK/Cancel とステータス行の高さを確保してから、残りを一覧・詳細に回す。
                 let footer_height = 76.0;
                 let body_height = (ui.available_height() - footer_height).max(240.0);
                 ui.horizontal(|ui| {
@@ -83,7 +101,7 @@ impl SettingsApp {
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         cancel = ui.button("Cancel").clicked();
-                        apply = ui.button("Apply").clicked();
+                        apply = ui.button("OK").clicked();
                     });
                 });
             });
@@ -93,13 +111,15 @@ impl SettingsApp {
         cancel |= dismiss;
         if apply {
             picker.commit_text_fields();
-        }
-        if apply {
-            if let Some(trigger) = self.trigger_draft.as_mut() {
-                trigger.azure_projects = picker.projects.clone();
-                trigger.error = None;
+            self.config.settings.quick_launch.azure_devops = AzureDevOpsSettings {
+                enabled: picker.enabled,
+                projects: picker.projects.clone(),
+            };
+            self.dirty = true;
+            self.status = None;
+            if self.save() {
+                self.azure_project_picker = None;
             }
-            self.azure_project_picker = None;
         } else if cancel {
             self.azure_project_picker = None;
         }

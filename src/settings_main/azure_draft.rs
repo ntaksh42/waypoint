@@ -10,15 +10,19 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::thread;
 
 use waypoint::azure_devops::AreaNode;
-use waypoint::config::AzureDevOpsProject;
+use waypoint::config::{AzureDevOpsProject, Config};
 
 type ProjectListLoad = (String, Result<Vec<String>, String>);
 type AreaLoad = ((String, String), Result<Vec<AreaNode>, String>);
 type AreaSuggestionLoad = ((String, String), Result<Vec<(String, usize)>, String>);
 type RepositoryLoad = ((String, String), Result<Vec<String>, String>);
 
-/// 多数の Azure DevOps プロジェクトを検索して選ぶ専用画面の状態。
+/// Azure DevOps 連携の設定画面。有効化トグルと監視プロジェクトの選択・
+/// 詳細編集を 1 つの画面にまとめる (以前は「有効化トグルだけの入口画面」
+/// →「Choose watched projects...」で開く別画面、の 2 段構成だったが、
+/// それぞれ独立した OK/Apply を持つため保存漏れを招きやすかった)。
 pub(super) struct AzureProjectPicker {
+    pub(super) enabled: bool,
     pub(super) projects: Vec<AzureDevOpsProject>,
     pub(super) organization: String,
     pub(super) pat: String,
@@ -57,12 +61,25 @@ pub(super) struct AzureProjectPicker {
 }
 
 impl AzureProjectPicker {
+    pub(super) fn from_config(config: &Config) -> Self {
+        let azure_devops = &config.settings.quick_launch.azure_devops;
+        let mut picker = Self::with_projects(azure_devops.projects.clone());
+        picker.enabled = azure_devops.enabled;
+        picker
+    }
+
+    #[cfg(test)]
     pub(super) fn new(projects: Vec<AzureDevOpsProject>) -> Self {
+        Self::with_projects(projects)
+    }
+
+    fn with_projects(projects: Vec<AzureDevOpsProject>) -> Self {
         let organization = projects
             .first()
             .map(|project| project.organization.clone())
             .unwrap_or_default();
         Self {
+            enabled: true,
             projects,
             organization,
             pat: String::new(),

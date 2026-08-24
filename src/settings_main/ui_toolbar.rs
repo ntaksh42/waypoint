@@ -109,6 +109,9 @@ impl SettingsApp {
                         if ui.button("Trigger...").clicked() {
                             self.open_trigger();
                         }
+                        if ui.button("Azure DevOps...").clicked() {
+                            self.open_azure_settings();
+                        }
                     });
             });
         });

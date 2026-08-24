@@ -1,5 +1,6 @@
 //! トリガー設定ダイアログの状態 (ホットキー・Quick Launch 全般)。
-//! Azure DevOps プロジェクト選択の状態とロジックは `azure_draft` に分離する。
+//! Azure DevOps の設定 (有効化・プロジェクト選択) の状態とロジックは
+//! `azure_draft` に分離する (`AzureSettingsDraft` / `AzureProjectPicker`)。
 
 use waypoint::config::Config;
 use waypoint::hotkey_capture;
@@ -9,7 +10,6 @@ use waypoint::hotkey_capture;
 pub(super) enum TriggerTab {
     General,
     QuickLaunch,
-    AzureDevOps,
 }
 
 pub(super) struct TriggerDraft {
@@ -24,8 +24,6 @@ pub(super) struct TriggerDraft {
     pub(super) include_bookmarks: bool,
     pub(super) include_browser_history: bool,
     pub(super) include_apps: bool,
-    pub(super) azure_enabled: bool,
-    pub(super) azure_projects: Vec<waypoint::config::AzureDevOpsProject>,
     pub(super) include_everything: bool,
     pub(super) search_paths: bool,
     pub(super) visible_results: usize,
@@ -57,8 +55,6 @@ impl TriggerDraft {
             include_bookmarks: quick_launch.include_bookmarks,
             include_browser_history: quick_launch.include_browser_history,
             include_apps: quick_launch.include_apps,
-            azure_enabled: quick_launch.azure_devops.enabled,
-            azure_projects: quick_launch.azure_devops.projects.clone(),
             include_everything: quick_launch.include_everything,
             search_paths: quick_launch.search_paths,
             visible_results: quick_launch.visible_results,
@@ -73,10 +69,6 @@ impl TriggerDraft {
             HotkeyField::QuickLaunch => &mut self.quick_launch_hotkey,
         }
     }
-}
-
-pub(super) fn azure_project_count(draft: &TriggerDraft) -> usize {
-    draft.azure_projects.len()
 }
 
 /// ホットキー 1 欄。直接入力と、実際のキー入力からの記録 (FR-6.8.1) 。

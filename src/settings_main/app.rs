@@ -180,6 +180,10 @@ impl SettingsApp {
         self.trigger_draft = Some(TriggerDraft::from_config(&self.config));
     }
 
+    pub(super) fn open_azure_settings(&mut self) {
+        self.azure_project_picker = Some(AzureProjectPicker::from_config(&self.config));
+    }
+
     pub(super) fn open_import(&mut self) {
         self.import_draft = Some(ImportDraft {
             root: String::new(),

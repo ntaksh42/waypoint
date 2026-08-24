@@ -1,29 +1,20 @@
 //! トリガー・Quick Launch 設定ダイアログの描画。
 
 use eframe::egui;
-use waypoint::config::AzureDevOpsSettings;
 use waypoint::hotkey_capture;
 
 use super::app::SettingsApp;
-use super::azure_draft::AzureProjectPicker;
 use super::keys::{dialog_keys, lock_modal_focus};
-use super::trigger_draft::{
-    HotkeyField, TriggerTab, azure_project_count, hotkey_row, poll_hotkey_capture,
-};
+use super::trigger_draft::{HotkeyField, TriggerTab, hotkey_row, poll_hotkey_capture};
 
 impl SettingsApp {
     pub(super) fn show_trigger_editor(&mut self, ctx: &egui::Context) {
-        // 子画面が開いている間は、背後の Esc / Enter を消費しない。
-        if self.azure_project_picker.is_some() {
-            return;
-        }
         let Some(draft) = self.trigger_draft.as_mut() else {
             return;
         };
         poll_hotkey_capture(ctx, draft);
         let mut apply = false;
         let mut cancel = false;
-        let mut open_picker = false;
         let window = egui::Window::new("Trigger")
             .collapsible(false)
             .resizable(true)
@@ -37,11 +28,6 @@ impl SettingsApp {
                         &mut draft.active_tab,
                         TriggerTab::QuickLaunch,
                         "Quick Launch",
-                    );
-                    ui.selectable_value(
-                        &mut draft.active_tab,
-                        TriggerTab::AzureDevOps,
-                        "Azure DevOps",
                     );
                 });
                 ui.separator();
@@ -92,27 +78,6 @@ impl SettingsApp {
                             ui.add(egui::DragValue::new(&mut draft.visible_results).range(12..=24));
                         });
                     }
-                    TriggerTab::AzureDevOps => {
-                        ui.checkbox(
-                            &mut draft.azure_enabled,
-                            "Enable Azure DevOps search (type \"az \" to search)",
-                        );
-                        ui.add_space(8.0);
-                        ui.label(format!("Watching {} project(s).", azure_project_count(draft)));
-                        let azure_status =
-                            waypoint::azure_devops::cache_status(&AzureDevOpsSettings {
-                                enabled: draft.azure_enabled,
-                                projects: draft.azure_projects.clone(),
-                            });
-                        ui.weak(waypoint::azure_devops::cache_status_label(&azure_status));
-                        if let Some(error) = azure_status.last_error {
-                            ui.weak(format!("Last Azure DevOps error: {error}"));
-                        }
-                        ui.add_space(4.0);
-                        if ui.button("Choose watched projects...").clicked() {
-                            open_picker = true;
-                        }
-                    }
                 });
                 ui.separator();
                 if let Some(error) = &draft.error {
@@ -124,10 +89,6 @@ impl SettingsApp {
                 });
             });
         lock_modal_focus(ctx, &window);
-
-        if open_picker {
-            self.azure_project_picker = Some(AzureProjectPicker::new(draft.azure_projects.clone()));
-        }
 
         // 除外プロセス欄が複数行なので Enter は改行に譲り、Esc だけ受ける。
         // 記録中の打鍵はフックが握り潰すため、ここには Esc は届かない
@@ -170,10 +131,6 @@ impl SettingsApp {
                 self.config.settings.quick_launch.include_browser_history =
                     draft.include_browser_history;
                 self.config.settings.quick_launch.include_apps = draft.include_apps;
-                self.config.settings.quick_launch.azure_devops = AzureDevOpsSettings {
-                    enabled: draft.azure_enabled,
-                    projects: draft.azure_projects.clone(),
-                };
                 self.config.settings.quick_launch.include_everything = draft.include_everything;
                 self.config.settings.quick_launch.search_paths = draft.search_paths;
                 self.config.settings.quick_launch.visible_results =
