@@ -74,10 +74,13 @@ pub(crate) fn replace_project_cache(
     let transaction = connection
         .transaction()
         .map_err(|error| error.to_string())?;
+    // 'wit' もここで入れ替える。ライブ検索 (cache_work_item_candidates) が
+    // 書いた一時的な行は、次の定期同期で「最近更新された Work Item」の
+    // 一覧に置き換わる想定でよい (まだ更新中なら定期同期にも出てくる)。
     transaction
         .execute(
             "DELETE FROM candidates
-             WHERE organization = ?1 AND project = ?2 AND kind IN ('pr', 'pipeline')",
+             WHERE organization = ?1 AND project = ?2 AND kind IN ('pr', 'pipeline', 'wit')",
             params![project.organization.trim(), project.project.trim()],
         )
         .map_err(|error| error.to_string())?;
@@ -111,8 +114,10 @@ pub(crate) fn replace_project_cache(
     transaction.commit().map_err(|error| error.to_string())
 }
 
-/// ライブ検索で見つけた Work Item を次回の即時検索用に保持する。
-/// PR / Pipeline 同期時に消されないよう `kind = wit` として別扱いにする。
+/// ライブ全文検索 (`az wit <query>` でキャッシュに無く、ユーザーが明示的に
+/// 追加取得を選んだ場合) で見つけた Work Item を、次回の即時検索用に一時
+/// 保持する。次の定期同期 (`replace_project_cache`) でこの行は消え、
+/// 「最近更新された Work Item」一覧に置き換わる。
 pub(crate) fn cache_work_item_candidates(candidates: &[Candidate]) -> Result<(), String> {
     let mut connection = open_cache()?;
     let transaction = connection

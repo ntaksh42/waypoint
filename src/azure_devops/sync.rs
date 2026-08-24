@@ -12,9 +12,9 @@ use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 use crate::config::AzureDevOpsSettings;
 
 use super::Candidate;
-use super::api::{fetch_work_items, http_client, refresh_project};
+use super::api::{fetch_pull_requests_live, fetch_work_items, http_client, refresh_project};
 use super::cache;
-use super::convert::valid_project;
+use super::convert::{pull_request_cached_row_to_candidate, valid_project};
 use super::credential::load_pat;
 
 #[derive(Debug, Clone, Default)]
@@ -22,6 +22,10 @@ pub struct WorkItemReply {
     pub candidates: Vec<Candidate>,
     pub message: Option<String>,
 }
+
+/// PR のライブ検索結果。フィールドは `WorkItemReply` と同じ形だが、
+/// `pending_work_items` と混ざらないよう独立した `reply_id` 空間を使う。
+pub type PullRequestReply = WorkItemReply;
 
 /// 同期を一つに直列化する。設定保存と手動更新が重なっても API と DB を競合させない。
 pub(crate) static REFRESHING: AtomicBool = AtomicBool::new(false);
@@ -73,6 +77,11 @@ pub fn refresh_async(settings: AzureDevOpsSettings, notify: HWND, message: u32) 
 
 /// `az wit ` の検索をバックグラウンドで実行する。結果は ID ごとに保持し、
 /// 呼び出し側が最新 ID と一致したものだけを表示する。
+///
+/// 監視プロジェクトが複数ある場合、プロジェクトごとに順番に HTTP 応答を
+/// 待つと合計待ち時間が積み上がり体感で遅くなる (実測で報告あり)。
+/// プロジェクト間は互いに独立な読み取りなので `thread::scope` で並列に
+/// 投げ、全部揃うのを待ってからまとめる。
 pub fn search_work_items_async(
     settings: AzureDevOpsSettings,
     query: String,
@@ -86,16 +95,36 @@ pub fn search_work_items_async(
         let mut failures = Vec::new();
         match http_client() {
             Ok(client) => {
-                for project in settings
+                let targets: Vec<_> = settings
                     .projects
                     .iter()
                     .filter(|project| valid_project(project) && project.include_work_items)
-                {
-                    let Ok(pat) = load_pat(&project.organization) else {
-                        failures.push(format!("{}: no PAT", project.organization));
-                        continue;
-                    };
-                    match fetch_work_items(&client, project, &pat, &query) {
+                    .collect();
+                let outcomes: Vec<(&crate::config::AzureDevOpsProject, Result<Vec<Candidate>, String>)> =
+                    thread::scope(|scope| {
+                        let handles: Vec<_> = targets
+                            .iter()
+                            .map(|project| {
+                                let client = &client;
+                                let query = &query;
+                                scope.spawn(move || {
+                                    let outcome = match load_pat(&project.organization) {
+                                        Ok(pat) => fetch_work_items(client, project, &pat, query),
+                                        Err(_) => {
+                                            Err(format!("{}: no PAT", project.organization))
+                                        }
+                                    };
+                                    (*project, outcome)
+                                })
+                            })
+                            .collect();
+                        handles
+                            .into_iter()
+                            .map(|handle| handle.join().expect("work item fetch thread panicked"))
+                            .collect()
+                    });
+                for (project, outcome) in outcomes {
+                    match outcome {
                         Ok(mut found) => {
                             if let Err(error) = cache::cache_work_item_candidates(&found) {
                                 crate::panic_log::record(&format!(
@@ -170,5 +199,141 @@ pub fn take_work_item_results(request_id: u32) -> Option<WorkItemReply> {
 
 fn pending_work_items() -> &'static Mutex<HashMap<u32, WorkItemReply>> {
     static PENDING: OnceLock<Mutex<HashMap<u32, WorkItemReply>>> = OnceLock::new();
+    PENDING.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// プロジェクト × ステータス 1 組の PR ライブ検索の結果。
+type PullRequestFetchOutcome<'a> = (
+    &'a crate::config::AzureDevOpsProject,
+    &'static str,
+    Result<Vec<Candidate>, String>,
+);
+
+/// `az pr` 等がキャッシュ検索で 0 件だったとき、ユーザーが明示的に選んで
+/// 叫ぶライブ検索。打ち切り期間を広げて対象ステータスを再取得し、
+/// ローカルで `mine` / 検索語をフィルタする。監視プロジェクトが複数でも
+/// `az wit` のライブ検索と同様に並列で投げる (プロジェクト × ステータスの
+/// 組ごとに 1 リクエスト、`PullRequestStatus::All` なら completed と
+/// abandoned の両方を同時に叩く)。
+pub fn search_pull_requests_live_async(
+    settings: AzureDevOpsSettings,
+    statuses: &'static [&'static str],
+    mine: bool,
+    query: String,
+    request_id: u32,
+    notify: HWND,
+    message: u32,
+) {
+    let notify = notify.0 as isize;
+    thread::spawn(move || {
+        let mut results = Vec::new();
+        let mut failures = Vec::new();
+        match http_client() {
+            Ok(client) => {
+                let targets: Vec<_> = settings
+                    .projects
+                    .iter()
+                    .filter(|project| valid_project(project) && project.include_pull_requests)
+                    .collect();
+                let jobs: Vec<(&crate::config::AzureDevOpsProject, &'static str)> = targets
+                    .iter()
+                    .flat_map(|project| statuses.iter().map(move |status| (*project, *status)))
+                    .collect();
+                let outcomes: Vec<PullRequestFetchOutcome> = thread::scope(|scope| {
+                    let handles: Vec<_> = jobs
+                        .iter()
+                        .map(|&(project, status)| {
+                            let client = &client;
+                            scope.spawn(move || {
+                                let outcome = match load_pat(&project.organization) {
+                                    Ok(pat) => fetch_pull_requests_live(client, project, &pat, status)
+                                        .map(|rows| {
+                                            rows.iter()
+                                                .map(|row| {
+                                                    pull_request_cached_row_to_candidate(
+                                                        project, row,
+                                                    )
+                                                })
+                                                .collect()
+                                        }),
+                                    Err(_) => Err(format!("{}: no PAT", project.organization)),
+                                };
+                                (project, status, outcome)
+                            })
+                        })
+                        .collect();
+                    handles
+                        .into_iter()
+                        .map(|handle| handle.join().expect("pull request fetch thread panicked"))
+                        .collect()
+                });
+                for (project, status, outcome) in outcomes {
+                    match outcome {
+                        Ok(found) => results.extend(found),
+                        Err(error) => {
+                            crate::panic_log::record(&format!(
+                                "azure devops: live pull request search {}/{} ({status}) failed: {error}",
+                                project.organization, project.project
+                            ));
+                            failures.push(format!("{}/{}", project.organization, project.project));
+                        }
+                    }
+                }
+            }
+            Err(error) => crate::panic_log::record(&format!(
+                "azure devops: could not initialize pull request client: {error}"
+            )),
+        }
+        let terms = query.trim().to_lowercase();
+        if !terms.is_empty() {
+            results.retain(|candidate| candidate.name.to_lowercase().contains(&terms));
+        }
+        if mine {
+            results.retain(|candidate| candidate.is_mine);
+        }
+        results.sort_by_key(|candidate| (candidate.priority, candidate.name.to_lowercase()));
+        failures.sort();
+        failures.dedup();
+        let empty_message = if results.is_empty() {
+            if failures.is_empty() {
+                Some("No matching pull requests.".to_string())
+            } else {
+                Some(format!(
+                    "Azure DevOps search unavailable ({})",
+                    failures.join(", ")
+                ))
+            }
+        } else {
+            None
+        };
+        let mut pending = pending_pull_requests()
+            .lock()
+            .expect("pull request result lock poisoned");
+        pending.insert(
+            request_id,
+            PullRequestReply {
+                candidates: results,
+                message: empty_message,
+            },
+        );
+        pending.retain(|id, _| *id >= request_id.saturating_sub(3));
+        drop(pending);
+        unsafe {
+            let _ = PostMessageW(
+                Some(HWND(notify as *mut _)),
+                message,
+                WPARAM(request_id as usize),
+                LPARAM(0),
+            );
+        }
+    });
+}
+
+pub fn take_pull_request_results(request_id: u32) -> Option<PullRequestReply> {
+    pending_pull_requests().lock().ok()?.remove(&request_id)
+}
+
+fn pending_pull_requests() -> &'static Mutex<HashMap<u32, PullRequestReply>> {
+    static PENDING: OnceLock<Mutex<HashMap<u32, PullRequestReply>>> = OnceLock::new();
     PENDING.get_or_init(|| Mutex::new(HashMap::new()))
 }

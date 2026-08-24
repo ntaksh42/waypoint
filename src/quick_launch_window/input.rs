@@ -157,6 +157,8 @@ pub(super) fn queue_selected() {
     enum Selected {
         Replace(HWND, String),
         Execute(Option<HWND>, Option<HWND>),
+        LiveWorkItemSearch(String),
+        LivePullRequestSearch(crate::quick_launch::PullRequestFilter, String),
     }
 
     let selected = STATE.with(|state| {
@@ -166,6 +168,12 @@ pub(super) fn queue_selected() {
             return state
                 .edit
                 .map(|edit| Selected::Replace(edit, query.clone()));
+        }
+        if let Action::AzureLiveWorkItemSearch(query) = &entry.action {
+            return Some(Selected::LiveWorkItemSearch(query.clone()));
+        }
+        if let Action::AzureLivePullRequestSearch { filter, query } = &entry.action {
+            return Some(Selected::LivePullRequestSearch(*filter, query.clone()));
         }
         if let Action::OpenFolder(mode) = &mut entry.action {
             let shift = unsafe { GetKeyState(VK_SHIFT.0 as i32) } < 0;
@@ -199,6 +207,14 @@ pub(super) fn queue_selected() {
                         PostMessageW(Some(owner), WM_QUICK_LAUNCH_EXECUTE, WPARAM(0), LPARAM(0));
                 }
             }
+        }
+        Some(Selected::LiveWorkItemSearch(query)) => {
+            STATE.with(|state| super::search::start_azure_work_item_live_search(state, &query));
+        }
+        Some(Selected::LivePullRequestSearch(filter, query)) => {
+            STATE.with(|state| {
+                super::search::start_azure_pull_request_live_search(state, filter, &query)
+            });
         }
         None => {}
     }

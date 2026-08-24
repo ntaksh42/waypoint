@@ -24,7 +24,9 @@ pub(super) fn action_color(action: &Action) -> COLORREF {
         | Action::OpenUrl(_)
         | Action::FocusBrowserTab(_)
         | Action::OpenWithDefaultHandler
-        | Action::ReplaceQuery(_) => ACCENT,
+        | Action::ReplaceQuery(_)
+        | Action::AzureLiveWorkItemSearch(_)
+        | Action::AzureLivePullRequestSearch { .. } => ACCENT,
     }
 }
 

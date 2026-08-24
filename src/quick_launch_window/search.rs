@@ -1,18 +1,17 @@
 //! 検索実行・非同期結果の反映。
 
 use std::cell::RefCell;
-use std::thread;
 
 use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::InvalidateRect;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetClientRect, LB_ADDSTRING, LB_RESETCONTENT, LB_SETCURSEL, PostMessageW,
+    GetClientRect, LB_ADDSTRING, LB_RESETCONTENT, LB_SETCURSEL,
 };
 use windows::core::HSTRING;
 
 use super::{
-    AZURE_WIT_DEBOUNCE, EDIT_HEIGHT, EVERYTHING_MAX_RESULTS, EVERYTHING_REPLY_ID_START, PADDING,
-    RowKind, STATE, State, WM_QUICK_LAUNCH_AZURE_RESULTS, WM_QUICK_LAUNCH_AZURE_START,
+    EDIT_HEIGHT, EVERYTHING_MAX_RESULTS, EVERYTHING_REPLY_ID_START, PADDING, RowKind, STATE,
+    State, WM_QUICK_LAUNCH_AZURE_RESULTS,
 };
 use crate::config::OpenMode;
 use crate::quick_launch::Entry;
@@ -113,6 +112,17 @@ pub(super) fn update_results(state: &RefCell<State>) {
             } else {
                 state.index.search(&query).into_iter().cloned().collect()
             };
+            // PR 検索がキャッシュで 0 件だったとき、末尾に明示的なライブ
+            // 検索の入口を足す。API 全文検索が無いため、打ち切り期間を
+            // 一時的に広げて再取得する以外に取りこぼしを拾う手段が無い。
+            if state.results.is_empty()
+                && let Some((crate::quick_launch::AzureCommand::PullRequests(filter), rest)) =
+                    crate::quick_launch::azure_command(&query)
+            {
+                state
+                    .results
+                    .push(live_pull_request_search_entry(filter, rest));
+            }
             Vec::new()
         };
         state.previous_query = Some(query);
@@ -158,10 +168,13 @@ pub(super) fn start_everything_query(state: &RefCell<State>, text: &str) {
     crate::everything::query(window, reply_id, text, EVERYTHING_MAX_RESULTS, flags);
 }
 
-/// `az wit ` に入った。入力が止まるまで待ってから API を呼び、入力中に
-/// プロジェクト数分の通信が積み上がらないようにする。
+/// `az wit ` に入った。SQLite キャッシュ (バックグラウンド定期同期が
+/// 埋める「最近更新された Work Item」) だけをローカル検索する。API は
+/// 自動では呼ばない — 検索語があってキャッシュに無ければ、末尾に
+/// 明示的なライブ検索の選択肢を 1 件足すだけに留める (ユーザー操作が
+/// トリガー、入力のたびに Azure DevOps を叫ばない)。
 pub(super) fn start_azure_work_item_query(state: &RefCell<State>, text: &str) {
-    let (window, list, reply_id, has_cached_results) = {
+    let (list, has_results) = {
         let mut state = state.borrow_mut();
         state.everything_active = false;
         state.previous_query = None;
@@ -172,82 +185,74 @@ pub(super) fn start_azure_work_item_query(state: &RefCell<State>, text: &str) {
             .into_iter()
             .cloned()
             .collect();
+        let trimmed = text.trim();
+        if state.results.is_empty() && !trimmed.is_empty() {
+            state.results.push(live_work_item_search_entry(trimmed));
+        }
         state.empty_message = if state.results.is_empty() {
-            Some(if text.trim().is_empty() {
-                "Loading recently updated Azure DevOps work items…".to_string()
+            Some(if trimmed.is_empty() {
+                "No recently updated work items.".to_string()
             } else {
-                "Searching Azure DevOps work items…".to_string()
+                "No matching work items.".to_string()
             })
         } else {
             None
         };
-        state.azure_work_item_reply_id = next_azure_reply_id(state.azure_work_item_reply_id);
-        state.azure_work_item_query = text.trim().to_string();
-        (
-            state.window,
-            state.list,
-            state.azure_work_item_reply_id,
-            !state.results.is_empty(),
-        )
+        (state.list, !state.results.is_empty())
     };
-    if let Some(list) = list {
-        let (labels, rows, message) = {
-            let mut state = state.borrow_mut();
-            let (labels, rows) = build_rows(&state.results, &[]);
-            state.rows = if rows.is_empty() {
-                vec![RowKind::Message]
-            } else {
-                rows.clone()
-            };
-            (labels, rows, state.empty_message.clone())
-        };
-        if !rows.is_empty() {
-            populate_list(list, &labels, &rows);
+    let Some(list) = list else {
+        return;
+    };
+    let (labels, rows, message) = {
+        let mut state = state.borrow_mut();
+        let (labels, rows) = build_rows(&state.results, &[]);
+        state.rows = if rows.is_empty() {
+            vec![RowKind::Message]
         } else {
-            populate_empty_message(list, message.as_deref());
-        }
-    }
-    if has_cached_results {
-        return;
-    }
-    let Some(window) = window else {
-        return;
+            rows.clone()
+        };
+        (labels, rows, state.empty_message.clone())
     };
-    let notify = window.0 as isize;
-    thread::spawn(move || {
-        thread::sleep(AZURE_WIT_DEBOUNCE);
-        unsafe {
-            let _ = PostMessageW(
-                Some(HWND(notify as *mut _)),
-                WM_QUICK_LAUNCH_AZURE_START,
-                WPARAM(reply_id as usize),
-                LPARAM(0),
-            );
-        }
-    });
+    if has_results {
+        populate_list(list, &labels, &rows);
+    } else {
+        populate_empty_message(list, message.as_deref());
+    }
 }
 
-/// デバウンス済みの WIT 要求だけをネットワークスレッドへ渡す。
-pub(super) fn start_debounced_azure_work_item_query(reply_id: u32) {
-    let request = STATE.with(|state| {
-        let state = state.borrow();
-        if accepts_azure_work_item_reply(
-            state.azure_work_items_active,
+/// キャッシュ検索が 0 件だったときにリストへ足す、ライブ検索への入口。
+fn live_work_item_search_entry(query: &str) -> Entry {
+    Entry {
+        name: format!("Search Azure DevOps for \"{query}\""),
+        breadcrumb: "Not in cache — press Enter to search live".to_string(),
+        path: String::new(),
+        action: crate::quick_launch::Action::AzureLiveWorkItemSearch(query.to_string()),
+        branch: None,
+    }
+}
+
+/// `AzureLiveWorkItemSearch` が選ばれた。ウィンドウは閉じずにその場で
+/// API 検索を投げ、結果が届いたらリストだけ差し替える。
+pub(super) fn start_azure_work_item_live_search(state: &RefCell<State>, query: &str) {
+    let (window, reply_id, settings) = {
+        let mut state = state.borrow_mut();
+        state.azure_work_items_active = true;
+        state.azure_work_item_reply_id = next_azure_reply_id(state.azure_work_item_reply_id);
+        state.azure_work_item_query = query.trim().to_string();
+        state.empty_message = Some("Searching Azure DevOps work items…".to_string());
+        state.results.clear();
+        state.rows = vec![RowKind::Message];
+        (
+            state.window,
             state.azure_work_item_reply_id,
-            reply_id,
-        ) {
-            state.window.map(|window| {
-                (
-                    state.azure_devops.clone(),
-                    state.azure_work_item_query.clone(),
-                    window,
-                )
-            })
-        } else {
-            None
-        }
-    });
-    let Some((settings, query, window)) = request else {
+            state.azure_devops.clone(),
+        )
+    };
+    let Some(list) = STATE.with(|state| state.borrow().list) else {
+        return;
+    };
+    populate_empty_message(list, Some("Searching Azure DevOps work items…"));
+    let Some(window) = window else {
         return;
     };
     if !settings.enabled {
@@ -256,7 +261,7 @@ pub(super) fn start_debounced_azure_work_item_query(reply_id: u32) {
     }
     crate::azure_devops::search_work_items_async(
         settings,
-        query,
+        query.trim().to_string(),
         reply_id,
         window,
         WM_QUICK_LAUNCH_AZURE_RESULTS,
@@ -301,6 +306,119 @@ pub(super) fn handle_azure_work_item_results(reply_id: u32) {
             .collect();
         let fetched_entries = state.results.clone();
         state.index.merge_cached_work_items(&fetched_entries);
+        state.empty_message = reply.message;
+        let (labels, rows) = build_rows(&state.results, &[]);
+        state.rows = if rows.is_empty() {
+            vec![RowKind::Message]
+        } else {
+            rows.clone()
+        };
+        Some((state.list, labels, rows, state.empty_message.clone()))
+    });
+    let Some((list, labels, rows, empty_message)) = outcome else {
+        return;
+    };
+    if let Some(list) = list {
+        if !rows.is_empty() {
+            populate_list(list, &labels, &rows);
+        } else {
+            populate_empty_message(list, empty_message.as_deref());
+        }
+    }
+}
+
+/// PR 検索がキャッシュで 0 件だったときにリストへ足す、ライブ検索への入口。
+fn live_pull_request_search_entry(
+    filter: crate::quick_launch::PullRequestFilter,
+    query: &str,
+) -> Entry {
+    let label = if query.is_empty() {
+        "Search Azure DevOps for older pull requests".to_string()
+    } else {
+        format!("Search Azure DevOps for pull requests matching \"{query}\"")
+    };
+    Entry {
+        name: label,
+        breadcrumb: "Not in cache — press Enter to search live (widens to 1 year)".to_string(),
+        path: String::new(),
+        action: crate::quick_launch::Action::AzureLivePullRequestSearch {
+            filter,
+            query: query.to_string(),
+        },
+        branch: None,
+    }
+}
+
+/// `AzureLivePullRequestSearch` が選ばれた。ウィンドウは閉じずにその場で
+/// API 検索を投げ、結果が届いたらリストだけ差し替える。
+pub(super) fn start_azure_pull_request_live_search(
+    state: &RefCell<State>,
+    filter: crate::quick_launch::PullRequestFilter,
+    query: &str,
+) {
+    let (window, reply_id, settings) = {
+        let mut state = state.borrow_mut();
+        state.azure_pull_requests_live_active = true;
+        state.azure_pull_request_reply_id = next_azure_reply_id(state.azure_pull_request_reply_id);
+        state.empty_message = Some("Searching Azure DevOps pull requests…".to_string());
+        state.results.clear();
+        state.rows = vec![RowKind::Message];
+        (
+            state.window,
+            state.azure_pull_request_reply_id,
+            state.azure_devops.clone(),
+        )
+    };
+    let Some(list) = STATE.with(|state| state.borrow().list) else {
+        return;
+    };
+    populate_empty_message(list, Some("Searching Azure DevOps pull requests…"));
+    let Some(window) = window else {
+        return;
+    };
+    if !settings.enabled {
+        set_azure_empty_message("Azure DevOps search is disabled in Settings.");
+        return;
+    }
+    crate::azure_devops::search_pull_requests_live_async(
+        settings,
+        filter.status.live_search_statuses(),
+        filter.mine,
+        query.to_string(),
+        reply_id,
+        window,
+        WM_QUICK_LAUNCH_AZURE_RESULTS,
+    );
+}
+
+pub(super) fn accepts_azure_pull_request_reply(active: bool, expected: u32, received: u32) -> bool {
+    active && expected == received
+}
+
+pub(super) fn handle_azure_pull_request_results(reply_id: u32) {
+    let Some(reply) = crate::azure_devops::take_pull_request_results(reply_id) else {
+        return;
+    };
+    let outcome = STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        if !accepts_azure_pull_request_reply(
+            state.azure_pull_requests_live_active,
+            state.azure_pull_request_reply_id,
+            reply_id,
+        ) {
+            return None;
+        }
+        state.results = reply
+            .candidates
+            .into_iter()
+            .map(|candidate| Entry {
+                name: candidate.name,
+                breadcrumb: candidate.detail,
+                path: candidate.url.clone(),
+                action: crate::quick_launch::Action::OpenUrl(candidate.url),
+                branch: None,
+            })
+            .collect();
         state.empty_message = reply.message;
         let (labels, rows) = build_rows(&state.results, &[]);
         state.rows = if rows.is_empty() {

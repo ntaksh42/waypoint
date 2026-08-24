@@ -63,7 +63,11 @@ fn key_for(entry: &Entry) -> Option<String> {
         Action::OpenUrl(_) => "url",
         Action::OpenWithDefaultHandler => "default",
         Action::LaunchApp => "app",
-        Action::FocusWindow(_) | Action::FocusBrowserTab(_) | Action::ReplaceQuery(_) => {
+        Action::FocusWindow(_)
+        | Action::FocusBrowserTab(_)
+        | Action::ReplaceQuery(_)
+        | Action::AzureLiveWorkItemSearch(_)
+        | Action::AzureLivePullRequestSearch { .. } => {
             return None;
         }
     };

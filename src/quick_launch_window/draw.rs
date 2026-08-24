@@ -391,7 +391,11 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
                     dpi,
                     FaviconFallback::Tab,
                 ),
-                Action::ReplaceQuery(_) => draw_command_icon(draw.hDC, draw.rcItem, dpi, name_font),
+                Action::ReplaceQuery(_)
+                | Action::AzureLiveWorkItemSearch(_)
+                | Action::AzureLivePullRequestSearch { .. } => {
+                    draw_command_icon(draw.hDC, draw.rcItem, dpi, name_font)
+                }
             }
         }
         SetBkMode(draw.hDC, TRANSPARENT);

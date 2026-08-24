@@ -36,6 +36,8 @@ use window::wnd_proc;
 pub(crate) const WM_TRAY: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 1;
 pub(crate) const WM_RELOAD_CONFIG: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 3;
 pub const WM_AZURE_DEVOPS_REFRESHED: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 8;
+/// `dynamic::refresh_async` の完了通知 (Recent/Frequent/Windows の再列挙)。
+pub const WM_DYNAMIC_REFRESHED: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 10;
 const TRAY_UID: u32 = 1;
 
 // トレイの右クリックメニューの項目 ID

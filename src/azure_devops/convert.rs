@@ -238,6 +238,45 @@ pub(crate) fn work_item_batch_candidates(
         .collect()
 }
 
+/// バックグラウンド同期でキャッシュへ書くための変換。`url` 末尾の Work
+/// Item ID を `item_id` に使う (`_workitems/edit/{id}` の形式は
+/// `work_item_candidate` が組み立てる URL と ID 抽出の両方で前提にしている)。
+pub(crate) fn work_item_cached_row(candidate: &Candidate) -> Option<CachedRow> {
+    let item_id = candidate.url.rsplit('/').next()?.to_string();
+    Some(CachedRow {
+        organization: candidate.organization.clone(),
+        project: candidate.project.clone(),
+        kind: "wit".to_string(),
+        item_id,
+        status: candidate.status.clone(),
+        name: candidate.name.clone(),
+        detail: candidate.detail.clone(),
+        url: candidate.url.clone(),
+        is_mine: candidate.is_mine,
+    })
+}
+
+/// PR のライブ検索結果 (`CachedRow`、まだキャッシュへ書く前) を候補へ
+/// 変換する。`aliases` / `priority` は SQLite に持たないプロジェクト
+/// 設定側の値なので、呼び出し元の `AzureDevOpsProject` から補う。
+pub(crate) fn pull_request_cached_row_to_candidate(
+    project: &AzureDevOpsProject,
+    row: &CachedRow,
+) -> Candidate {
+    Candidate {
+        kind: Kind::PullRequest,
+        status: row.status.clone(),
+        name: row.name.clone(),
+        detail: row.detail.clone(),
+        url: row.url.clone(),
+        organization: row.organization.clone(),
+        project: row.project.clone(),
+        aliases: project.aliases.clone(),
+        priority: project.priority,
+        is_mine: row.is_mine,
+    }
+}
+
 pub(crate) fn work_item_candidate(
     project: &AzureDevOpsProject,
     fields: &Value,

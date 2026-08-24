@@ -13,12 +13,12 @@ use super::draw::{draw_list_item, paint_window};
 use super::input::{hide_window, queue_selected};
 use super::layout::scale;
 use super::search::{
-    handle_azure_work_item_results, handle_everything_results,
-    start_debounced_azure_work_item_query, update_results,
+    handle_azure_pull_request_results, handle_azure_work_item_results, handle_everything_results,
+    update_results,
 };
 use super::{
     BACKGROUND, BADGE_WIDTH, EDIT_HEIGHT, HEADER_HEIGHT, PADDING, ROW_HEIGHT, RowKind, STATE,
-    SURFACE, TEXT_PRIMARY, WM_QUICK_LAUNCH_AZURE_RESULTS, WM_QUICK_LAUNCH_AZURE_START,
+    SURFACE, TEXT_PRIMARY, WM_QUICK_LAUNCH_AZURE_RESULTS,
 };
 
 pub(super) fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -133,12 +133,13 @@ pub(super) fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM)
             hide_window(Some(hwnd));
             LRESULT(0)
         }
-        WM_QUICK_LAUNCH_AZURE_START => {
-            start_debounced_azure_work_item_query(wparam.0 as u32);
-            LRESULT(0)
-        }
         WM_QUICK_LAUNCH_AZURE_RESULTS => {
+            // Work Item と PR のライブ検索は reply_id の名前空間が別
+            // (State::azure_work_item_reply_id / azure_pull_request_reply_id)。
+            // どちらの要求への応答かはハンドラ内の take_*_results が
+            // 判定するので、両方呼んでも無関係な方は None で素通りする。
             handle_azure_work_item_results(wparam.0 as u32);
+            handle_azure_pull_request_results(wparam.0 as u32);
             LRESULT(0)
         }
         windows::Win32::UI::WindowsAndMessaging::WM_COPYDATA => {

@@ -111,7 +111,7 @@ impl Index {
                 is_mine: candidate.is_mine,
             })
             .collect();
-        let azure_work_items =
+        let azure_work_items: Vec<Entry> =
             crate::azure_devops::cached_work_item_candidates(&settings.azure_devops)
                 .into_iter()
                 .map(azure_candidate_entry)
@@ -138,6 +138,7 @@ impl Index {
         let history_lower = super::search::LowerKeys::build_for(&history);
         let windows_lower = super::search::LowerKeys::build_for(&windows);
         let apps_lower = super::search::LowerKeys::build_for(&apps);
+        let azure_work_items_lower = super::search::LowerKeys::build_for(&azure_work_items);
 
         Self {
             entries,
@@ -148,6 +149,7 @@ impl Index {
             history_lower,
             azure,
             azure_work_items,
+            azure_work_items_lower,
             windows,
             windows_lower,
             apps,

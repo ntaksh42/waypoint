@@ -11,7 +11,6 @@ mod search;
 mod tests;
 
 use std::cell::RefCell;
-use std::time::Duration;
 
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{CreateSolidBrush, HBRUSH, HFONT};
@@ -75,13 +74,9 @@ const EVERYTHING_REPLY_ID_START: u32 = WM_APP + 5;
 pub const WM_QUICK_LAUNCH_ADD_TO_FAVORITES: u32 = WM_APP + 6;
 /// Azure DevOps の Work Item 検索スレッドが結果を返す通知。
 pub const WM_QUICK_LAUNCH_AZURE_RESULTS: u32 = WM_APP + 7;
-/// WIT 入力のデバウンス完了通知。ネットワーク要求はこのメッセージで初めて始める。
-const WM_QUICK_LAUNCH_AZURE_START: u32 = WM_APP + 9;
 /// Quick Launch が一度に Everything へ要求する最大件数。
 /// 全件表示はしない (`visible_results` の上限と同じ枠で足りる)。
 const EVERYTHING_MAX_RESULTS: u32 = 24;
-/// WIT 検索は入力が止まってから始める。各キー入力ごとの API 呼び出しを防ぐ。
-const AZURE_WIT_DEBOUNCE: Duration = Duration::from_millis(180);
 const CLASS_NAME: PCWSTR = w!("WaypointQuickLaunchWindow");
 
 thread_local! {
@@ -154,6 +149,11 @@ struct State {
     azure_work_items_active: bool,
     azure_work_item_reply_id: u32,
     azure_work_item_query: String,
+    /// PR のライブ検索 (`AzureLivePullRequestSearch`) 中だけ立てる。
+    /// `azure_work_item_*` と同じ役割だが、Work Item のライブ検索と
+    /// reply_id の名前空間を分けるために独立させている。
+    azure_pull_requests_live_active: bool,
+    azure_pull_request_reply_id: u32,
     /// 非同期検索中・0 件時に結果一覧へ出す説明。実行対象にはしない。
     empty_message: Option<String>,
     /// 現在の入力が `b `/`w `/`a `/`f ` のいずれかに入っていれば

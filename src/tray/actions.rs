@@ -16,7 +16,7 @@ use crate::shell;
 use super::window::cursor_pos;
 use super::{
     ICON_CLOSE, ICON_RELOAD, ID_AUTOSTART, ID_AZURE_REFRESH, ID_EXIT, ID_RELOAD, ID_SETTINGS,
-    refresh_azure_devops, reload, with_state,
+    WM_DYNAMIC_REFRESHED, refresh_azure_devops, reload, with_state,
 };
 
 pub(crate) fn show_launcher_at_cursor(hwnd: HWND) {
@@ -37,19 +37,19 @@ pub(crate) fn show_launcher(hwnd: HWND, at: POINT, origin: Option<HWND>) {
     match selection {
         Some(Selection::Action(Action::Open { path, open })) => {
             let _ = shell::open(&path, open, origin);
-            refresh_dynamic();
+            refresh_dynamic(hwnd);
         }
-        Some(Selection::Action(Action::ActivateWindow { hwnd })) => {
-            shell::activate_window(HWND(hwnd as *mut _));
-            refresh_dynamic();
+        Some(Selection::Action(Action::ActivateWindow { hwnd: target })) => {
+            shell::activate_window(HWND(target as *mut _));
+            refresh_dynamic(hwnd);
         }
         Some(Selection::Action(Action::OpenShell { target })) => {
             let _ = shell::open_shell_item(&target);
-            refresh_dynamic();
+            refresh_dynamic(hwnd);
         }
         Some(Selection::Settings) => open_config_in_editor(),
         Some(Selection::Reload) => reload(hwnd),
-        Some(Selection::Close) | None => refresh_dynamic(),
+        Some(Selection::Close) | None => refresh_dynamic(hwnd),
     }
 }
 
@@ -99,8 +99,19 @@ pub(crate) fn add_entry_to_favorites(entry: quick_launch::Entry) {
 }
 
 /// メニューが閉じた後に列挙し、次回表示用キャッシュを入れ替える。
-pub(crate) fn refresh_dynamic() {
-    let dynamic = crate::dynamic::refresh();
+///
+/// Recent フォルダの COM 解決が数十 ms かかる (実測) ため、UI スレッドを
+/// 塞がないようバックグラウンドスレッドで行う。結果は `WM_DYNAMIC_REFRESHED`
+/// で受け取ってから反映する (`handle_dynamic_refreshed`)。
+pub(crate) fn refresh_dynamic(hwnd: HWND) {
+    crate::dynamic::refresh_async(hwnd, WM_DYNAMIC_REFRESHED);
+}
+
+/// `WM_DYNAMIC_REFRESHED` を受けて、列挙結果をメニューと Quick Launch へ反映する。
+pub(crate) fn handle_dynamic_refreshed() {
+    let Some(dynamic) = crate::dynamic::take_refreshed() else {
+        return;
+    };
     with_state(|s| {
         let mut state = s.borrow_mut();
         let Some(state) = state.as_mut() else {

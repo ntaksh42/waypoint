@@ -29,7 +29,10 @@ use sync::REFRESHING;
 pub use api::{fetch_area_nodes, fetch_my_area_suggestions, list_repository_names};
 pub use convert::AreaNode;
 pub use credential::{delete_pat, save_pat};
-pub use sync::{WorkItemReply, refresh_async, search_work_items_async, take_work_item_results};
+pub use sync::{
+    PullRequestReply, WorkItemReply, refresh_async, search_pull_requests_live_async,
+    search_work_items_async, take_pull_request_results, take_work_item_results,
+};
 
 const PROJECT_PAGE_SIZE: usize = 1_000;
 
@@ -56,6 +59,19 @@ impl PullRequestStatus {
             Self::Active => status.eq_ignore_ascii_case("active"),
             Self::Completed => status.eq_ignore_ascii_case("completed"),
             Self::Abandoned => status.eq_ignore_ascii_case("abandoned"),
+        }
+    }
+
+    /// ライブ検索 (`search_pull_requests_live_async`) で API に渡す
+    /// `searchCriteria.status` の値。Active はキャッシュに全件あるはず
+    /// なのでライブ検索の対象外。`All` は Completed/Abandoned の両方を
+    /// 順に叩く (呼び出し側が結果をまとめる)。
+    pub fn live_search_statuses(self) -> &'static [&'static str] {
+        match self {
+            Self::All => &["completed", "abandoned"],
+            Self::Active => &[],
+            Self::Completed => &["completed"],
+            Self::Abandoned => &["abandoned"],
         }
     }
 }

@@ -79,6 +79,7 @@ pub(super) fn index() -> Index {
             is_mine: true,
         }],
         azure_work_items: Vec::new(),
+        azure_work_items_lower: Vec::new(),
         windows: vec![Entry {
             name: "waypoint - Notepad".into(),
             breadcrumb: "Open Windows".into(),

@@ -13,7 +13,7 @@ use super::cache::{CachedRow, record_project_success, replace_project_cache};
 use super::convert::{
     AreaNode, area_nodes, area_path_counts, encode_segment, json_i64, parse_rfc3339_unix,
     pipeline_build_row, pipeline_definition_row, pull_request_row, repository_names_and_ids,
-    unix_timestamp, work_item_batch_candidates, work_item_candidates,
+    unix_timestamp, work_item_batch_candidates, work_item_candidates, work_item_cached_row,
 };
 
 pub(crate) const API_VERSION: &str = "7.1";
@@ -24,11 +24,20 @@ const PR_HISTORY_MAX_AGE: Duration = Duration::from_secs(60 * 60 * 24 * 90);
 /// 上の日付条件に加えた保険。1 プロジェクトが Completed/Abandoned だけで
 /// 何千件もページングし続けないよう件数でも打ち切る。
 const PR_HISTORY_MAX_COUNT: usize = 1_000;
+/// `az pr` 等がキャッシュ検索で 0 件だったとき、ユーザーが明示的に選んで
+/// 叫ぶライブ検索の打ち切り。定期同期の 3 ヶ月より広く 1 年まで遡るが、
+/// それでも無制限にはしない (これも実行のたびに数千リクエストしないため)。
+const PR_LIVE_SEARCH_MAX_AGE: Duration = Duration::from_secs(60 * 60 * 24 * 365);
+const PR_LIVE_SEARCH_MAX_COUNT: usize = 2_000;
 const PIPELINE_BUILD_LIMIT: usize = 100;
+/// `az wit <query>` のライブ全文検索 (ユーザーがキャッシュ検索で見つからず
+/// 明示的に追加取得を選んだときだけ呼ぶ) 1 回あたりの上限。
 const WORK_ITEM_RESULT_LIMIT: usize = 50;
-/// `az wit` 単体で各プロジェクトから表示する最近更新 Work Item 数。
-/// 監視プロジェクトが複数でも、Quick Launch のリストを過度に埋めない。
-const RECENT_WORK_ITEM_LIMIT: usize = 8;
+/// バックグラウンド同期で事前キャッシュする「最近更新された Work Item」数
+/// (プロジェクトごと)。`az wit` の空クエリ・通常検索はこのキャッシュだけを
+/// ローカルで引く。PR の Completed/Abandoned 履歴 (`PR_HISTORY_MAX_COUNT`)
+/// ほど広い母集団は要らないので、控えめな値に留める。
+const RECENT_WORK_ITEM_LIMIT: usize = 100;
 const REQUEST_RETRIES: usize = 2;
 const RETRY_DELAY: Duration = Duration::from_millis(350);
 
@@ -49,6 +58,13 @@ pub(crate) fn refresh_project(
     }
     if project.include_pipelines {
         rows.extend(fetch_pipelines(client, project, pat)?);
+    }
+    if project.include_work_items {
+        rows.extend(
+            fetch_recent_work_items(client, project, pat)?
+                .iter()
+                .filter_map(work_item_cached_row),
+        );
     }
     replace_project_cache(project, &rows)?;
     record_project_success(project)
@@ -96,6 +112,10 @@ fn fetch_pull_requests(
             "active",
             repository_id.as_deref(),
         )?);
+        let sync_limits = HistoryLimits {
+            max_age: PR_HISTORY_MAX_AGE,
+            max_count: PR_HISTORY_MAX_COUNT,
+        };
         rows.extend(fetch_pull_requests_history(
             client,
             project,
@@ -103,6 +123,7 @@ fn fetch_pull_requests(
             current_user,
             "completed",
             repository_id.as_deref(),
+            sync_limits,
         )?);
         rows.extend(fetch_pull_requests_history(
             client,
@@ -111,9 +132,45 @@ fn fetch_pull_requests(
             current_user,
             "abandoned",
             repository_id.as_deref(),
+            sync_limits,
         )?);
     }
     Ok(rows)
+}
+
+/// `az pr` 等がキャッシュ検索で 0 件だったとき、ユーザーが明示的に
+/// 選んで叫ぶライブ検索。定期同期の打ち切り (3 ヶ月 / 1000件) を一時的に
+/// 大きく緩め、対象ステータスだけ広く取り直してからローカルでキーワード
+/// フィルタする。Azure DevOps の PR API に全文検索が無いための代替策。
+pub(crate) fn fetch_pull_requests_live(
+    client: &reqwest::blocking::Client,
+    project: &AzureDevOpsProject,
+    pat: &str,
+    status: &str,
+) -> Result<Vec<CachedRow>, String> {
+    let current_user = current_user_id(client, &project.organization, pat).ok();
+    if status.eq_ignore_ascii_case("active") {
+        return fetch_pull_requests_by_status(
+            client,
+            project,
+            pat,
+            current_user.as_deref(),
+            status,
+            None,
+        );
+    }
+    fetch_pull_requests_history(
+        client,
+        project,
+        pat,
+        current_user.as_deref(),
+        status,
+        None,
+        HistoryLimits {
+            max_age: PR_LIVE_SEARCH_MAX_AGE,
+            max_count: PR_LIVE_SEARCH_MAX_COUNT,
+        },
+    )
 }
 
 /// プロジェクト内のリポジトリ一覧を (名前, GUID) の組で返す。
@@ -199,6 +256,14 @@ fn fetch_pull_requests_by_status(
 
 /// Completed / Abandoned 用。ページは `creationDate` 降順で返るため、
 /// ページ内最古の作成日が上限を超えたらそこで打ち切ってよい。
+/// 定期同期用の狭い上限とライブ検索用の広い上限を呼び分けるための組
+/// (`fetch_pull_requests` と `fetch_pull_requests_live` 参照)。
+#[derive(Clone, Copy)]
+struct HistoryLimits {
+    max_age: Duration,
+    max_count: usize,
+}
+
 fn fetch_pull_requests_history(
     client: &reqwest::blocking::Client,
     project: &AzureDevOpsProject,
@@ -206,8 +271,9 @@ fn fetch_pull_requests_history(
     current_user: Option<&str>,
     status: &str,
     repository_id: Option<&str>,
+    limits: HistoryLimits,
 ) -> Result<Vec<CachedRow>, String> {
-    let cutoff = unix_timestamp().saturating_sub(PR_HISTORY_MAX_AGE.as_secs() as i64);
+    let cutoff = unix_timestamp().saturating_sub(limits.max_age.as_secs() as i64);
     let mut rows = Vec::new();
     let mut skip = 0;
     loop {
@@ -223,12 +289,19 @@ fn fetch_pull_requests_history(
                 })
                 .filter_map(|item| pull_request_row(project, &item, current_user)),
         );
-        if should_stop_history_paging(count, PR_PAGE_SIZE, oldest_in_page, cutoff, rows.len()) {
+        if should_stop_history_paging(
+            count,
+            PR_PAGE_SIZE,
+            oldest_in_page,
+            cutoff,
+            rows.len(),
+            limits.max_count,
+        ) {
             break;
         }
         skip += PR_PAGE_SIZE;
     }
-    rows.truncate(PR_HISTORY_MAX_COUNT);
+    rows.truncate(limits.max_count);
     Ok(rows)
 }
 
@@ -246,9 +319,10 @@ fn should_stop_history_paging(
     oldest_in_page: Option<i64>,
     cutoff: i64,
     accumulated_len: usize,
+    max_count: usize,
 ) -> bool {
     let reached_cutoff = oldest_in_page.is_some_and(|oldest| oldest < cutoff);
-    page_len < page_size || reached_cutoff || accumulated_len >= PR_HISTORY_MAX_COUNT
+    page_len < page_size || reached_cutoff || accumulated_len >= max_count
 }
 
 pub(crate) fn current_user_id(
@@ -594,19 +668,40 @@ mod tests {
     #[test]
     fn history_paging_continues_while_page_is_full_and_recent() {
         // フルページ (top と同数) かつページ内最古が cutoff より新しければ続行
-        assert!(!should_stop_history_paging(500, 500, Some(2_000), 1_000, 10));
+        assert!(!should_stop_history_paging(
+            500,
+            500,
+            Some(2_000),
+            1_000,
+            10,
+            PR_HISTORY_MAX_COUNT
+        ));
     }
 
     #[test]
     fn history_paging_stops_on_partial_page() {
         // 返ってきた件数が $top 未満 = これが最終ページ
-        assert!(should_stop_history_paging(120, 500, Some(2_000), 1_000, 10));
+        assert!(should_stop_history_paging(
+            120,
+            500,
+            Some(2_000),
+            1_000,
+            10,
+            PR_HISTORY_MAX_COUNT
+        ));
     }
 
     #[test]
     fn history_paging_stops_once_oldest_item_in_page_predates_cutoff() {
         // ページ内最古の作成日が cutoff (3 ヶ月前など) より古い
-        assert!(should_stop_history_paging(500, 500, Some(500), 1_000, 10));
+        assert!(should_stop_history_paging(
+            500,
+            500,
+            Some(500),
+            1_000,
+            10,
+            PR_HISTORY_MAX_COUNT
+        ));
     }
 
     #[test]
@@ -616,6 +711,7 @@ mod tests {
             500,
             Some(2_000),
             1_000,
+            PR_HISTORY_MAX_COUNT,
             PR_HISTORY_MAX_COUNT
         ));
     }
@@ -624,6 +720,21 @@ mod tests {
     fn history_paging_continues_when_no_page_item_has_a_parsable_date() {
         // creationDate が読めない行しかない場合は cutoff 判定をスキップし、
         // ページが埋まっていれば続行する (安全側 = 取りこぼさない)
-        assert!(!should_stop_history_paging(500, 500, None, 1_000, 10));
+        assert!(!should_stop_history_paging(
+            500,
+            500,
+            None,
+            1_000,
+            10,
+            PR_HISTORY_MAX_COUNT
+        ));
+    }
+
+    #[test]
+    fn history_paging_respects_a_custom_max_count_smaller_than_the_default() {
+        // ライブ検索用の広い上限だけでなく、狭い上限を渡した場合でも
+        // 正しく打ち切れることを確認する
+        assert!(should_stop_history_paging(500, 500, Some(2_000), 1_000, 50, 50));
+        assert!(!should_stop_history_paging(500, 500, Some(2_000), 1_000, 49, 50));
     }
 }

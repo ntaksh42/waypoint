@@ -295,6 +295,8 @@ fn cached_work_items_are_searchable_without_live_api() {
         action: Action::OpenUrl("https://dev.azure.com/org/Waypoint/_workitems/edit/91".into()),
         branch: None,
     }];
+    index.azure_work_items_lower =
+        crate::quick_launch::search::LowerKeys::build_for(&index.azure_work_items);
 
     let found = index.search_cached_work_items("cache");
     assert_eq!(found.len(), 1);

@@ -81,6 +81,17 @@ pub enum Action {
     LaunchApp,
     /// 検索欄へコマンドを補完する。候補の選択時に外部操作は行わない。
     ReplaceQuery(String),
+    /// `az wit` のローカルキャッシュ検索で見つからなかったとき、明示的な
+    /// 選択をトリガーに Azure DevOps へライブ全文検索を投げる。
+    AzureLiveWorkItemSearch(String),
+    /// `az pr` 等のローカルキャッシュ検索で見つからなかったとき、明示的な
+    /// 選択をトリガーに、打ち切り期間を広げて PR を再取得する
+    /// (Azure DevOps の PR API に全文検索は無いため、広く取ってから
+    /// ローカルでキーワードフィルタする)。
+    AzureLivePullRequestSearch {
+        filter: PullRequestFilter,
+        query: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,7 +137,9 @@ impl Entry {
             Action::FocusWindow(_)
             | Action::FocusBrowserTab(_)
             | Action::OpenUrl(_)
-            | Action::ReplaceQuery(_) => None,
+            | Action::ReplaceQuery(_)
+            | Action::AzureLiveWorkItemSearch(_)
+            | Action::AzureLivePullRequestSearch { .. } => None,
         }
     }
 }
@@ -141,6 +154,7 @@ pub struct Index {
     pub(crate) history_lower: Vec<search::LowerKeys>,
     pub(crate) azure: Vec<AzureIndexed>,
     pub(crate) azure_work_items: Vec<Entry>,
+    pub(crate) azure_work_items_lower: Vec<search::LowerKeys>,
     pub(crate) windows: Vec<Entry>,
     pub(crate) windows_lower: Vec<search::LowerKeys>,
     pub(crate) apps: Vec<Entry>,

@@ -178,8 +178,17 @@ impl Index {
 
     /// Work Item キャッシュは Index 構築時に読み込み済み。Quick Launch の
     /// キー入力経路では SQLite に触れず、ここで即時に候補の有無を判定する。
+    /// `entries_lower` 等と同じく事前計算済みの `LowerKeys` を使う
+    /// (毎キー入力で `to_lowercase` をやり直すと、事前キャッシュ化で
+    /// 母集団が数百件規模に増えたときに体感できるカクつきになる。実測)。
     pub fn search_cached_work_items(&self, query: &str) -> Vec<&Entry> {
-        search_entries(&self.azure_work_items, query, true, &self.ranking)
+        search_entries_cached(
+            &self.azure_work_items,
+            &self.azure_work_items_lower,
+            query,
+            true,
+            &self.ranking,
+        )
     }
 
     /// ライブ API の結果をメモリ上のキャッシュにも反映する。
@@ -190,6 +199,7 @@ impl Index {
                 .iter()
                 .any(|cached| cached.path == entry.path)
             {
+                self.azure_work_items_lower.push(LowerKeys::new(entry));
                 self.azure_work_items.push(entry.clone());
             }
         }

@@ -14,10 +14,12 @@ use crate::shell;
 use crate::trigger::{self, WM_TRIGGER_MENU};
 
 use super::actions::{
-    add_entry_to_favorites, rebuild_menu, refresh_dynamic, show_launcher, show_launcher_at_cursor,
-    show_tray_menu,
+    add_entry_to_favorites, handle_dynamic_refreshed, rebuild_menu, refresh_dynamic,
+    show_launcher, show_launcher_at_cursor, show_tray_menu,
 };
-use super::{WM_AZURE_DEVOPS_REFRESHED, WM_RELOAD_CONFIG, WM_TRAY, reload, with_state};
+use super::{
+    WM_AZURE_DEVOPS_REFRESHED, WM_DYNAMIC_REFRESHED, WM_RELOAD_CONFIG, WM_TRAY, reload, with_state,
+};
 
 /// Win32 から呼ばれる入口。
 ///
@@ -97,9 +99,14 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                     | quick_launch::Action::LaunchApp => {
                         let _ = shell::open_shell_item(&entry.path);
                     }
-                    quick_launch::Action::ReplaceQuery(_) => {}
+                    // ReplaceQuery / AzureLiveWorkItemSearch / AzureLivePullRequestSearch
+                    // はウィンドウを閉じずに Quick Launch 側で完結する
+                    // (queue_selected 参照)。ここへは実行対象として来ない
+                    quick_launch::Action::ReplaceQuery(_)
+                    | quick_launch::Action::AzureLiveWorkItemSearch(_)
+                    | quick_launch::Action::AzureLivePullRequestSearch { .. } => {}
                 }
-                refresh_dynamic();
+                refresh_dynamic(hwnd);
             }
             LRESULT(0)
         }
@@ -120,6 +127,10 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                     quick_launch_window::configure(&state.config, &state.dynamic);
                 }
             });
+            LRESULT(0)
+        }
+        WM_DYNAMIC_REFRESHED => {
+            handle_dynamic_refreshed();
             LRESULT(0)
         }
         WM_COPYDATA if lparam.0 != 0 => {

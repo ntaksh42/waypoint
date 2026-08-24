@@ -7,10 +7,12 @@ use std::ffi::c_void;
 use std::fs;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
 use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
-use windows::Win32::Foundation::{HWND, LPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, CoCreateInstance, IPersistFile, STGM_READ,
@@ -19,11 +21,17 @@ use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GW_OWNER, GWL_EXSTYLE, GetWindow, GetWindowLongW, GetWindowTextLengthW,
-    GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, PostMessageW, WS_EX_APPWINDOW,
+    WS_EX_TOOLWINDOW,
 };
 use windows::core::{BOOL, Interface, PCWSTR};
 
+use crate::shell::ComGuard;
+
 const ITEM_LIMIT: usize = 10;
+
+/// 非同期更新を一つに直列化する。多重に列挙・COM 解決を走らせない。
+static REFRESHING: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PathEntry {
@@ -80,6 +88,48 @@ struct HistoryEntry {
     last_seen: u64,
     last_used: u64,
 }
+
+/// `refresh()` をバックグラウンドスレッドで実行する。
+///
+/// Recent フォルダの `.lnk` を 1 件ずつ COM (`IPersistFile`) で解決する
+/// コストが実測で数十 ms あり、UI スレッド (`wnd_proc`) 上でメニューを
+/// 閉じるたびに同期実行すると次のトリガーへの応答が詰まる。
+/// COM は STA なので、このスレッド自身で `CoInitializeEx` してから使う。
+///
+/// 既に実行中なら何もしない (`false` を返す)。結果は `notify` へ
+/// `message` で通知するので、呼び出し側は `take_refreshed()` で取り出す。
+pub fn refresh_async(notify: HWND, message: u32) -> bool {
+    if REFRESHING.swap(true, Ordering::AcqRel) {
+        return false;
+    }
+    let notify = notify.0 as isize;
+    thread::spawn(move || {
+        let _guard = ComGuard::new();
+        let menus = refresh();
+        RESULT.with_lock(|slot| *slot = Some(menus));
+        REFRESHING.store(false, Ordering::Release);
+        unsafe {
+            let _ = PostMessageW(Some(HWND(notify as *mut _)), message, WPARAM(0), LPARAM(0));
+        }
+    });
+    true
+}
+
+/// `refresh_async` が置いた結果を取り出す。通知を受けたときに一度だけ呼ぶ。
+pub fn take_refreshed() -> Option<Menus> {
+    RESULT.with_lock(std::mem::take)
+}
+
+struct ResultSlot(std::sync::Mutex<Option<Menus>>);
+
+impl ResultSlot {
+    fn with_lock<R>(&self, f: impl FnOnce(&mut Option<Menus>) -> R) -> R {
+        let mut guard = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        f(&mut guard)
+    }
+}
+
+static RESULT: ResultSlot = ResultSlot(std::sync::Mutex::new(None));
 
 /// Windows の状態を読み、次回表示用のスナップショットを作る。
 pub fn refresh() -> Menus {
