@@ -279,9 +279,9 @@ fn without_the_history_prefix_history_is_not_searched() {
 #[test]
 fn azure_pr_status_command_filters_cached_pull_requests() {
     let index = index();
-    assert_eq!(index.search("az pr-a azure").len(), 1);
-    assert_eq!(index.search("az pr-a-mine azure").len(), 1);
-    assert!(index.search("az pr-c azure").is_empty());
+    assert_eq!(index.search("az pr active azure").len(), 1);
+    assert_eq!(index.search("az pr active mine azure").len(), 1);
+    assert!(index.search("az pr completed azure").is_empty());
     assert_eq!(index.search("az wp").len(), 1);
 }
 
@@ -376,7 +376,7 @@ fn same_path_from_config_and_recent_and_frequent_folds_into_one() {
 fn prefix_badge_identifies_each_mode() {
     assert_eq!(prefix_badge("b git"), Some("BOOKMARKS"));
     assert_eq!(prefix_badge("h waypoint"), Some("HISTORY"));
-    assert_eq!(prefix_badge("az pr-a waypoint"), Some("AZURE DEVOPS"));
+    assert_eq!(prefix_badge("az pr active waypoint"), Some("AZURE DEVOPS"));
     assert_eq!(prefix_badge("w notepad"), Some("WINDOWS"));
     assert_eq!(prefix_badge("a code"), Some("APPS"));
     assert_eq!(prefix_badge("t waypoint"), Some("TABS"));
@@ -388,7 +388,7 @@ fn prefix_badge_identifies_each_mode() {
 #[test]
 fn azure_command_recognizes_all_supported_subcommands() {
     assert_eq!(
-        azure_command("az pr-c done"),
+        azure_command("az pr completed done"),
         Some((
             AzureCommand::PullRequests(PullRequestFilter {
                 status: crate::azure_devops::PullRequestStatus::Completed,
@@ -406,17 +406,39 @@ fn azure_command_recognizes_all_supported_subcommands() {
         Some((AzureCommand::Pipelines(PipelineFilter::All), "release"))
     );
     assert_eq!(
-        azure_command("az pipeline-failed release"),
+        azure_command("az pipeline failed release"),
         Some((AzureCommand::Pipelines(PipelineFilter::Failed), "release"))
     );
     assert_eq!(
-        azure_command("az pr-a-mine launcher"),
+        azure_command("az pr active mine launcher"),
         Some((
             AzureCommand::PullRequests(PullRequestFilter {
                 status: crate::azure_devops::PullRequestStatus::Active,
                 mine: true,
             }),
             "launcher"
+        ))
+    );
+    // 属性トークンは順不同で並べられる。
+    assert_eq!(
+        azure_command("az pr mine active launcher"),
+        Some((
+            AzureCommand::PullRequests(PullRequestFilter {
+                status: crate::azure_devops::PullRequestStatus::Active,
+                mine: true,
+            }),
+            "launcher"
+        ))
+    );
+    // 属性トークンだけで検索語が無ければ空文字列になる。
+    assert_eq!(
+        azure_command("az pr active"),
+        Some((
+            AzureCommand::PullRequests(PullRequestFilter {
+                status: crate::azure_devops::PullRequestStatus::Active,
+                mine: false,
+            }),
+            ""
         ))
     );
     assert_eq!(
@@ -438,16 +460,9 @@ fn azure_prefix_shows_command_completions() {
             .iter()
             .map(|entry| entry.name.as_str())
             .collect::<Vec<_>>(),
-        [
-            "az pr",
-            "az pr-a",
-            "az pr-c",
-            "az wit",
-            "az pipeline",
-            "az project"
-        ]
+        ["az pr", "az wit", "az pipeline", "az project"]
     );
-    assert_eq!(found[3].action, Action::ReplaceQuery("az wit ".to_string()));
+    assert_eq!(found[1].action, Action::ReplaceQuery("az wit ".to_string()));
 }
 
 #[test]

@@ -34,6 +34,10 @@ pub enum PipelineFilter {
 
 /// `az` のサブコマンドを分解する。未知の先頭語は検索語として扱うので、
 /// `az waypoint` は横断検索、`az pr waypoint` は PR 検索になる。
+///
+/// サブコマンドの後ろは属性トークン (`active` / `mine` / `failed` 等) を
+/// 空白区切りで好きな順・好きな個数だけ並べられる (`az pr active mine Hoge`)。
+/// 未知のトークンに当たった時点でそこから先を検索語とみなす。
 pub fn azure_command(query: &str) -> Option<(AzureCommand, &str)> {
     let rest = query.strip_prefix(AZURE_DEVOPS_PREFIX)?;
     let (first, remaining) = rest
@@ -41,45 +45,72 @@ pub fn azure_command(query: &str) -> Option<(AzureCommand, &str)> {
         .map_or((rest, ""), |(first, remaining)| {
             (first, remaining.trim_start())
         });
-    let command = match first.to_ascii_lowercase().as_str() {
-        "pr" | "prs" => Some(AzureCommand::PullRequests(PullRequestFilter {
-            status: crate::azure_devops::PullRequestStatus::All,
-            mine: false,
-        })),
-        "pr-a" => Some(AzureCommand::PullRequests(PullRequestFilter {
-            status: crate::azure_devops::PullRequestStatus::Active,
-            mine: false,
-        })),
-        "pr-c" => Some(AzureCommand::PullRequests(PullRequestFilter {
-            status: crate::azure_devops::PullRequestStatus::Completed,
-            mine: false,
-        })),
-        "pr-ab" => Some(AzureCommand::PullRequests(PullRequestFilter {
-            status: crate::azure_devops::PullRequestStatus::Abandoned,
-            mine: false,
-        })),
-        "pr-mine" | "pr-me" => Some(AzureCommand::PullRequests(PullRequestFilter {
-            status: crate::azure_devops::PullRequestStatus::All,
-            mine: true,
-        })),
-        "pr-a-mine" | "pr-a-me" => Some(AzureCommand::PullRequests(PullRequestFilter {
-            status: crate::azure_devops::PullRequestStatus::Active,
-            mine: true,
-        })),
+    match first.to_ascii_lowercase().as_str() {
+        "pr" | "prs" => Some(parse_pull_request_command(remaining)),
         "pipeline" | "pipelines" | "pipe" | "build" | "builds" => {
-            Some(AzureCommand::Pipelines(PipelineFilter::All))
+            Some(parse_pipeline_command(remaining))
         }
-        "pipeline-def" | "pipeline-definition" | "pipeline-definitions" => {
-            Some(AzureCommand::Pipelines(PipelineFilter::Definitions))
+        "project" | "projects" => Some((AzureCommand::Projects, remaining)),
+        "wit" | "wi" | "workitem" | "workitems" => Some((AzureCommand::WorkItems, remaining)),
+        _ => Some((AzureCommand::All, rest)),
+    }
+}
+
+/// 空白区切りの先頭トークンを、既知の属性トークンである間だけ剥がしていく。
+/// `apply` が `true` を返したトークンだけ消費し、未知のトークンに当たったら
+/// そこで止めて残り (検索語) を返す。
+fn strip_attribute_tokens(text: &str, mut apply: impl FnMut(&str) -> bool) -> &str {
+    let mut rest = text;
+    loop {
+        let (token, remaining) = rest
+            .split_once(char::is_whitespace)
+            .map_or((rest, ""), |(token, remaining)| {
+                (token, remaining.trim_start())
+            });
+        if token.is_empty() || !apply(&token.to_ascii_lowercase()) {
+            break;
         }
-        "pipeline-failed" | "pipeline-fail" | "build-failed" => {
-            Some(AzureCommand::Pipelines(PipelineFilter::Failed))
+        rest = remaining;
+    }
+    rest
+}
+
+/// `pr` に続く属性トークン (`active` / `completed` / `abandoned` / `mine`)
+/// を剥がしていき、未知のトークンからを検索語として返す。
+fn parse_pull_request_command(text: &str) -> (AzureCommand, &str) {
+    let mut status = crate::azure_devops::PullRequestStatus::All;
+    let mut mine = false;
+    let rest = strip_attribute_tokens(text, |token| {
+        match token {
+            "active" => status = crate::azure_devops::PullRequestStatus::Active,
+            "completed" | "complete" => status = crate::azure_devops::PullRequestStatus::Completed,
+            "abandoned" | "abandon" => status = crate::azure_devops::PullRequestStatus::Abandoned,
+            "all" => status = crate::azure_devops::PullRequestStatus::All,
+            "mine" | "me" => mine = true,
+            _ => return false,
         }
-        "project" | "projects" => Some(AzureCommand::Projects),
-        "wit" | "wi" | "workitem" | "workitems" => Some(AzureCommand::WorkItems),
-        _ => None,
-    };
-    Some(command.map_or((AzureCommand::All, rest), |command| (command, remaining)))
+        true
+    });
+    (
+        AzureCommand::PullRequests(PullRequestFilter { status, mine }),
+        rest,
+    )
+}
+
+/// `pipeline` に続く属性トークン (`failed` / `definition`) を剥がしていき、
+/// 未知のトークンからを検索語として返す。
+fn parse_pipeline_command(text: &str) -> (AzureCommand, &str) {
+    let mut filter = PipelineFilter::All;
+    let rest = strip_attribute_tokens(text, |token| {
+        match token {
+            "failed" | "fail" => filter = PipelineFilter::Failed,
+            "definition" | "definitions" | "def" => filter = PipelineFilter::Definitions,
+            "all" => filter = PipelineFilter::All,
+            _ => return false,
+        }
+        true
+    });
+    (AzureCommand::Pipelines(filter), rest)
 }
 
 /// 未確定の Azure コマンドだけを補完候補の検索語として取り出す。
@@ -99,11 +130,9 @@ pub(crate) fn incomplete_azure_command(query: &str) -> Option<&str> {
 pub(crate) fn azure_command_entries() -> &'static [Entry] {
     static ENTRIES: std::sync::LazyLock<Vec<Entry>> = std::sync::LazyLock::new(|| {
         [
-            ("az pr", "Search all pull requests"),
-            ("az pr-a", "Search active pull requests"),
-            ("az pr-c", "Search completed pull requests"),
+            ("az pr", "Search pull requests"),
             ("az wit", "Search work items"),
-            ("az pipeline", "Search pipelines"),
+            ("az pipeline", "Search build pipelines"),
             ("az project", "Open configured projects"),
         ]
         .into_iter()
