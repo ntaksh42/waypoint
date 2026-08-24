@@ -15,6 +15,7 @@ use waypoint::config::AzureDevOpsProject;
 type ProjectListLoad = (String, Result<Vec<String>, String>);
 type AreaLoad = ((String, String), Result<Vec<AreaNode>, String>);
 type AreaSuggestionLoad = ((String, String), Result<Vec<(String, usize)>, String>);
+type RepositoryLoad = ((String, String), Result<Vec<String>, String>);
 
 /// 多数の Azure DevOps プロジェクトを検索して選ぶ専用画面の状態。
 pub(super) struct AzureProjectPicker {
@@ -43,6 +44,12 @@ pub(super) struct AzureProjectPicker {
     area_suggestion_loader: Option<Receiver<AreaSuggestionLoad>>,
     pub(super) area_suggestion_loading: bool,
     pub(super) area_suggestion_error: Option<String>,
+    /// 選択行のリポジトリ名一覧。行を切り替えるたびに読み直す。
+    pub(super) repositories: Vec<String>,
+    repository_loader: Option<Receiver<RepositoryLoad>>,
+    pub(super) repository_loading: bool,
+    pub(super) repository_error: Option<String>,
+    pub(super) repository_filter: String,
     /// 編集中のテキスト欄 (aliases / priority)。行ごとに保持し、
     /// フォーカス移動時に確定して `projects` へ書き戻す。
     pub(super) aliases_text: String,
@@ -77,6 +84,11 @@ impl AzureProjectPicker {
             area_suggestion_loader: None,
             area_suggestion_loading: false,
             area_suggestion_error: None,
+            repositories: Vec::new(),
+            repository_loader: None,
+            repository_loading: false,
+            repository_error: None,
+            repository_filter: String::new(),
             aliases_text: String::new(),
             priority_text: String::new(),
         }
@@ -103,6 +115,7 @@ impl AzureProjectPicker {
                     include_pipelines: true,
                     include_work_items: true,
                     interest_areas: Vec::new(),
+                    interest_repositories: Vec::new(),
                 });
             }
         } else {
@@ -136,6 +149,10 @@ impl AzureProjectPicker {
         self.area_suggestions.clear();
         self.area_suggestion_error = None;
         self.start_area_load(organization.to_string(), project.to_string());
+        self.repositories.clear();
+        self.repository_error = None;
+        self.repository_filter.clear();
+        self.start_repository_load(organization.to_string(), project.to_string());
     }
 
     fn find(&self, organization: &str, project: &str) -> Option<&AzureDevOpsProject> {
@@ -221,6 +238,39 @@ impl AzureProjectPicker {
         }
     }
 
+    pub(super) fn selected_interest_repositories(&self) -> BTreeSet<String> {
+        let Some((organization, project)) = &self.selected else {
+            return BTreeSet::new();
+        };
+        self.find(organization, project)
+            .map(|entry| entry.interest_repositories.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    pub(super) fn toggle_interest_repository(&mut self, name: &str, enabled: bool) {
+        let Some((organization, project)) = self.selected.clone() else {
+            return;
+        };
+        let Some(entry) = self.find_mut(&organization, &project) else {
+            return;
+        };
+        let already = entry.interest_repositories.iter().any(|repo| repo == name);
+        if enabled && !already {
+            entry.interest_repositories.push(name.to_string());
+        } else if !enabled && already {
+            entry.interest_repositories.retain(|repo| repo != name);
+        }
+    }
+
+    pub(super) fn clear_interest_repositories(&mut self) {
+        let Some((organization, project)) = self.selected.clone() else {
+            return;
+        };
+        if let Some(entry) = self.find_mut(&organization, &project) {
+            entry.interest_repositories.clear();
+        }
+    }
+
     /// PAT 入力欄または保存済み資格情報を使い、設定画面を止めずに一覧を取る。
     pub(super) fn start_load(&mut self) {
         let organization = self.organization.trim().to_string();
@@ -246,6 +296,7 @@ impl AzureProjectPicker {
         self.poll_project_load();
         self.poll_area_load();
         self.poll_area_suggestion_load();
+        self.poll_repository_load();
     }
 
     fn poll_project_load(&mut self) {
@@ -320,6 +371,49 @@ impl AzureProjectPicker {
                 self.area_error = None;
             }
             Err(error) => self.area_error = Some(error),
+        }
+    }
+
+    fn start_repository_load(&mut self, organization: String, project: String) {
+        let pat = self.pat.clone();
+        let (sender, receiver) = channel();
+        self.repository_loader = Some(receiver);
+        self.repository_loading = true;
+        self.repository_error = None;
+        thread::spawn(move || {
+            let result =
+                waypoint::azure_devops::list_repository_names(&organization, &project, &pat);
+            let _ = sender.send(((organization, project), result));
+        });
+    }
+
+    fn poll_repository_load(&mut self) {
+        let Some(receiver) = self.repository_loader.as_ref() else {
+            return;
+        };
+        let (key, result) = match receiver.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                self.repository_loader = None;
+                self.repository_loading = false;
+                self.repository_error =
+                    Some("Repository loading stopped unexpectedly.".to_string());
+                return;
+            }
+        };
+        self.repository_loader = None;
+        self.repository_loading = false;
+        // 取得中に別の行へ切り替えていたら、古い結果は捨てる。
+        if self.selected.as_ref() != Some(&key) {
+            return;
+        }
+        match result {
+            Ok(names) => {
+                self.repositories = names;
+                self.repository_error = None;
+            }
+            Err(error) => self.repository_error = Some(error),
         }
     }
 

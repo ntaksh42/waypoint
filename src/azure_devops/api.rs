@@ -12,8 +12,8 @@ use super::Candidate;
 use super::cache::{CachedRow, record_project_success, replace_project_cache};
 use super::convert::{
     AreaNode, area_nodes, area_path_counts, encode_segment, json_i64, parse_rfc3339_unix,
-    pipeline_build_row, pipeline_definition_row, pull_request_row, unix_timestamp,
-    work_item_batch_candidates, work_item_candidates,
+    pipeline_build_row, pipeline_definition_row, pull_request_row, repository_names_and_ids,
+    unix_timestamp, work_item_batch_candidates, work_item_candidates,
 };
 
 pub(crate) const API_VERSION: &str = "7.1";
@@ -58,28 +58,116 @@ pub(crate) fn refresh_project(
 /// 作成日が `PR_HISTORY_MAX_AGE` を超えるか `PR_HISTORY_MAX_COUNT` に
 /// 達したら打ち切る。プロジェクトの累積 PR 数が数十万件規模でも、
 /// 同期が終わらなくなるのを防ぐ (R-13)。
+///
+/// `interest_repositories` が設定されていれば、まずリポジトリ名を GUID へ
+/// 解決し `searchCriteria.repositoryId` で絞り込む。名前が現存のリポジトリと
+/// 一致しなければそのエントリは無視する (削除・リネームされた場合に同期
+/// 全体を失敗させないため)。
 fn fetch_pull_requests(
     client: &reqwest::blocking::Client,
     project: &AzureDevOpsProject,
     pat: &str,
     current_user: Option<&str>,
 ) -> Result<Vec<CachedRow>, String> {
-    let mut rows = fetch_pull_requests_by_status(client, project, pat, current_user, "active")?;
-    rows.extend(fetch_pull_requests_history(
-        client,
-        project,
-        pat,
-        current_user,
-        "completed",
-    )?);
-    rows.extend(fetch_pull_requests_history(
-        client,
-        project,
-        pat,
-        current_user,
-        "abandoned",
-    )?);
+    let repository_ids = if project.interest_repositories.is_empty() {
+        vec![None]
+    } else {
+        let repositories = fetch_repositories(client, project, pat)?;
+        let ids: Vec<Option<String>> = project
+            .interest_repositories
+            .iter()
+            .filter_map(|name| {
+                repositories
+                    .iter()
+                    .find(|(repo_name, _)| repo_name.eq_ignore_ascii_case(name))
+                    .map(|(_, id)| Some(id.clone()))
+            })
+            .collect();
+        if ids.is_empty() { vec![None] } else { ids }
+    };
+
+    let mut rows = Vec::new();
+    for repository_id in &repository_ids {
+        rows.extend(fetch_pull_requests_by_status(
+            client,
+            project,
+            pat,
+            current_user,
+            "active",
+            repository_id.as_deref(),
+        )?);
+        rows.extend(fetch_pull_requests_history(
+            client,
+            project,
+            pat,
+            current_user,
+            "completed",
+            repository_id.as_deref(),
+        )?);
+        rows.extend(fetch_pull_requests_history(
+            client,
+            project,
+            pat,
+            current_user,
+            "abandoned",
+            repository_id.as_deref(),
+        )?);
+    }
     Ok(rows)
+}
+
+/// プロジェクト内のリポジトリ一覧を (名前, GUID) の組で返す。
+pub(crate) fn fetch_repositories(
+    client: &reqwest::blocking::Client,
+    project: &AzureDevOpsProject,
+    pat: &str,
+) -> Result<Vec<(String, String)>, String> {
+    let url = format!(
+        "https://dev.azure.com/{}/{}/_apis/git/repositories?api-version={API_VERSION}",
+        encode_segment(&project.organization),
+        encode_segment(&project.project),
+    );
+    let value = get_json(client, &url, pat)?;
+    Ok(repository_names_and_ids(&value))
+}
+
+/// 設定画面用。組織・プロジェクト名と PAT だけからリポジトリ名一覧を取る。
+pub fn list_repository_names(
+    organization: &str,
+    project: &str,
+    typed_pat: &str,
+) -> Result<Vec<String>, String> {
+    let pat = super::credential::credential_for_request(organization, typed_pat)?;
+    let client = http_client()?;
+    let target = crate::config::AzureDevOpsProject {
+        organization: organization.to_string(),
+        project: project.to_string(),
+        aliases: Vec::new(),
+        priority: 0,
+        include_pull_requests: true,
+        include_pipelines: true,
+        include_work_items: true,
+        interest_areas: Vec::new(),
+        interest_repositories: Vec::new(),
+    };
+    let repositories = fetch_repositories(&client, &target, &pat)?;
+    Ok(repositories.into_iter().map(|(name, _)| name).collect())
+}
+
+fn pull_requests_url(
+    project: &AzureDevOpsProject,
+    status: &str,
+    skip: usize,
+    repository_id: Option<&str>,
+) -> String {
+    let repository_filter = repository_id
+        .map(|id| format!("&searchCriteria.repositoryId={id}"))
+        .unwrap_or_default();
+    format!(
+        "https://dev.azure.com/{}/{}/_apis/git/pullrequests?searchCriteria.status={status}&$top={PR_PAGE_SIZE}&$skip={skip}{repository_filter}&api-version={API_VERSION}",
+        encode_segment(&project.organization),
+        encode_segment(&project.project),
+    )
 }
 
 fn fetch_pull_requests_by_status(
@@ -88,15 +176,12 @@ fn fetch_pull_requests_by_status(
     pat: &str,
     current_user: Option<&str>,
     status: &str,
+    repository_id: Option<&str>,
 ) -> Result<Vec<CachedRow>, String> {
     let mut rows = Vec::new();
     let mut skip = 0;
     loop {
-        let url = format!(
-            "https://dev.azure.com/{}/{}/_apis/git/pullrequests?searchCriteria.status={status}&$top={PR_PAGE_SIZE}&$skip={skip}&api-version={API_VERSION}",
-            encode_segment(&project.organization),
-            encode_segment(&project.project),
-        );
+        let url = pull_requests_url(project, status, skip, repository_id);
         let value = get_json(client, &url, pat)?;
         let page = value["value"].as_array().cloned().unwrap_or_default();
         let count = page.len();
@@ -120,16 +205,13 @@ fn fetch_pull_requests_history(
     pat: &str,
     current_user: Option<&str>,
     status: &str,
+    repository_id: Option<&str>,
 ) -> Result<Vec<CachedRow>, String> {
     let cutoff = unix_timestamp().saturating_sub(PR_HISTORY_MAX_AGE.as_secs() as i64);
     let mut rows = Vec::new();
     let mut skip = 0;
     loop {
-        let url = format!(
-            "https://dev.azure.com/{}/{}/_apis/git/pullrequests?searchCriteria.status={status}&$top={PR_PAGE_SIZE}&$skip={skip}&api-version={API_VERSION}",
-            encode_segment(&project.organization),
-            encode_segment(&project.project),
-        );
+        let url = pull_requests_url(project, status, skip, repository_id);
         let value = get_json(client, &url, pat)?;
         let page = value["value"].as_array().cloned().unwrap_or_default();
         let count = page.len();
@@ -475,6 +557,7 @@ mod tests {
             include_pipelines: true,
             include_work_items: true,
             interest_areas,
+            interest_repositories: Vec::new(),
         }
     }
 

@@ -307,6 +307,84 @@ fn show_detail_panel(ui: &mut egui::Ui, picker: &mut AzureProjectPicker) {
 
     ui.add_space(6.0);
     show_area_path_picker(ui, picker);
+
+    ui.add_space(6.0);
+    show_repository_picker(ui, picker);
+}
+
+/// リポジトリ一覧: 検索フィルタ + チェックボックス。PR の取得範囲を絞る
+/// (`interest_repositories`、空ならプロジェクト全体)。
+fn show_repository_picker(ui: &mut egui::Ui, picker: &mut AzureProjectPicker) {
+    ui.horizontal(|ui| {
+        ui.label("Interest repositories");
+        ui.weak("(empty = whole project, affects Pull Requests only)");
+        if picker.repository_loading {
+            ui.spinner();
+        }
+    });
+    if let Some(error) = &picker.repository_error {
+        ui.colored_label(
+            egui::Color32::RED,
+            format!("Could not load repositories: {error}"),
+        );
+        return;
+    }
+
+    let selected_repositories = picker.selected_interest_repositories();
+    if !selected_repositories.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            for repository in &selected_repositories {
+                ui.weak(format!("[{repository}]"));
+            }
+            if ui.small_button("Clear").clicked() {
+                picker.clear_interest_repositories();
+            }
+        });
+    }
+
+    ui.add(
+        egui::TextEdit::singleline(&mut picker.repository_filter)
+            .hint_text("Filter repositories")
+            .desired_width(260.0),
+    );
+
+    let filter = picker.repository_filter.to_lowercase();
+    let names: Vec<_> = picker
+        .repositories
+        .iter()
+        .filter(|name| filter.is_empty() || name.to_lowercase().contains(&filter))
+        .cloned()
+        .collect();
+
+    ui.horizontal(|ui| {
+        ui.label(format!("{} shown", names.len()));
+        if ui.button("Select shown").clicked() {
+            for name in &names {
+                picker.toggle_interest_repository(name, true);
+            }
+        }
+        if ui.button("Clear shown").clicked() {
+            for name in &names {
+                picker.toggle_interest_repository(name, false);
+            }
+        }
+    });
+
+    egui::ScrollArea::vertical()
+        .id_salt("azure_repository_list")
+        .max_height(200.0)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            if names.is_empty() && !picker.repository_loading {
+                ui.weak("No repositories found (or none match the filter).");
+            }
+            for name in &names {
+                let mut checked = selected_repositories.contains(name);
+                if ui.checkbox(&mut checked, name).changed() {
+                    picker.toggle_interest_repository(name, checked);
+                }
+            }
+        });
 }
 
 /// Area Path ツリー: 検索フィルタ + インデント付きチェックボックス。

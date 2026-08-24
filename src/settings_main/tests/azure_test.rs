@@ -14,6 +14,7 @@ fn project(organization: &str, project: &str) -> AzureDevOpsProject {
         include_pipelines: true,
         include_work_items: true,
         interest_areas: Vec::new(),
+        interest_repositories: Vec::new(),
     }
 }
 
@@ -193,6 +194,52 @@ fn clear_interest_areas_empties_only_the_selected_project() {
     );
 }
 
+#[test]
+fn toggle_interest_repository_adds_and_removes_names_on_the_selected_project() {
+    let mut picker = picker_with(vec![project("contoso", "Waypoint")], "contoso");
+    picker.open_detail("contoso", "Waypoint");
+
+    picker.toggle_interest_repository("launcher-repo", true);
+    picker.toggle_interest_repository("search-repo", true);
+    assert_eq!(
+        picker.selected_interest_repositories(),
+        ["launcher-repo".to_string(), "search-repo".to_string()]
+            .into_iter()
+            .collect()
+    );
+
+    picker.toggle_interest_repository("launcher-repo", false);
+    assert_eq!(
+        picker.selected_interest_repositories(),
+        ["search-repo".to_string()].into_iter().collect()
+    );
+}
+
+#[test]
+fn clear_interest_repositories_empties_only_the_selected_project() {
+    let mut picker = picker_with(
+        vec![
+            project("contoso", "Waypoint"),
+            project("contoso", "Platform"),
+        ],
+        "contoso",
+    );
+    picker.open_detail("contoso", "Waypoint");
+    picker.toggle_interest_repository("launcher-repo", true);
+    picker.open_detail("contoso", "Platform");
+    picker.toggle_interest_repository("core-repo", true);
+
+    picker.open_detail("contoso", "Waypoint");
+    picker.clear_interest_repositories();
+
+    assert!(picker.selected_interest_repositories().is_empty());
+    picker.open_detail("contoso", "Platform");
+    assert_eq!(
+        picker.selected_interest_repositories(),
+        ["core-repo".to_string()].into_iter().collect()
+    );
+}
+
 fn project_with_details(organization: &str, project: &str) -> AzureDevOpsProject {
     AzureDevOpsProject {
         organization: organization.to_string(),
@@ -203,6 +250,7 @@ fn project_with_details(organization: &str, project: &str) -> AzureDevOpsProject
         include_pipelines: false,
         include_work_items: true,
         interest_areas: vec!["Waypoint\\Launcher".to_string()],
+        interest_repositories: Vec::new(),
     }
 }
 
@@ -219,6 +267,25 @@ fn projects_round_trip_through_json() {
     assert_eq!(decoded[0].aliases, ["wp"]);
     assert_eq!(decoded[0].interest_areas, ["Waypoint\\Launcher"]);
     assert!(!decoded[0].include_pipelines);
+}
+
+#[test]
+fn decoding_a_project_without_interest_repositories_defaults_to_empty() {
+    // interest_repositories 追加前にエクスポートされた JSON でも読み込める
+    // ことを確認する (`#[serde(default)]` によるフィールド追加の後方互換性)。
+    let json = r#"[{
+        "organization": "contoso",
+        "project": "Waypoint",
+        "aliases": [],
+        "priority": 0,
+        "includePullRequests": true,
+        "includePipelines": true,
+        "includeWorkItems": true,
+        "interestAreas": []
+    }]"#;
+    let decoded = decode_projects_json(json).unwrap();
+    assert_eq!(decoded.len(), 1);
+    assert!(decoded[0].interest_repositories.is_empty());
 }
 
 #[test]

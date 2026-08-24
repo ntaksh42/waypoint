@@ -28,6 +28,24 @@ pub(crate) fn sort_and_deduplicate_project_names(names: &mut Vec<String>) {
     names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
 }
 
+/// `_apis/git/repositories` のレスポンスから (名前, リポジトリ ID) を
+/// 名前昇順で返す。PR API の `searchCriteria.repositoryId` は GUID を
+/// 要求するため、名前だけの `interest_repositories` 設定から引く。
+pub(crate) fn repository_names_and_ids(value: &Value) -> Vec<(String, String)> {
+    let mut repositories: Vec<(String, String)> = value["value"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|repository| {
+            let name = repository["name"].as_str()?.to_string();
+            let id = repository["id"].as_str()?.to_string();
+            Some((name, id))
+        })
+        .collect();
+    repositories.sort_by_key(|(name, _)| name.to_lowercase());
+    repositories
+}
+
 /// 1 つの Area ノード。`depth` は描画時のインデントに使う (0 がプロジェクト直下)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AreaNode {
@@ -356,6 +374,7 @@ mod tests {
             include_pipelines: true,
             include_work_items: true,
             interest_areas: Vec::new(),
+            interest_repositories: Vec::new(),
         };
         let results = work_item_candidates(
             &project,
@@ -384,6 +403,7 @@ mod tests {
             include_pipelines: true,
             include_work_items: true,
             interest_areas: Vec::new(),
+            interest_repositories: Vec::new(),
         };
         let results = work_item_candidates(
             &project,
@@ -405,6 +425,7 @@ mod tests {
             include_pipelines: true,
             include_work_items: true,
             interest_areas: Vec::new(),
+            interest_repositories: Vec::new(),
         };
         let results = work_item_batch_candidates(
             &project,
@@ -425,6 +446,34 @@ mod tests {
                 { "name": "zebra" }, { "name": "Alpha" }, { "name": "alpha" }
             ]})),
             ["Alpha", "zebra"]
+        );
+    }
+
+    #[test]
+    fn repository_names_and_ids_extracts_pairs_sorted_by_name() {
+        let response = json!({ "value": [
+            { "name": "zebra-repo", "id": "id-z" },
+            { "name": "alpha-repo", "id": "id-a" },
+        ]});
+        assert_eq!(
+            repository_names_and_ids(&response),
+            vec![
+                ("alpha-repo".to_string(), "id-a".to_string()),
+                ("zebra-repo".to_string(), "id-z".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn repository_names_and_ids_skips_entries_missing_name_or_id() {
+        let response = json!({ "value": [
+            { "name": "only-name" },
+            { "id": "only-id" },
+            { "name": "complete", "id": "id-c" },
+        ]});
+        assert_eq!(
+            repository_names_and_ids(&response),
+            vec![("complete".to_string(), "id-c".to_string())]
         );
     }
 

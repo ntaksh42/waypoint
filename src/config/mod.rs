@@ -121,6 +121,9 @@ pub struct AzureDevOpsProject {
     /// 興味のある Area Path (WIQL の `UNDER` 条件に使う)。空なら絞り込まずプロジェクト全体を対象にする。
     #[serde(default)]
     pub interest_areas: Vec<String>,
+    /// PR を絞り込むリポジトリ名。空なら絞り込まずプロジェクト全体 (全リポジトリ) を対象にする。
+    #[serde(default)]
+    pub interest_repositories: Vec<String>,
 }
 
 impl Default for MenuSettings {
