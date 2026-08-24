@@ -274,6 +274,40 @@ pub(crate) fn unix_timestamp() -> i64 {
         .as_secs() as i64
 }
 
+/// Azure DevOps が返す `creationDate` (`2024-01-15T10:30:00.123Z` 形式) を
+/// unix 秒へ変換する。日付部分だけをうるう年込みで積算し、外部クレートを
+/// 追加せずに済ませる。パース出来ない値は `None` を返し、呼び出し側は
+/// 「打ち切り対象にしない」側へフォールバックする。
+pub(crate) fn parse_rfc3339_unix(text: &str) -> Option<i64> {
+    let bytes = text.as_bytes();
+    if bytes.len() < 19 || bytes[4] != b'-' || bytes[7] != b'-' || bytes[10] != b'T' {
+        return None;
+    }
+    let year: i64 = text.get(0..4)?.parse().ok()?;
+    let month: i64 = text.get(5..7)?.parse().ok()?;
+    let day: i64 = text.get(8..10)?.parse().ok()?;
+    let hour: i64 = text.get(11..13)?.parse().ok()?;
+    let minute: i64 = text.get(14..16)?.parse().ok()?;
+    let second: i64 = text.get(17..19)?.parse().ok()?;
+    if !(1..=12).contains(&month) {
+        return None;
+    }
+    let days_since_epoch = days_from_civil(year, month, day);
+    Some(days_since_epoch * 86_400 + hour * 3_600 + minute * 60 + second)
+}
+
+/// Howard Hinnant の `days_from_civil` アルゴリズム。1970-01-01 を 0 とする
+/// 通算日数をグレゴリオ暦の年月日から求める (うるう年を含めて厳密)。
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
 pub(crate) fn project_url(project: &AzureDevOpsProject) -> String {
     format!(
         "https://dev.azure.com/{}/{}",
@@ -471,5 +505,27 @@ mod tests {
     #[test]
     fn area_path_counts_is_empty_without_values() {
         assert!(area_path_counts(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn parse_rfc3339_unix_matches_known_epoch_values() {
+        assert_eq!(parse_rfc3339_unix("1970-01-01T00:00:00Z"), Some(0));
+        // date -u -d "2024-01-15T10:30:00Z" +%s
+        assert_eq!(
+            parse_rfc3339_unix("2024-01-15T10:30:00.123Z"),
+            Some(1_705_314_600)
+        );
+        // うるう年 (2024) の 2/29 をまたぐ日付も正しく積算できること
+        assert_eq!(
+            parse_rfc3339_unix("2024-03-01T00:00:00Z"),
+            Some(1_709_251_200)
+        );
+    }
+
+    #[test]
+    fn parse_rfc3339_unix_rejects_malformed_input() {
+        assert_eq!(parse_rfc3339_unix(""), None);
+        assert_eq!(parse_rfc3339_unix("not-a-date"), None);
+        assert_eq!(parse_rfc3339_unix("2024/01/15T10:30:00Z"), None);
     }
 }

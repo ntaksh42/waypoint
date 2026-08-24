@@ -81,13 +81,20 @@ pub(crate) fn replace_project_cache(
             params![project.organization.trim(), project.project.trim()],
         )
         .map_err(|error| error.to_string())?;
-    for row in rows {
-        transaction
-            .execute(
+    {
+        // 行ごとに `execute` へ SQL 文字列を渡すと rusqlite が毎回 prepare
+        // し直す。大量行では無視できないオーバーヘッドになるため、
+        // ステートメントをループの外で 1 回だけ用意して使い回す。
+        let mut statement = transaction
+            .prepare(
                 "INSERT INTO candidates
                  (organization, project, kind, item_id, status, name, detail, url, is_mine)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                params![
+            )
+            .map_err(|error| error.to_string())?;
+        for row in rows {
+            statement
+                .execute(params![
                     row.organization,
                     row.project,
                     row.kind,
@@ -97,9 +104,9 @@ pub(crate) fn replace_project_cache(
                     row.detail,
                     row.url,
                     row.is_mine as i64,
-                ],
-            )
-            .map_err(|error| error.to_string())?;
+                ])
+                .map_err(|error| error.to_string())?;
+        }
     }
     transaction.commit().map_err(|error| error.to_string())
 }

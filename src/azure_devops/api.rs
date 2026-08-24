@@ -11,12 +11,19 @@ use crate::config::AzureDevOpsProject;
 use super::Candidate;
 use super::cache::{CachedRow, record_project_success, replace_project_cache};
 use super::convert::{
-    AreaNode, area_nodes, area_path_counts, encode_segment, json_i64, pipeline_build_row,
-    pipeline_definition_row, pull_request_row, work_item_batch_candidates, work_item_candidates,
+    AreaNode, area_nodes, area_path_counts, encode_segment, json_i64, parse_rfc3339_unix,
+    pipeline_build_row, pipeline_definition_row, pull_request_row, unix_timestamp,
+    work_item_batch_candidates, work_item_candidates,
 };
 
 pub(crate) const API_VERSION: &str = "7.1";
 const PR_PAGE_SIZE: usize = 500;
+/// Completed / Abandoned PR はこれより古い作成日のページに達したら打ち切る。
+/// Active は状態そのものが「今関心がある」ことの表明なので上限を設けない。
+const PR_HISTORY_MAX_AGE: Duration = Duration::from_secs(60 * 60 * 24 * 90);
+/// 上の日付条件に加えた保険。1 プロジェクトが Completed/Abandoned だけで
+/// 何千件もページングし続けないよう件数でも打ち切る。
+const PR_HISTORY_MAX_COUNT: usize = 1_000;
 const PIPELINE_BUILD_LIMIT: usize = 100;
 const WORK_ITEM_RESULT_LIMIT: usize = 50;
 /// `az wit` 単体で各プロジェクトから表示する最近更新 Work Item 数。
@@ -47,17 +54,46 @@ pub(crate) fn refresh_project(
     record_project_success(project)
 }
 
+/// Active PR は無条件で全件、Completed / Abandoned は新しい順に読み、
+/// 作成日が `PR_HISTORY_MAX_AGE` を超えるか `PR_HISTORY_MAX_COUNT` に
+/// 達したら打ち切る。プロジェクトの累積 PR 数が数十万件規模でも、
+/// 同期が終わらなくなるのを防ぐ (R-13)。
 fn fetch_pull_requests(
     client: &reqwest::blocking::Client,
     project: &AzureDevOpsProject,
     pat: &str,
     current_user: Option<&str>,
 ) -> Result<Vec<CachedRow>, String> {
+    let mut rows = fetch_pull_requests_by_status(client, project, pat, current_user, "active")?;
+    rows.extend(fetch_pull_requests_history(
+        client,
+        project,
+        pat,
+        current_user,
+        "completed",
+    )?);
+    rows.extend(fetch_pull_requests_history(
+        client,
+        project,
+        pat,
+        current_user,
+        "abandoned",
+    )?);
+    Ok(rows)
+}
+
+fn fetch_pull_requests_by_status(
+    client: &reqwest::blocking::Client,
+    project: &AzureDevOpsProject,
+    pat: &str,
+    current_user: Option<&str>,
+    status: &str,
+) -> Result<Vec<CachedRow>, String> {
     let mut rows = Vec::new();
     let mut skip = 0;
     loop {
         let url = format!(
-            "https://dev.azure.com/{}/{}/_apis/git/pullrequests?searchCriteria.status=all&$top={PR_PAGE_SIZE}&$skip={skip}&api-version={API_VERSION}",
+            "https://dev.azure.com/{}/{}/_apis/git/pullrequests?searchCriteria.status={status}&$top={PR_PAGE_SIZE}&$skip={skip}&api-version={API_VERSION}",
             encode_segment(&project.organization),
             encode_segment(&project.project),
         );
@@ -74,6 +110,63 @@ fn fetch_pull_requests(
         skip += PR_PAGE_SIZE;
     }
     Ok(rows)
+}
+
+/// Completed / Abandoned 用。ページは `creationDate` 降順で返るため、
+/// ページ内最古の作成日が上限を超えたらそこで打ち切ってよい。
+fn fetch_pull_requests_history(
+    client: &reqwest::blocking::Client,
+    project: &AzureDevOpsProject,
+    pat: &str,
+    current_user: Option<&str>,
+    status: &str,
+) -> Result<Vec<CachedRow>, String> {
+    let cutoff = unix_timestamp().saturating_sub(PR_HISTORY_MAX_AGE.as_secs() as i64);
+    let mut rows = Vec::new();
+    let mut skip = 0;
+    loop {
+        let url = format!(
+            "https://dev.azure.com/{}/{}/_apis/git/pullrequests?searchCriteria.status={status}&$top={PR_PAGE_SIZE}&$skip={skip}&api-version={API_VERSION}",
+            encode_segment(&project.organization),
+            encode_segment(&project.project),
+        );
+        let value = get_json(client, &url, pat)?;
+        let page = value["value"].as_array().cloned().unwrap_or_default();
+        let count = page.len();
+        let oldest_in_page = page.iter().filter_map(creation_date_unix).min();
+        rows.extend(
+            page.into_iter()
+                .filter(|item| {
+                    creation_date_unix(item).is_none_or(|created| created >= cutoff)
+                })
+                .filter_map(|item| pull_request_row(project, &item, current_user)),
+        );
+        if should_stop_history_paging(count, PR_PAGE_SIZE, oldest_in_page, cutoff, rows.len()) {
+            break;
+        }
+        skip += PR_PAGE_SIZE;
+    }
+    rows.truncate(PR_HISTORY_MAX_COUNT);
+    Ok(rows)
+}
+
+fn creation_date_unix(item: &Value) -> Option<i64> {
+    let text = item["creationDate"].as_str()?;
+    parse_rfc3339_unix(text)
+}
+
+/// Completed / Abandoned のページングを続けるかどうかの純粋な判定。
+/// 「ページが埋まりきらなかった (最終ページ)」「ページ内最古の作成日が
+/// cutoff を過ぎた」「累積件数が上限に達した」のいずれかで打ち切る。
+fn should_stop_history_paging(
+    page_len: usize,
+    page_size: usize,
+    oldest_in_page: Option<i64>,
+    cutoff: i64,
+    accumulated_len: usize,
+) -> bool {
+    let reached_cutoff = oldest_in_page.is_some_and(|oldest| oldest < cutoff);
+    page_len < page_size || reached_cutoff || accumulated_len >= PR_HISTORY_MAX_COUNT
 }
 
 pub(crate) fn current_user_id(
@@ -413,5 +506,41 @@ mod tests {
     #[test]
     fn wiql_escape_doubles_single_quotes() {
         assert_eq!(wiql_escape("O'Brien\\Team"), "O''Brien\\Team");
+    }
+
+    #[test]
+    fn history_paging_continues_while_page_is_full_and_recent() {
+        // フルページ (top と同数) かつページ内最古が cutoff より新しければ続行
+        assert!(!should_stop_history_paging(500, 500, Some(2_000), 1_000, 10));
+    }
+
+    #[test]
+    fn history_paging_stops_on_partial_page() {
+        // 返ってきた件数が $top 未満 = これが最終ページ
+        assert!(should_stop_history_paging(120, 500, Some(2_000), 1_000, 10));
+    }
+
+    #[test]
+    fn history_paging_stops_once_oldest_item_in_page_predates_cutoff() {
+        // ページ内最古の作成日が cutoff (3 ヶ月前など) より古い
+        assert!(should_stop_history_paging(500, 500, Some(500), 1_000, 10));
+    }
+
+    #[test]
+    fn history_paging_stops_at_the_count_cap_even_if_still_recent() {
+        assert!(should_stop_history_paging(
+            500,
+            500,
+            Some(2_000),
+            1_000,
+            PR_HISTORY_MAX_COUNT
+        ));
+    }
+
+    #[test]
+    fn history_paging_continues_when_no_page_item_has_a_parsable_date() {
+        // creationDate が読めない行しかない場合は cutoff 判定をスキップし、
+        // ページが埋まっていれば続行する (安全側 = 取りこぼさない)
+        assert!(!should_stop_history_paging(500, 500, None, 1_000, 10));
     }
 }
