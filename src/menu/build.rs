@@ -5,11 +5,40 @@ use windows::Win32::Graphics::Gdi::HBITMAP;
 use windows::Win32::UI::Shell::SIID_FOLDER;
 use windows::Win32::UI::Shell::SIID_STACK;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreatePopupMenu, GetMenuItemCount, HMENU, InsertMenuItemW, MENU_ITEM_FLAGS, MENUITEMINFOW,
-    MF_DISABLED, MF_GRAYED, MF_POPUP, MF_STRING, MFS_DISABLED, MFT_OWNERDRAW, MFT_SEPARATOR,
-    MIIM_DATA, MIIM_FTYPE, MIIM_ID, MIIM_STATE, MIIM_SUBMENU,
+    CreatePopupMenu, DestroyMenu, GetMenuItemCount, HMENU, InsertMenuItemW, MENU_ITEM_FLAGS,
+    MENUITEMINFOW, MF_DISABLED, MF_GRAYED, MF_POPUP, MF_STRING, MFS_DISABLED, MFT_OWNERDRAW,
+    MFT_SEPARATOR, MIIM_DATA, MIIM_FTYPE, MIIM_ID, MIIM_STATE, MIIM_SUBMENU,
 };
 use windows::core::Result;
+
+/// 構築失敗時に `HMENU` をリークさせないための解体保険。
+///
+/// `build_level` は再帰内の `?` で早期 return するため、失敗した瞬間の
+/// `menu` (と再帰で作った子の HMENU は `MF_POPUP` で親に接続済みなので
+/// 親の `DestroyMenu` で連鎖破棄される) を明示的に破棄する必要がある。
+/// `disarm()` を呼んだ後にドロップされた場合は何もしない。
+pub(crate) struct MenuGuard(Option<HMENU>);
+
+impl MenuGuard {
+    pub(crate) fn new(menu: HMENU) -> Self {
+        Self(Some(menu))
+    }
+
+    /// 構築が成功したので解体を解除し、`HMENU` を呼び出し元へ渡す。
+    pub(crate) fn disarm(mut self) -> HMENU {
+        self.0.take().expect("disarm は一度しか呼ばない")
+    }
+}
+
+impl Drop for MenuGuard {
+    fn drop(&mut self) {
+        if let Some(menu) = self.0.take() {
+            unsafe {
+                let _ = DestroyMenu(menu);
+            }
+        }
+    }
+}
 
 use crate::config::{Item, OpenMode};
 use crate::dynamic::{Menus as DynamicMenus, PathEntry, WindowEntry};
@@ -29,6 +58,8 @@ pub(crate) unsafe fn build_level(
 ) -> Result<HMENU> {
     unsafe {
         let menu = CreatePopupMenu()?;
+        // 構築途中の `?` で抜けた場合に menu をリークさせない
+        let guard = MenuGuard::new(menu);
         // 各階層の先頭 9 件に 1〜9 を割り当てる (FR-2.4)
         let mut accel = 0usize;
 
@@ -117,7 +148,7 @@ pub(crate) unsafe fn build_level(
                 }
             }
         }
-        Ok(menu)
+        Ok(guard.disarm())
     }
 }
 
