@@ -75,7 +75,7 @@ impl Index {
             return search_entries_cached(&self.tabs, &self.tabs_lower, rest, true, &self.ranking);
         }
         if query == AZURE_DEVOPS_PREFIX {
-            return azure_command_entries().iter().collect();
+            return Vec::new();
         }
         if let Some(command_text) = super::azure::incomplete_azure_command(query) {
             let completions =
@@ -327,17 +327,22 @@ fn score_entry(
     terms: &[String],
     ranking: &Ranking,
 ) -> Option<(u8, i64, (u64, u64))> {
-    let scores: Option<Vec<(u8, i64)>> = terms
-        .iter()
-        .map(|term| match_score(name, breadcrumb, path, term))
-        .collect();
-    scores.map(|scores| {
-        let (tier, fuzzy_score) = scores
-            .into_iter()
-            .max_by_key(|(tier, fuzzy_score)| (*tier, Reverse(*fuzzy_score)))
-            .unwrap_or((0, 0));
-        (tier, fuzzy_score, ranking.rank(entry))
-    })
+    // 中間 Vec を作らず、全語一致を要求しつつ一番弱い一致へ畳み込む
+    // (`Option<Vec<_>>` の collect は語ごとに match_score を呼ぶのは同じだが、
+    // クエリのたびに毎候補でヒープ確保が走っていた。単語 1 個の検索が
+    // 最頻出のため、そのケースの割り当てを消す効果が大きい)。
+    let mut result: Option<(u8, i64)> = None;
+    for term in terms {
+        let score = match_score(name, breadcrumb, path, term)?;
+        result = Some(match result {
+            Some(acc) => std::cmp::max_by_key(acc, score, |(tier, fuzzy_score)| {
+                (*tier, Reverse(*fuzzy_score))
+            }),
+            None => score,
+        });
+    }
+    let (tier, fuzzy_score) = result.unwrap_or((0, 0));
+    Some((tier, fuzzy_score, ranking.rank(entry)))
 }
 
 /// 文字列一致の質を最優先し、同点内では使用頻度・最近使った順で並べる。
@@ -378,26 +383,56 @@ fn match_score(name: &str, breadcrumb: &str, path: Option<&str>, term: &str) -> 
         Some((0, 0))
     } else if name.starts_with(term) {
         Some((1, 0))
-    } else if name
-        .match_indices(term)
-        .any(|(index, _)| index == 0 || name[..index].ends_with([' ', '-', '_', '.']))
-    {
-        Some((2, 0))
-    } else if name.contains(term) {
-        Some((3, 0))
+    // tier2 (境界一致) と tier3 (部分一致) は両方とも `name` 中の出現位置を
+    // 見るだけなので、`match_indices` を 1 回だけ回して同時に判定する
+    // (以前は `match_indices` → `contains` の 2 回スキャンだった)。
+    } else if let Some(tier) = name_contains_tier(name, term) {
+        Some((tier, 0))
     } else if breadcrumb.contains(term) {
         Some((4, 0))
     } else if path.is_some_and(|path| path.contains(term)) {
         Some((5, 0))
-    } else if let Some(score) = FUZZY_MATCHER.fuzzy_match(name, term) {
-        Some((6, score))
-    } else if let Some(score) = FUZZY_MATCHER.fuzzy_match(breadcrumb, term) {
-        Some((7, score))
-    } else if let Some(score) = path.and_then(|path| FUZZY_MATCHER.fuzzy_match(path, term)) {
-        Some((8, score))
+    // fuzzy_match は候補文字列ぶんの Vec<char> 確保を伴う DP なので、term の
+    // 各文字が順序を保って含まれているか (サブシーケンス) を先に O(n) で
+    // 見て、成立しない候補は呼び出しごと避ける。fuzzy_matcher 内部の
+    // cheap_matches も同じ判定をするが、そちらは choice を Vec<char> 化して
+    // からでないと判定できない。name/breadcrumb/path は候補・語ともに
+    // 既に小文字化済みなので大小無視のケース分けは不要。
+    } else if is_subsequence(name, term) {
+        FUZZY_MATCHER
+            .fuzzy_match(name, term)
+            .map(|score| (6, score))
+    } else if is_subsequence(breadcrumb, term) {
+        FUZZY_MATCHER
+            .fuzzy_match(breadcrumb, term)
+            .map(|score| (7, score))
+    } else if path.is_some_and(|path| is_subsequence(path, term)) {
+        path.and_then(|path| FUZZY_MATCHER.fuzzy_match(path, term))
+            .map(|score| (8, score))
     } else if crate::romaji::kana_name_matches(name, term) {
         Some((9, 0))
     } else {
         None
     }
+}
+
+/// `term` の全文字が `text` 中に順序を保って (連続していなくてよい) 現れるか。
+/// fuzzy_match を試す価値があるかどうかの安価な事前判定。
+fn is_subsequence(text: &str, term: &str) -> bool {
+    let mut chars = text.chars();
+    term.chars().all(|t| chars.any(|c| c == t))
+}
+
+/// `name` が `term` を含むときそのティアを返す (境界一致なら tier2、
+/// それ以外の部分一致なら tier3)。含まなければ `None`。
+/// 出現位置の走査を 1 回にまとめ、tier2/tier3 で `name` を二度スキャンしない。
+fn name_contains_tier(name: &str, term: &str) -> Option<u8> {
+    let mut found = false;
+    for (index, _) in name.match_indices(term) {
+        if index == 0 || name[..index].ends_with([' ', '-', '_', '.']) {
+            return Some(2);
+        }
+        found = true;
+    }
+    found.then_some(3)
 }

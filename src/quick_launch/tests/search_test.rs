@@ -452,17 +452,9 @@ fn azure_command_recognizes_all_supported_subcommands() {
 }
 
 #[test]
-fn azure_prefix_shows_command_completions() {
+fn azure_prefix_alone_shows_nothing() {
     let index = index();
-    let found = index.search("az ");
-    assert_eq!(
-        found
-            .iter()
-            .map(|entry| entry.name.as_str())
-            .collect::<Vec<_>>(),
-        ["az pr", "az wit", "az pipeline", "az project"]
-    );
-    assert_eq!(found[1].action, Action::ReplaceQuery("az wit ".to_string()));
+    assert!(index.search("az ").is_empty());
 }
 
 #[test]
