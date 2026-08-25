@@ -1,6 +1,7 @@
 //! SQLite キャッシュの読み書き。
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use rusqlite::{Connection, params};
 
@@ -30,6 +31,12 @@ pub(crate) fn open_cache() -> Result<Connection, String> {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     let connection = Connection::open(path).map_err(|error| error.to_string())?;
+    // 複数プロジェクトを thread::scope で並列同期するため、コミットが
+    // 重なると既定 (待機なし) では SQLITE_BUSY になりうる。ロック解放を
+    // 待つようにして間欠的な同期失敗を防ぐ。
+    connection
+        .busy_timeout(Duration::from_secs(5))
+        .map_err(|error| error.to_string())?;
     connection
         .execute_batch(
             "CREATE TABLE IF NOT EXISTS candidates (
