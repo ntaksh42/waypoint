@@ -4,7 +4,7 @@ Guidance for AI coding agents working in this repository (read by Claude Code vi
 
 ## What this is
 
-waypoint is a Windows tray-resident popup launcher (Rust). A hotkey or the middle mouse button opens a hierarchical popup menu; selecting an entry jumps to a folder, focuses a window, opens a bookmark, or launches an app. It started as a re-implementation of Quick Access Popup's core narrowed to folder navigation, and has since grown into a general launcher — Quick Launch's search box now covers folders, open windows, browser bookmarks (`b ` prefix), and installed apps (`a ` prefix). See `docs/spec.md` 02 for what's in scope and why.
+waypoint is a Windows tray-resident popup launcher (Rust). A hotkey or the middle mouse button opens a hierarchical popup menu; selecting an entry jumps to a folder, focuses a window, opens a bookmark, or launches an app. It started as a re-implementation of Quick Access Popup's core narrowed to folder navigation, and has since grown into a general launcher — Quick Launch's search box covers folders, Recent/Frequent Folders, open windows (`w ` prefix), browser bookmarks (`b ` prefix), browser history (`h ` prefix), open browser tabs (`t ` prefix), installed apps (`a ` prefix), Everything file search (`f ` prefix), and Azure DevOps PRs / pipelines / work items (`az ` prefix). See `docs/spec.md` 02 for what's in scope and why, and FR-9 for the full behavior of each search mode.
 
 Single developer, not distributed. No installer, no auto-update, no localization.
 
@@ -232,16 +232,61 @@ FR-2.7 に反する (実測でメニューが白背景になった) 。
 
 **動く。** 中ボタン / ホットキー / トレイ左クリックでメニューが出て、選んだフォルダが
 Windows の既定フォルダーハンドラーで開く。Quick Launch のホットキーからはフォルダ・
-Open Windows・ブックマーク (`b `) ・アプリ (`a `) を横断検索できる。実機で確認済み。
+Recent/Frequent Folders・Open Windows (`w `) ・ブックマーク (`b `) ・ブラウザ履歴 (`h `) ・
+開いているブラウザタブ (`t `) ・アプリ (`a `) ・Everything (`f `) ・Azure DevOps (`az `) を
+横断検索できる。実機で確認済み。
 
 実装済み:
 - FR-1 トリガー (中ボタン・ホットキー・トレイ左クリック・除外プロセス・ドラッグ判定)
-- FR-2 メニュー表示 (階層・アイコン・数字アクセラレータ・グレー表示)
+- FR-2 メニュー表示 (階層・アイコン・数字アクセラレータ・グレー表示・Git ブランチ表示)
 - FR-3 4 種類の項目、FR-4 newWindow / reuse、FR-5 変数展開
-- FR-6 管理画面 (項目・ユーザー変数・トリガー設定の編集、保存後の即時反映)
+- FR-6 管理画面 (項目・ユーザー変数・トリガー設定・Azure DevOps 監視対象の編集、保存後の即時反映)
 - FR-7 設定の読み書き (原子的保存・パース失敗時の継続起動)
 - FR-8 常駐 / トレイメニュー / 二重起動抑止 / 自動起動
-- FR-9 Quick Launch (フォルダ・Recent/Frequent・Current Windows・ブックマーク検索)
+- FR-9 Quick Launch — フォルダ・Recent/Frequent・Current Windows・アプリの横断検索に加え、
+  プレフィックス限定モードでブックマーク (`b `) ・ブラウザ履歴 (`h `) ・開いているタブ
+  (`t `、Native Messaging 拡張連携) ・Everything 全文検索 (`f `、`WM_COPYDATA` IPC) ・
+  Azure DevOps の PR / Pipeline / Work Item (`az `、SQLite キャッシュ + ライブ検索) を検索する。
+  お気に入り昇格 (`Ctrl+Shift+Enter`) 、パスのクリップボードコピー (`Ctrl+C`) 、
+  エクスプローラーで選択表示 (`Ctrl+E`) も実装済み
+
+## 主要モジュール
+
+コードベースは常駐部 (`main.rs`) を中心に 3 つの独立プロセスに分かれる。それぞれ別
+バイナリで、必要になるまで起動しない (FR-9.10, 設定画面の項参照)。
+
+| バイナリ | エントリポイント | 役割 |
+|---|---|---|
+| `waypoint.exe` | `src/main.rs` | 常駐本体。トレイ・トリガー・メニュー表示・Quick Launch 検索・全 IPC の受け口 |
+| `waypoint-settings.exe` | `src/settings_main/main.rs` | 設定エディター (FR-6)。egui/eframe、保存後に `PostMessage` で常駐部へ通知 |
+| tab host | `src/tab_host_main.rs` | Chrome / Edge Native Messaging host。stdin/stdout を常駐部の `WM_COPYDATA` へ中継するだけ |
+
+`src/lib.rs` が公開する主なモジュール (Win32 に触らない純ロジックはここに集約し、統合テストから叩けるようにしてある):
+
+| モジュール | 内容 |
+|---|---|
+| `config/` | 設定のパース・`Item` 型・変数展開 (FR-5, FR-7) |
+| `menu/` | メニュー構築・ラベル整形 (FR-2) |
+| `menu_draw.rs` / `theme.rs` | オーナードローとダークテーマ (行高・色の落とし穴は下記参照) |
+| `quick_launch/` | Quick Launch の検索インデックスと順位付け (`index.rs` / `search.rs` / `azure.rs`)。プレフィックス判定 (`mod.rs`) |
+| `quick_launch_window/` | Quick Launch の Win32 ウィンドウ・入力・描画 (`layout.rs` / `draw.rs` / `input.rs` / `dispatch.rs`) |
+| `quick_launch_history.rs` | Quick Launch で選んだ項目の使用頻度履歴 (`dynamic.rs` の Recent/Frequent とは別データ) |
+| `dynamic.rs` | Recent/Frequent Folders など動的メニュー (QAP の In the Works 相当) |
+| `azure_devops/` | PR/Pipeline/Work Item の SQLite キャッシュ・同期・PAT (`api.rs` / `cache.rs` / `sync.rs` / `credential.rs`) |
+| `everything.rs` | Everything (voidtools) との `WM_COPYDATA` IPC (`f ` プレフィックス) |
+| `browser_history.rs` / `browser_tabs.rs` / `bookmarks.rs` / `favicons.rs` | Chrome/Edge の履歴・タブ・ブックマーク・favicon の読み取り |
+| `git.rs` | `.git/HEAD` を直接読んでブランチ名を取得 (`showBranch`)。`git` コマンドは起動しない |
+| `clipboard.rs` | Quick Launch の `Ctrl+C` (パスコピー) |
+| `folder_import.rs` | フォルダ構造の設定項目への一括取り込み |
+| `romaji.rs` | ローマ字⇄かな/カナ変換 (Quick Launch のローマ字検索用、漢字は対象外) |
+| `apps.rs` | スタートメニューショートカット (`.lnk`) の列挙 (`a ` プレフィックス) |
+| `hotkey_capture.rs` / `trigger.rs` | ホットキー登録・`WH_KEYBOARD_LL` / `WH_MOUSE_LL` フック |
+| `tray/` | トレイアイコン・トレイメニュー |
+| `icon/` | アイコン取得・拡縮 (`SHIL_*` の選び分け) |
+| `settings_main/` | 設定エディター (egui) の画面別モジュール群 |
+
+新しい検索プレフィックスやデータソースを追加するときは、`docs/spec.md` の FR-9 を
+先に更新してから `quick_launch/mod.rs` のプレフィックス表 (`prefix_badge`) に合わせる。
 
 ### FR-6 管理画面の構成
 
