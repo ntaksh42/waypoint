@@ -77,10 +77,11 @@ fn key_for(entry: &Entry) -> Option<String> {
     Some(format!("{kind}|{}", entry.path.to_lowercase()))
 }
 
-/// `key_for` と同じキーを、呼び出し側が既に小文字化済みの path から組み立てる。
-fn key_for_lower(entry: &Entry, path_lower: &str) -> Option<String> {
-    let kind = key_kind(&entry.action)?;
-    Some(format!("{kind}|{path_lower}"))
+/// JSON 永続化用のキー (`"{kind}|{path_lower}"`) を kind と path_lower に戻す。
+/// 保存側は既存フォーマットのまま (旧バージョンとの互換性)、`Ranking` の
+/// 内部表現だけを kind 別の `HashMap` に分けるための変換。
+fn split_key(key: &str) -> Option<(&str, &str)> {
+    key.split_once('|')
 }
 
 /// 選択を記録する。表示経路とは別に、選んだ後の一手なので同期 I/O で構わない。
@@ -104,16 +105,33 @@ pub fn record(entry: &Entry) {
 
 /// 使用頻度・最終選択時刻の順位。小さいほど優先してソート先頭に出す。
 /// 未選択の項目は最大値になり、常に選択済みの項目より後ろに回る。
+///
+/// `kind` (folder/url/default/app) で外側を分け、内側は `path_lower` を
+/// そのままキーにする 2 段構成。検索は候補 1 件につき 1 回、キー入力の
+/// たびに全一致候補ぶん呼ばれるため (`quick_launch::search::score_entry`)、
+/// フラットな `"{kind}|{path}"` 結合キーだと参照のたびに `format!` の
+/// ヒープ確保が発生していた。`path_lower` は呼び出し側で事前計算済みなので、
+/// 内側マップを path_lower で直接引ければ確保なしでルックアップできる
+/// (1万件規模の候補で実測、空クエリ/プレフィックス検索時に体感差)。
 #[derive(Debug, Clone, Default)]
 pub struct Ranking {
-    entries: HashMap<String, HistoryEntry>,
+    entries: HashMap<&'static str, HashMap<String, HistoryEntry>>,
 }
 
 impl Ranking {
     pub fn load() -> Self {
-        Self {
-            entries: load().entries,
+        let mut entries: HashMap<&'static str, HashMap<String, HistoryEntry>> = HashMap::new();
+        for (key, record) in load().entries {
+            if let Some((kind, path_lower)) = split_key(&key)
+                && let Some(kind) = normalize_kind(kind)
+            {
+                entries
+                    .entry(kind)
+                    .or_default()
+                    .insert(path_lower.to_string(), record);
+            }
         }
+        Self { entries }
     }
 
     /// (使用回数の少ない順, 最終選択が古い順) のタプル。
@@ -126,14 +144,14 @@ impl Ranking {
     /// 薄れる (候補数百件規模でキー入力のたびに走る経路のため、実測で
     /// 体感できる差になる)。
     pub fn rank_lower(&self, entry: &Entry, path_lower: &str) -> (u64, u64) {
-        let Some(key) = key_for_lower(entry, path_lower) else {
+        let Some(kind) = key_kind(&entry.action) else {
             return (u64::MAX, u64::MAX);
         };
-        self.rank_by_key(&key)
-    }
-
-    fn rank_by_key(&self, key: &str) -> (u64, u64) {
-        match self.entries.get(key) {
+        match self
+            .entries
+            .get(kind)
+            .and_then(|by_path| by_path.get(path_lower))
+        {
             Some(record) => (u64::MAX - record.count, u64::MAX - record.last_used),
             None => (u64::MAX, u64::MAX),
         }
@@ -142,9 +160,25 @@ impl Ranking {
     /// テスト専用。ファイル I/O を経由せず、entry を選んだ回数を直接与える。
     #[cfg(test)]
     pub fn with_selection(mut self, entry: &Entry, count: u64, last_used: u64) -> Self {
-        if let Some(key) = key_for(entry) {
-            self.entries.insert(key, HistoryEntry { count, last_used });
+        if let Some(kind) = key_kind(&entry.action) {
+            self.entries
+                .entry(kind)
+                .or_default()
+                .insert(entry.path.to_lowercase(), HistoryEntry { count, last_used });
         }
         self
+    }
+}
+
+/// `load()` (JSON 経由) が返す kind は `key_kind` と同じ固定文字列のはずだが、
+/// 版違いの永続化ファイルで不明な kind が混じっても `&'static str` の
+/// 表に正規化してから使う (未知の kind は握りつぶし、既知の 4 種のみ通す)。
+fn normalize_kind(kind: &str) -> Option<&'static str> {
+    match kind {
+        "folder" => Some("folder"),
+        "url" => Some("url"),
+        "default" => Some("default"),
+        "app" => Some("app"),
+        _ => None,
     }
 }
