@@ -30,7 +30,11 @@ fn opaque_pixels(bitmap: HBITMAP) -> usize {
         }
         let len = (info.bmWidth * info.bmHeight * 4) as usize;
         let bits = std::slice::from_raw_parts(info.bmBits.cast::<u8>(), len);
-        bits.chunks_exact(4).filter(|pixel| pixel[3] != 0).count()
+        bits.as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| pixel[3] != 0)
+            .count()
     }
 }
 
