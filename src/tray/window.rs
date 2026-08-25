@@ -14,8 +14,8 @@ use crate::shell;
 use crate::trigger::{self, WM_TRIGGER_MENU};
 
 use super::actions::{
-    add_entry_to_favorites, handle_dynamic_refreshed, rebuild_menu, refresh_dynamic,
-    show_launcher, show_launcher_at_cursor, show_tray_menu,
+    add_entry_to_favorites, handle_dynamic_refreshed, rebuild_menu, refresh_dynamic, show_launcher,
+    show_launcher_at_cursor, show_tray_menu,
 };
 use super::{
     WM_AZURE_DEVOPS_REFRESHED, WM_DYNAMIC_REFRESHED, WM_RELOAD_CONFIG, WM_TRAY, reload, with_state,
