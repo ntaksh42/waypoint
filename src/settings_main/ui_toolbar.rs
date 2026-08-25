@@ -9,7 +9,7 @@ use super::drafts::{DraftKind, MoveToMenuDraft};
 
 impl SettingsApp {
     pub(super) fn show_toolbar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             egui::ComboBox::from_id_salt("add_item_menu")
                 .selected_text("Add")
                 .width(90.0)
@@ -98,22 +98,22 @@ impl SettingsApp {
                 self.move_to_menu_draft = Some(MoveToMenuDraft::default());
             }
 
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                egui::ComboBox::from_id_salt("settings_menu")
-                    .selected_text("\u{2699} Settings")
-                    .width(120.0)
-                    .show_ui(ui, |ui| {
-                        if ui.button("Variables...").clicked() {
-                            self.open_variables();
-                        }
-                        if ui.button("Trigger...").clicked() {
-                            self.open_trigger();
-                        }
-                        if ui.button("Azure DevOps...").clicked() {
-                            self.open_azure_settings();
-                        }
-                    });
-            });
+            ui.separator();
+
+            egui::ComboBox::from_id_salt("settings_menu")
+                .selected_text("\u{2699} Settings")
+                .width(120.0)
+                .show_ui(ui, |ui| {
+                    if ui.button("Variables...").clicked() {
+                        self.open_variables();
+                    }
+                    if ui.button("Trigger...").clicked() {
+                        self.open_trigger();
+                    }
+                    if ui.button("Azure DevOps...").clicked() {
+                        self.open_azure_settings();
+                    }
+                });
         });
     }
 }

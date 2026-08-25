@@ -36,7 +36,8 @@ impl SettingsApp {
             .min_size([760.0, 520.0])
             .max_height(
                 ctx.input(|input| input.viewport().outer_rect)
-                    .map_or(900.0, |rect| rect.height() * 0.92),
+                    .map_or(900.0, |rect| rect.height() * 0.92)
+                    .max(520.0),
             )
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
@@ -127,7 +128,7 @@ impl SettingsApp {
 }
 
 fn show_connection_row(ui: &mut egui::Ui, picker: &mut AzureProjectPicker) {
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label("Organization");
         ui.add(egui::TextEdit::singleline(&mut picker.organization).desired_width(200.0));
         ui.label("PAT");
@@ -235,7 +236,7 @@ fn show_project_list(ui: &mut egui::Ui, picker: &mut AzureProjectPicker, availab
                 .count()
         ));
     });
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if ui.button("Select shown").clicked() {
             for project in &filtered {
                 picker.set_selected(project, true);
@@ -376,7 +377,7 @@ fn show_repository_picker(ui: &mut egui::Ui, picker: &mut AzureProjectPicker) {
         .cloned()
         .collect();
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label(format!("{} shown", names.len()));
         if ui.button("Select shown").clicked() {
             for name in &names {
@@ -449,7 +450,7 @@ fn show_area_path_picker(ui: &mut egui::Ui, picker: &mut AzureProjectPicker) {
         .cloned()
         .collect();
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label(format!("{} shown", nodes.len()));
         if ui.button("Select shown").clicked() {
             for node in &nodes {

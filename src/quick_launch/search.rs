@@ -227,8 +227,13 @@ pub(crate) fn search_entries<'a>(
             .filter_map(|(order, entry)| {
                 let name = entry.name.to_lowercase();
                 let breadcrumb = entry.breadcrumb.to_lowercase();
-                let path = search_paths.then(|| entry.path.to_lowercase());
-                score_entry(entry, &name, &breadcrumb, path.as_deref(), &terms, ranking)
+                // ranking.rank も path の小文字化を要求するため、search_paths に
+                // 関わらず 1 回だけ計算して使い回す (rank 側で to_lowercase を
+                // やり直すと、事前計算キャッシュを通らないこの経路のコストが
+                // さらに増えてしまう)。
+                let path_lower = entry.path.to_lowercase();
+                let path = search_paths.then_some(path_lower.as_str());
+                score_entry(entry, &name, &breadcrumb, path, &path_lower, &terms, ranking)
                     .map(|score| (score, order, entry))
             }),
     )
@@ -267,9 +272,15 @@ pub(crate) fn search_entries_cached_multi<'a>(
         if entries.len() == lower_keys.len() {
             for (entry, keys) in entries.iter().zip(lower_keys) {
                 let path = search_paths.then_some(keys.path.as_str());
-                if let Some(score) =
-                    score_entry(entry, &keys.name, &keys.breadcrumb, path, &terms, ranking)
-                {
+                if let Some(score) = score_entry(
+                    entry,
+                    &keys.name,
+                    &keys.breadcrumb,
+                    path,
+                    &keys.path,
+                    &terms,
+                    ranking,
+                ) {
                     scored.push((score, order, entry));
                 }
                 order += 1;
@@ -278,9 +289,10 @@ pub(crate) fn search_entries_cached_multi<'a>(
             for entry in entries {
                 let name = entry.name.to_lowercase();
                 let breadcrumb = entry.breadcrumb.to_lowercase();
-                let path = search_paths.then(|| entry.path.to_lowercase());
+                let path_lower = entry.path.to_lowercase();
+                let path = search_paths.then_some(path_lower.as_str());
                 if let Some(score) =
-                    score_entry(entry, &name, &breadcrumb, path.as_deref(), &terms, ranking)
+                    score_entry(entry, &name, &breadcrumb, path, &path_lower, &terms, ranking)
                 {
                     scored.push((score, order, entry));
                 }
@@ -308,8 +320,16 @@ pub(crate) fn search_indexed<'a>(
             .enumerate()
             .filter_map(|(order, (entry, keys))| {
                 let path = search_paths.then_some(keys.path.as_str());
-                score_entry(entry, &keys.name, &keys.breadcrumb, path, &terms, ranking)
-                    .map(|score| (score, order, entry))
+                score_entry(
+                    entry,
+                    &keys.name,
+                    &keys.breadcrumb,
+                    path,
+                    &keys.path,
+                    &terms,
+                    ranking,
+                )
+                .map(|score| (score, order, entry))
             }),
     )
 }
@@ -319,11 +339,17 @@ fn lower_terms(query: &str) -> Vec<String> {
 }
 
 /// 全語をスコアリングし、複数語のときは一番弱い一致を順位に使う。
+///
+/// `path_lower` はマッチ対象 (`path`、`search_paths` が false なら None) とは
+/// 別に常に渡す。使用履歴の順位付け (`ranking.rank_lower`) がパスの小文字化を
+/// 要求するため、`path` が None のときも呼び出し側の事前計算済み値を使い回し、
+/// ここで `entry.path.to_lowercase()` を再計算しないようにする。
 fn score_entry(
     entry: &Entry,
     name: &str,
     breadcrumb: &str,
     path: Option<&str>,
+    path_lower: &str,
     terms: &[String],
     ranking: &Ranking,
 ) -> Option<(u8, i64, (u64, u64))> {
@@ -342,7 +368,7 @@ fn score_entry(
         });
     }
     let (tier, fuzzy_score) = result.unwrap_or((0, 0));
-    Some((tier, fuzzy_score, ranking.rank(entry)))
+    Some((tier, fuzzy_score, ranking.rank_lower(entry, path_lower)))
 }
 
 /// 文字列一致の質を最優先し、同点内では使用頻度・最近使った順で並べる。
