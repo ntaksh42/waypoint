@@ -14,7 +14,7 @@ use crate::shell;
 use crate::trigger::{self, WM_TRIGGER_MENU};
 
 use super::actions::{
-    add_entry_to_favorites, handle_dynamic_refreshed, rebuild_menu, refresh_dynamic,
+    add_entry_to_favorites, handle_dynamic_refreshed, open_settings, rebuild_menu, refresh_dynamic,
     show_launcher, show_launcher_at_cursor, show_tray_menu,
 };
 use super::{
@@ -105,6 +105,9 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                     quick_launch::Action::ReplaceQuery(_)
                     | quick_launch::Action::AzureLiveWorkItemSearch(_)
                     | quick_launch::Action::AzureLivePullRequestSearch { .. } => {}
+                    quick_launch::Action::AzureSuggestPriorities => {
+                        open_settings(Some(crate::azure_devops::AZURE_SUGGEST_ARG));
+                    }
                 }
                 refresh_dynamic(hwnd);
             }

@@ -30,11 +30,19 @@ pub use api::{fetch_area_nodes, fetch_my_area_suggestions, list_repository_names
 pub use convert::AreaNode;
 pub use credential::{delete_pat, save_pat};
 pub use sync::{
-    PullRequestReply, WorkItemReply, refresh_async, search_pull_requests_live_async,
-    search_work_items_async, take_pull_request_results, take_work_item_results,
+    ProjectActivity, PullRequestReply, WorkItemReply, refresh_async,
+    search_pull_requests_live_async, search_work_items_async, suggest_priorities_async,
+    take_pull_request_results, take_work_item_results,
 };
 
 const PROJECT_PAGE_SIZE: usize = 1_000;
+
+/// Quick Launch の `az optimize`（`suggest` / `rank` でも入れる）から
+/// `waypoint-settings.exe` を起動する際に渡すコマンドライン引数。設定
+/// エディターはこれを見て、起動直後に優先度提案モーダルを自動で開く
+/// (`az optimize` → 別プロセス起動 → 直後に集計開始、という導線を
+/// 常駐部と設定エディターの両方で共有するための定数)。
+pub const AZURE_SUGGEST_ARG: &str = "--azure-suggest";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {

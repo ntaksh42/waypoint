@@ -76,6 +76,12 @@ pub(super) fn update_results(state: &RefCell<State>) {
         start_azure_work_item_query(state, rest);
         return;
     }
+    if let Some((crate::quick_launch::AzureCommand::Suggest, _)) =
+        crate::quick_launch::azure_command(&query)
+    {
+        show_azure_suggest_entry(state);
+        return;
+    }
 
     let (list, labels, rows) = {
         let mut state = state.borrow_mut();
@@ -218,6 +224,26 @@ pub(super) fn start_azure_work_item_query(state: &RefCell<State>, text: &str) {
     } else {
         populate_empty_message(list, message.as_deref());
     }
+}
+
+/// `az suggest` に入った。検索対象を持たないコマンドなので、確定候補を
+/// 1 件だけ表示する (Enter または選択で `AzureSuggestPriorities` が走る)。
+fn show_azure_suggest_entry(state: &RefCell<State>) {
+    let (list, labels, rows) = {
+        let mut state = state.borrow_mut();
+        state.everything_active = false;
+        state.azure_work_items_active = false;
+        state.previous_query = None;
+        state.empty_message = None;
+        state.results = vec![crate::quick_launch::azure_suggest_entry()];
+        let (labels, rows) = build_rows(&state.results, &[]);
+        state.rows = rows.clone();
+        (state.list, labels, rows)
+    };
+    let Some(list) = list else {
+        return;
+    };
+    populate_list(list, &labels, &rows);
 }
 
 /// キャッシュ検索が 0 件だったときにリストへ足す、ライブ検索への入口。

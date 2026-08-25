@@ -61,7 +61,8 @@ fn key_kind(action: &Action) -> Option<&'static str> {
         | Action::FocusBrowserTab(_)
         | Action::ReplaceQuery(_)
         | Action::AzureLiveWorkItemSearch(_)
-        | Action::AzureLivePullRequestSearch { .. } => None,
+        | Action::AzureLivePullRequestSearch { .. }
+        | Action::AzureSuggestPriorities => None,
     }
 }
 

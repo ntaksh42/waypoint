@@ -449,6 +449,10 @@ fn azure_command_recognizes_all_supported_subcommands() {
         azure_command("az platform"),
         Some((AzureCommand::All, "platform"))
     );
+    assert_eq!(
+        azure_command("az optimize"),
+        Some((AzureCommand::Suggest, ""))
+    );
 }
 
 #[test]

@@ -10,6 +10,7 @@
 //! 独立した OK/Apply があり、片方だけ保存し忘れる罠があった)。
 
 use eframe::egui;
+use waypoint::azure_devops::ProjectActivity;
 use waypoint::config::AzureDevOpsSettings;
 
 use super::app::SettingsApp;
@@ -22,7 +23,7 @@ impl SettingsApp {
             return;
         };
         picker.poll_load();
-        if picker.loading || picker.area_loading {
+        if picker.loading || picker.area_loading || picker.priority_suggestion_loading {
             // 受信スレッドは egui のイベントループを起こせないため、取得中だけ再描画する。
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
@@ -53,6 +54,25 @@ impl SettingsApp {
                 if let Some(error) = azure_status.last_error {
                     ui.weak(format!("Last Azure DevOps error: {error}"));
                 }
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(
+                            !picker.priority_suggestion_loading && !picker.projects.is_empty(),
+                            egui::Button::new("Suggest priorities from recent activity..."),
+                        )
+                        .on_hover_text(
+                            "Rank watched projects by your assignments and @mentions \
+                             in the last 90 days",
+                        )
+                        .clicked()
+                    {
+                        picker.start_priority_suggestions();
+                    }
+                    if picker.priority_suggestion_loading {
+                        ui.spinner();
+                        ui.label("Scanning recent activity...");
+                    }
+                });
                 ui.separator();
                 show_connection_row(ui, picker);
                 ui.separator();
@@ -124,7 +144,208 @@ impl SettingsApp {
         } else if cancel {
             self.azure_project_picker = None;
         }
+
+        // Azure DevOps ウィンドウの後に描画することで、モーダルを手前に出す
+        // (egui は同じ CENTER_CENTER アンカーだと後から show したウィンドウが
+        // 前面に来るため、先に呼ぶと Azure DevOps の後ろに隠れてしまっていた)。
+        if let Some(picker) = self.azure_project_picker.as_mut() {
+            show_priority_suggestion_modal(ctx, picker);
+        }
     }
+}
+
+/// 直近アクティビティからの Project / Area 優先度提案を表示する専用モーダル。
+/// フィルタで絞り込み、チェックした行だけ Apply で確定する
+/// (`azure_draft::apply_priority_suggestions` が実際の書き戻しを行う)。
+fn show_priority_suggestion_modal(ctx: &egui::Context, picker: &mut AzureProjectPicker) {
+    if !picker.priority_suggestion_open {
+        return;
+    }
+    let mut apply = false;
+    let mut cancel = false;
+    let window = egui::Window::new("Suggest priorities from recent activity")
+        .collapsible(false)
+        .resizable(true)
+        .default_size([560.0, 520.0])
+        .min_size([420.0, 320.0])
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.weak("Ranked by assignments and @mentions in the last 90 days.");
+            if let Some(error) = &picker.priority_suggestion_error {
+                ui.colored_label(egui::Color32::RED, error);
+            }
+            ui.add(
+                egui::TextEdit::singleline(&mut picker.priority_suggestion_filter)
+                    .hint_text("Filter by project name")
+                    .desired_width(260.0),
+            );
+
+            let filter = picker.priority_suggestion_filter.to_lowercase();
+            let shown: Vec<_> = picker
+                .priority_suggestions
+                .iter()
+                .filter(|entry| filter.is_empty() || entry.project.to_lowercase().contains(&filter))
+                .cloned()
+                .collect();
+
+            ui.horizontal(|ui| {
+                ui.label(format!(
+                    "{} of {} shown; {} checked",
+                    shown.len(),
+                    picker.priority_suggestions.len(),
+                    picker.priority_suggestion_checked.len()
+                ));
+                if ui.button("Check shown").clicked() {
+                    for entry in &shown {
+                        picker
+                            .priority_suggestion_checked
+                            .insert((entry.organization.clone(), entry.project.clone()));
+                    }
+                }
+                if ui.button("Uncheck shown").clicked() {
+                    for entry in &shown {
+                        picker
+                            .priority_suggestion_checked
+                            .remove(&(entry.organization.clone(), entry.project.clone()));
+                    }
+                }
+            });
+
+            // フッター (説明文 + Apply/Cancel) の高さを確保してから、残りをリストへ回す。
+            // `auto_shrink` だけに任せると、展開したツリーで内容が伸びたときに
+            // フッターごとウィンドウ下端の外へ押し出され、Apply が見切れていた。
+            let footer_height = 56.0;
+            let list_height = (ui.available_height() - footer_height).max(120.0);
+            egui::ScrollArea::vertical()
+                .id_salt("azure_priority_suggestion_list")
+                .max_height(list_height)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    if shown.is_empty() {
+                        ui.weak("No projects match the filter.");
+                    }
+                    for entry in &shown {
+                        show_priority_suggestion_row(ui, picker, entry);
+                    }
+                });
+
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.weak(
+                    "Checked projects are ranked by activity. Expand a project to pick its areas.",
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    cancel = ui.button("Cancel").clicked();
+                    apply = ui
+                        .add_enabled(
+                            !picker.priority_suggestion_checked.is_empty(),
+                            egui::Button::new("Apply"),
+                        )
+                        .clicked();
+                });
+            });
+        });
+    lock_modal_focus(ctx, &window);
+    let (_, dismiss) = dialog_keys(ctx, false);
+    cancel |= dismiss;
+    if apply {
+        picker.apply_priority_suggestions();
+    } else if cancel {
+        picker.priority_suggestion_open = false;
+    }
+}
+
+/// 提案モーダル 1 行分: チェックボックス + プロジェクト名 + 活動件数 +
+/// 展開ボタン。展開すると、そのプロジェクトの Area ツリー全体を
+/// (ルートから子階層まで) チェックボックス付きで表示する。
+fn show_priority_suggestion_row(
+    ui: &mut egui::Ui,
+    picker: &mut AzureProjectPicker,
+    entry: &ProjectActivity,
+) {
+    let key = (entry.organization.clone(), entry.project.clone());
+    let mut checked = picker.priority_suggestion_checked.contains(&key);
+    let is_expanded = picker.priority_suggestion_expanded.as_ref() == Some(&key);
+    ui.horizontal(|ui| {
+        if ui.checkbox(&mut checked, "").changed() {
+            if checked {
+                picker.priority_suggestion_checked.insert(key.clone());
+            } else {
+                picker.priority_suggestion_checked.remove(&key);
+            }
+        }
+        ui.strong(&entry.project);
+        ui.weak(format!("{} activity item(s)", entry.count));
+        let toggle_label = if is_expanded {
+            "▼ Areas"
+        } else {
+            "▶ Areas"
+        };
+        if ui.small_button(toggle_label).clicked() {
+            picker.toggle_priority_suggestion_expanded(&entry.organization, &entry.project);
+        }
+    });
+    if !is_expanded {
+        return;
+    }
+    ui.indent(("azure_priority_suggestion_areas", &key), |ui| {
+        show_priority_suggestion_area_tree(ui, picker, &entry.organization, &entry.project);
+    });
+}
+
+/// 展開中プロジェクトの Area ツリー。既存の詳細パネル (`show_area_path_picker`)
+/// と同じ「ルートからの深さでインデントしたチェックボックス」表示だが、
+/// こちらは複数プロジェクトを同時に展開できるようキーをプロジェクト単位で持つ。
+fn show_priority_suggestion_area_tree(
+    ui: &mut egui::Ui,
+    picker: &mut AzureProjectPicker,
+    organization: &str,
+    project: &str,
+) {
+    let key = (organization.to_string(), project.to_string());
+    if picker.priority_suggestion_area_loading.as_ref() == Some(&key) {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.weak("Loading area tree...");
+        });
+        return;
+    }
+    if let Some(error) = &picker.priority_suggestion_area_error {
+        ui.colored_label(egui::Color32::RED, format!("Could not load areas: {error}"));
+        return;
+    }
+    let Some(nodes) = picker.priority_suggestion_area_trees.get(&key).cloned() else {
+        return;
+    };
+    if nodes.is_empty() {
+        ui.weak("No areas found for this project.");
+        return;
+    }
+    let selected_areas = picker
+        .find_project(organization, project)
+        .map(|entry| entry.interest_areas.clone())
+        .unwrap_or_default();
+    egui::ScrollArea::vertical()
+        .id_salt(("azure_priority_suggestion_area_scroll", &key))
+        .max_height(180.0)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            for node in &nodes {
+                let mut checked = selected_areas.contains(&node.path);
+                ui.horizontal(|ui| {
+                    ui.add_space(node.depth as f32 * 16.0);
+                    let name = node.path.rsplit('\\').next().unwrap_or(&node.path);
+                    if ui.checkbox(&mut checked, name).changed() {
+                        picker.toggle_priority_suggestion_area(
+                            organization,
+                            project,
+                            &node.path,
+                            checked,
+                        );
+                    }
+                });
+            }
+        });
 }
 
 fn show_connection_row(ui: &mut egui::Ui, picker: &mut AzureProjectPicker) {

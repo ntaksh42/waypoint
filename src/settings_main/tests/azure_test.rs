@@ -1,3 +1,4 @@
+use waypoint::azure_devops::ProjectActivity;
 use waypoint::config::AzureDevOpsProject;
 
 use super::super::azure_draft::{
@@ -298,4 +299,137 @@ fn decoding_invalid_json_reports_an_error() {
 fn decoding_a_non_array_reports_an_error() {
     let error = decode_projects_json("{}").unwrap_err();
     assert!(error.contains("Could not parse file"));
+}
+
+fn activity(
+    organization: &str,
+    project: &str,
+    count: usize,
+    areas: Vec<(&str, usize)>,
+) -> ProjectActivity {
+    ProjectActivity {
+        organization: organization.to_string(),
+        project: project.to_string(),
+        count,
+        areas: areas
+            .into_iter()
+            .map(|(path, n)| (path.to_string(), n))
+            .collect(),
+    }
+}
+
+#[test]
+fn applying_checked_suggestions_ranks_priority_by_list_order() {
+    let mut picker = picker_with(
+        vec![
+            project("contoso", "Waypoint"),
+            project("contoso", "Platform"),
+        ],
+        "contoso",
+    );
+    picker.priority_suggestions = vec![
+        activity("contoso", "Waypoint", 10, vec![("Waypoint\\Launcher", 7)]),
+        activity("contoso", "Platform", 3, vec![("Platform\\Core", 2)]),
+    ];
+    picker
+        .priority_suggestion_checked
+        .insert(("contoso".to_string(), "Waypoint".to_string()));
+    picker
+        .priority_suggestion_checked
+        .insert(("contoso".to_string(), "Platform".to_string()));
+
+    picker.apply_priority_suggestions();
+
+    let waypoint = picker
+        .projects
+        .iter()
+        .find(|entry| entry.project == "Waypoint")
+        .unwrap();
+    let platform = picker
+        .projects
+        .iter()
+        .find(|entry| entry.project == "Platform")
+        .unwrap();
+    assert_eq!(waypoint.priority, 0);
+    assert_eq!(platform.priority, 1);
+    assert!(!picker.priority_suggestion_open);
+}
+
+#[test]
+fn applying_suggestions_ignores_unchecked_projects() {
+    let mut picker = picker_with(vec![project("contoso", "Waypoint")], "contoso");
+    picker.projects[0].priority = 9;
+    picker.priority_suggestions = vec![activity(
+        "contoso",
+        "Waypoint",
+        5,
+        vec![("Waypoint\\Launcher", 5)],
+    )];
+    // 何もチェックしていない状態で Apply しても書き換わらないこと。
+
+    picker.apply_priority_suggestions();
+
+    assert_eq!(picker.projects[0].priority, 9);
+}
+
+#[test]
+fn toggling_a_priority_suggestion_area_updates_that_projects_interest_areas() {
+    let mut picker = picker_with(vec![project("contoso", "Waypoint")], "contoso");
+
+    picker.toggle_priority_suggestion_area("contoso", "Waypoint", "Waypoint\\Launcher", true);
+    assert_eq!(
+        picker.projects[0].interest_areas,
+        ["Waypoint\\Launcher".to_string()]
+    );
+
+    picker.toggle_priority_suggestion_area("contoso", "Waypoint", "Waypoint\\Launcher", false);
+    assert!(picker.projects[0].interest_areas.is_empty());
+}
+
+#[test]
+fn toggling_a_priority_suggestion_area_does_not_affect_other_projects() {
+    let mut picker = picker_with(
+        vec![
+            project("contoso", "Waypoint"),
+            project("contoso", "Platform"),
+        ],
+        "contoso",
+    );
+
+    picker.toggle_priority_suggestion_area("contoso", "Waypoint", "Waypoint\\Launcher", true);
+
+    let platform = picker
+        .projects
+        .iter()
+        .find(|entry| entry.project == "Platform")
+        .unwrap();
+    assert!(platform.interest_areas.is_empty());
+}
+
+#[test]
+fn expanding_a_suggestion_row_toggles_and_collapses_on_second_call() {
+    let mut picker = picker_with(vec![project("contoso", "Waypoint")], "contoso");
+
+    picker.toggle_priority_suggestion_expanded("contoso", "Waypoint");
+    assert_eq!(
+        picker.priority_suggestion_expanded,
+        Some(("contoso".to_string(), "Waypoint".to_string()))
+    );
+
+    picker.toggle_priority_suggestion_expanded("contoso", "Waypoint");
+    assert_eq!(picker.priority_suggestion_expanded, None);
+}
+
+#[test]
+fn toggling_a_priority_suggestion_area_on_twice_does_not_duplicate_it() {
+    // project_with_details は既に "Waypoint\Launcher" を interest_areas に持つ
+    let mut picker = picker_with(vec![project_with_details("contoso", "Waypoint")], "contoso");
+
+    picker.toggle_priority_suggestion_area("contoso", "Waypoint", "Waypoint\\Launcher", true);
+
+    let areas = &picker.projects[0].interest_areas;
+    assert_eq!(
+        areas.iter().filter(|a| *a == "Waypoint\\Launcher").count(),
+        1
+    );
 }

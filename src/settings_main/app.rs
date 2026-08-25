@@ -53,6 +53,15 @@ impl SettingsApp {
         };
         let active_item = (!config.items.is_empty()).then_some(0);
         let selected_items = active_item.into_iter().collect();
+        // Quick Launch の `az optimize` から起動された場合、Azure DevOps
+        // 設定画面を開いた状態で直接アクティビティ集計を始める
+        // (`waypoint::azure_devops::AZURE_SUGGEST_ARG` は常駐部と共有する定数)。
+        let mut azure_project_picker = std::env::args()
+            .any(|arg| arg == waypoint::azure_devops::AZURE_SUGGEST_ARG)
+            .then(|| AzureProjectPicker::from_config(&config));
+        if let Some(picker) = azure_project_picker.as_mut() {
+            picker.start_priority_suggestions();
+        }
         Self {
             config,
             selected_menu: Vec::new(),
@@ -64,7 +73,7 @@ impl SettingsApp {
             move_to_menu_draft: None,
             variables_draft: None,
             trigger_draft: None,
-            azure_project_picker: None,
+            azure_project_picker,
             import_draft: None,
             clipboard: Vec::new(),
             delete_pending: false,
