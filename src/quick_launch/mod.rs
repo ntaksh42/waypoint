@@ -13,6 +13,7 @@ mod search;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use azure::azure_suggest_entry;
 pub use azure::{AzureCommand, PipelineFilter, PullRequestFilter, azure_command};
 pub(crate) use search::search_entries;
 
@@ -92,6 +93,10 @@ pub enum Action {
         filter: PullRequestFilter,
         query: String,
     },
+    /// `az optimize`（`suggest` / `rank` でも入れる）— 直近のアサイン・
+    /// メンションから優先 Project / Area を提案する専用画面を開く
+    /// (設定エディタープロセスを別引数で起動する)。
+    AzureSuggestPriorities,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,7 +144,8 @@ impl Entry {
             | Action::OpenUrl(_)
             | Action::ReplaceQuery(_)
             | Action::AzureLiveWorkItemSearch(_)
-            | Action::AzureLivePullRequestSearch { .. } => None,
+            | Action::AzureLivePullRequestSearch { .. }
+            | Action::AzureSuggestPriorities => None,
         }
     }
 }

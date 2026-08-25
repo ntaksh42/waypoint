@@ -544,6 +544,78 @@ pub fn fetch_my_area_suggestions(
     Ok(area_path_counts(&items))
 }
 
+/// `az` コマンドの優先 Project / Area 提案用。1 プロジェクトあたり、直近
+/// `RECENT_ACTIVITY_WINDOW_DAYS` 日以内に自分がアサインされた、または
+/// コメント (`System.History`) で @メンションされた Work Item の Area Path
+/// を集める (プロジェクトごとの件数は呼び出し側で数える)。
+///
+/// Azure DevOps Boards の `@recentMentions` マクロは Web UI 専用で WIQL
+/// REST API での動作が保証されないため使わず、`System.History CONTAINS @Me`
+/// で代替する (`Discussion` は独立フィールドではなく `History` に統合される
+/// 仕様: https://learn.microsoft.com/azure/devops/boards/queries/history-and-auditing)。
+pub(crate) const RECENT_ACTIVITY_WINDOW_DAYS: i64 = 90;
+const RECENT_ACTIVITY_LIMIT: usize = 200;
+
+/// `AssignedTo` / `History` はプロジェクト固有のフィールドではないため、
+/// URL パスのプロジェクトスコープだけに頼ると組織内の他プロジェクトの
+/// Work Item まで返ってくる (実測で確認済み: 3 プロジェクトとも同じ ID
+/// 集合が返った)。`[System.TeamProject] = @project` を明示して絞り込む。
+fn recent_activity_wiql() -> String {
+    format!(
+        "SELECT [System.Id] FROM WorkItems WHERE \
+         [System.TeamProject] = @project \
+         AND [System.ChangedDate] >= @Today - {RECENT_ACTIVITY_WINDOW_DAYS} \
+         AND ([System.AssignedTo] = @Me OR [System.History] CONTAINS @Me)"
+    )
+}
+
+pub(crate) fn fetch_recent_activity_areas(
+    client: &reqwest::blocking::Client,
+    project: &AzureDevOpsProject,
+    pat: &str,
+) -> Result<Vec<String>, String> {
+    let base = format!(
+        "https://dev.azure.com/{}/{}",
+        encode_segment(&project.organization),
+        encode_segment(&project.project)
+    );
+    let query = post_json(
+        client,
+        &format!("{base}/_apis/wit/wiql?$top={RECENT_ACTIVITY_LIMIT}&api-version={API_VERSION}"),
+        pat,
+        &json!({ "query": recent_activity_wiql() }),
+    )?;
+    let ids: Vec<i64> = query["workItems"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| json_i64(&item["id"]))
+        .collect();
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let items = post_json(
+        client,
+        &format!("{base}/_apis/wit/workitemsbatch?api-version={API_VERSION}"),
+        pat,
+        &json!({
+            "ids": ids,
+            "fields": ["System.AreaPath"],
+            "errorPolicy": "omit"
+        }),
+    )?;
+    Ok(items["value"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            item["fields"]["System.AreaPath"]
+                .as_str()
+                .map(str::to_string)
+        })
+        .collect())
+}
+
 pub(crate) fn get_json(
     client: &reqwest::blocking::Client,
     url: &str,
@@ -679,6 +751,23 @@ mod tests {
     #[test]
     fn wiql_escape_doubles_single_quotes() {
         assert_eq!(wiql_escape("O'Brien\\Team"), "O''Brien\\Team");
+    }
+
+    #[test]
+    fn recent_activity_wiql_covers_assignment_and_mention_within_the_window() {
+        let wiql = recent_activity_wiql();
+        assert!(wiql.contains(&format!("@Today - {RECENT_ACTIVITY_WINDOW_DAYS}")));
+        assert!(wiql.contains("[System.AssignedTo] = @Me"));
+        assert!(wiql.contains("[System.History] CONTAINS @Me"));
+    }
+
+    #[test]
+    fn recent_activity_wiql_scopes_to_the_current_project() {
+        // AssignedTo / History はプロジェクト固有のフィールドではないため、
+        // TeamProject を明示しないと組織内の他プロジェクトの Work Item も
+        // 返ってくる (実機で確認済みの不具合の再発防止)。
+        let wiql = recent_activity_wiql();
+        assert!(wiql.contains("[System.TeamProject] = @project"));
     }
 
     #[test]

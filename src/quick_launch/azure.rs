@@ -22,6 +22,10 @@ pub enum AzureCommand {
     Pipelines(PipelineFilter),
     Projects,
     WorkItems,
+    /// `az optimize`（`suggest` / `rank` でも入れる）— 直近のアサイン・
+    /// メンションから優先 Project / Area を提案する専用画面を開く。
+    /// 検索対象を持たず確定候補を 1 件だけ返す。
+    Suggest,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +61,7 @@ pub fn azure_command(query: &str) -> Option<(AzureCommand, &str)> {
         }
         "project" | "projects" => Some((AzureCommand::Projects, remaining)),
         "wit" | "wi" | "workitem" | "workitems" => Some((AzureCommand::WorkItems, remaining)),
+        "optimize" | "suggest" | "rank" => Some((AzureCommand::Suggest, remaining)),
         _ => Some((AzureCommand::All, rest)),
     }
 }
@@ -130,11 +135,15 @@ pub(crate) fn incomplete_azure_command(query: &str) -> Option<&str> {
     (command == AzureCommand::All).then_some(text)
 }
 
-/// `az ` の直後に出すコマンド候補。候補を決定しても検索欄を補完するだけで、
-/// URL を開いたり API を呼んだりはしない。
+/// `az ` の直後に出すコマンド候補。`pr` / `wit` / `pipeline` / `project` は
+/// 検索対象を持つサブコマンドなので選んでも検索欄を補完するだけだが、
+/// `optimize` は検索を挟まない単一アクションなので、選んだ時点で
+/// `AzureSuggestPriorities` を直接実行する (`az optimize` とフルタイプして
+/// Enter した場合と同じ 1 手で済ませる — 補完してからもう一度 Enter する
+/// 二度手間を避ける)。
 pub(crate) fn azure_command_entries() -> &'static [Entry] {
     static ENTRIES: std::sync::LazyLock<Vec<Entry>> = std::sync::LazyLock::new(|| {
-        [
+        let mut entries: Vec<Entry> = [
             ("az pr", "Search pull requests"),
             ("az wit", "Search work items"),
             ("az pipeline", "Search build pipelines"),
@@ -148,9 +157,24 @@ pub(crate) fn azure_command_entries() -> &'static [Entry] {
             action: Action::ReplaceQuery(format!("{name} ")),
             branch: None,
         })
-        .collect()
+        .collect();
+        entries.push(azure_suggest_entry());
+        entries
     });
     &ENTRIES
+}
+
+/// `az optimize`（`suggest` / `rank` でも入れる）に入ったときの唯一の確定候補。
+/// 検索対象を持たないコマンドなので、`az wit` のような絞り込み検索ではなく
+/// この 1 件だけを返す。
+pub(crate) fn azure_suggest_entry() -> Entry {
+    Entry {
+        name: "az optimize".to_string(),
+        breadcrumb: "Rank projects & areas by recent assignments and @mentions".to_string(),
+        path: String::new(),
+        action: Action::AzureSuggestPriorities,
+        branch: None,
+    }
 }
 
 pub(crate) fn azure_candidate_entry(candidate: crate::azure_devops::Candidate) -> Entry {
@@ -164,5 +188,45 @@ pub(crate) fn azure_candidate_entry(candidate: crate::azure_devops::Candidate) -
         path: candidate.url.clone(),
         action: Action::OpenUrl(candidate.url),
         branch: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn optimize_subcommand_and_its_aliases_have_no_search_term() {
+        assert_eq!(
+            azure_command("az optimize"),
+            Some((AzureCommand::Suggest, ""))
+        );
+        assert_eq!(
+            azure_command("az suggest"),
+            Some((AzureCommand::Suggest, ""))
+        );
+        assert_eq!(azure_command("az rank"), Some((AzureCommand::Suggest, "")));
+        // 属性トークンや検索語を持たないコマンドなので、余分な文字列が
+        // 付いても後続はそのまま無視されずに残る (呼び出し側が捨てる)。
+        assert_eq!(
+            azure_command("az optimize ignored"),
+            Some((AzureCommand::Suggest, "ignored"))
+        );
+    }
+
+    #[test]
+    fn azure_suggest_entry_triggers_the_suggest_priorities_action() {
+        let entry = azure_suggest_entry();
+        assert_eq!(entry.action, Action::AzureSuggestPriorities);
+        assert!(entry.path.is_empty());
+    }
+
+    #[test]
+    fn az_optimize_is_offered_among_the_top_level_command_completions() {
+        assert!(
+            azure_command_entries()
+                .iter()
+                .any(|entry| entry.name == "az optimize")
+        );
     }
 }

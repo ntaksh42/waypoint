@@ -393,7 +393,8 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
                 ),
                 Action::ReplaceQuery(_)
                 | Action::AzureLiveWorkItemSearch(_)
-                | Action::AzureLivePullRequestSearch { .. } => {
+                | Action::AzureLivePullRequestSearch { .. }
+                | Action::AzureSuggestPriorities => {
                     draw_command_icon(draw.hDC, draw.rcItem, dpi, name_font)
                 }
             }
