@@ -115,29 +115,29 @@ pub fn search_work_items_async(
                     .iter()
                     .filter(|project| valid_project(project) && project.include_work_items)
                     .collect();
-                let outcomes: Vec<(&crate::config::AzureDevOpsProject, Result<Vec<Candidate>, String>)> =
-                    thread::scope(|scope| {
-                        let handles: Vec<_> = targets
-                            .iter()
-                            .map(|project| {
-                                let client = &client;
-                                let query = &query;
-                                scope.spawn(move || {
-                                    let outcome = match load_pat(&project.organization) {
-                                        Ok(pat) => fetch_work_items(client, project, &pat, query),
-                                        Err(_) => {
-                                            Err(format!("{}: no PAT", project.organization))
-                                        }
-                                    };
-                                    (*project, outcome)
-                                })
+                let outcomes: Vec<(
+                    &crate::config::AzureDevOpsProject,
+                    Result<Vec<Candidate>, String>,
+                )> = thread::scope(|scope| {
+                    let handles: Vec<_> = targets
+                        .iter()
+                        .map(|project| {
+                            let client = &client;
+                            let query = &query;
+                            scope.spawn(move || {
+                                let outcome = match load_pat(&project.organization) {
+                                    Ok(pat) => fetch_work_items(client, project, &pat, query),
+                                    Err(_) => Err(format!("{}: no PAT", project.organization)),
+                                };
+                                (*project, outcome)
                             })
-                            .collect();
-                        handles
-                            .into_iter()
-                            .map(|handle| handle.join().expect("work item fetch thread panicked"))
-                            .collect()
-                    });
+                        })
+                        .collect();
+                    handles
+                        .into_iter()
+                        .map(|handle| handle.join().expect("work item fetch thread panicked"))
+                        .collect()
+                });
                 for (project, outcome) in outcomes {
                     match outcome {
                         Ok(mut found) => {
@@ -261,16 +261,16 @@ pub fn search_pull_requests_live_async(
                             let client = &client;
                             scope.spawn(move || {
                                 let outcome = match load_pat(&project.organization) {
-                                    Ok(pat) => fetch_pull_requests_live(client, project, &pat, status)
-                                        .map(|rows| {
-                                            rows.iter()
-                                                .map(|row| {
-                                                    pull_request_cached_row_to_candidate(
-                                                        project, row,
-                                                    )
-                                                })
-                                                .collect()
-                                        }),
+                                    Ok(pat) => fetch_pull_requests_live(
+                                        client, project, &pat, status,
+                                    )
+                                    .map(|rows| {
+                                        rows.iter()
+                                            .map(|row| {
+                                                pull_request_cached_row_to_candidate(project, row)
+                                            })
+                                            .collect()
+                                    }),
                                     Err(_) => Err(format!("{}: no PAT", project.organization)),
                                 };
                                 (project, status, outcome)
