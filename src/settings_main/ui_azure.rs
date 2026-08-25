@@ -309,7 +309,8 @@ fn show_detail_panel(ui: &mut egui::Ui, picker: &mut AzureProjectPicker) {
     ui.add_space(6.0);
     ui.label("Sync");
     let current = picker.projects.iter().find(|entry| {
-        entry.organization.eq_ignore_ascii_case(&organization) && entry.project == project
+        entry.organization.eq_ignore_ascii_case(&organization)
+            && entry.project.eq_ignore_ascii_case(&project)
     });
     let mut include_pr = current.is_some_and(|entry| entry.include_pull_requests);
     let mut include_pipelines = current.is_some_and(|entry| entry.include_pipelines);

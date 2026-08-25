@@ -90,9 +90,13 @@ impl SettingsApp {
 
     /// Ctrl+クリック相当。1 件だけ選択集合へ追加/除外する。
     pub(super) fn toggle_selection(&mut self, index: usize) {
-        if !self.selected_items.remove(&index) {
-            self.selected_items.insert(index);
+        if self.selected_items.remove(&index) {
+            // 除外した項目を active_item/anchor に残すと、選択ハイライトは
+            // 別の行を指しているのに Edit 等の対象は除外済みの行のまま、
+            // という不整合になる。除外時はどちらも動かさない。
+            return;
         }
+        self.selected_items.insert(index);
         self.active_item = Some(index);
         self.selection_anchor = Some(index);
     }
@@ -119,6 +123,11 @@ impl SettingsApp {
         if self.active_item.is_none() {
             self.active_item = len.checked_sub(1);
         }
+        // anchor を先頭に据え直す。更新し忘れると、直後の Shift+矢印が
+        // 古いアンカーから伸縮する範囲選択を組み立て直し、全選択のはずが
+        // 数件に縮小して見える (duplicate_selected/paste_clipboard は
+        // 同種の操作で anchor を更新しており、ここだけ漏れていた)。
+        self.selection_anchor = Some(0);
     }
 
     /// 選択集合を添字の昇順で返す。
