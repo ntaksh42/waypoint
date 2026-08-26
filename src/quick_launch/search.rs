@@ -642,3 +642,8 @@ pub(crate) fn bench_cached_multi<'a>(
 pub(crate) fn fuzzy_skip_threshold() -> usize {
     FUZZY_SKIP_THRESHOLD
 }
+
+#[cfg(test)]
+pub(crate) fn bench_dedup(entries: Vec<Entry>) -> Vec<Entry> {
+    dedup_by_path(entries)
+}

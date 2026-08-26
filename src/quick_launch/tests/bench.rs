@@ -88,7 +88,12 @@ fn bench_search() {
     time("history prefix", &index, "h page", 200);
     time("bookmarks prefix", &index, "b bookmark", 200);
     time("apps prefix", &index, "a app", 200);
-    // 逐次入力 (実際のキー入力を模す)。打鍵ごとの内訳も出す
+    // 各打鍵で毎回インデックス全体を引き直した場合のコスト。
+    //
+    // 実際の Quick Launch はこの経路を通らない。2 文字目以降は前回の結果
+    // (最大 24 件) だけを絞り込む (`refined_search_term`)。実経路の計測は
+    // `bench_incremental_typing` を見ること。ここは「絞り込みが効かない
+    // 場合の上限」を見るための数値。
     let word = "projectfolder";
     let mut total = 0.0;
     let mut per_key = String::new();
@@ -384,4 +389,99 @@ fn bench_cheap_pass_cost() {
             start.elapsed().as_secs_f64() * 1000.0 / 200.0
         );
     }
+}
+
+/// 実際のキー入力経路の模擬。`quick_launch_window::search` は 2 文字目以降、
+/// 前回の結果だけを `search_entries` で絞り込む (`refined_search_term`)。
+/// この絞り込み経路は `LowerKeys` を使わず毎回 `to_lowercase` する。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_incremental_typing() {
+    use std::time::Instant;
+    const MAX_LIST_RESULTS: usize = 24;
+    let index = large_index(2000, 3000, 5000, 500);
+
+    for word in ["projectfolder", "project", "application", "bookmark"] {
+        // 実経路: 1 文字目は index.search、以降は前回結果を search_entries で絞る
+        let start = Instant::now();
+        let mut results: Vec<Entry> = Vec::new();
+        let mut per_key = String::new();
+        for n in 1..=word.len() {
+            let query = &word[..n];
+            let key_start = Instant::now();
+            results = if n == 1 {
+                index
+                    .search(query)
+                    .into_iter()
+                    .take(MAX_LIST_RESULTS)
+                    .cloned()
+                    .collect()
+            } else {
+                crate::quick_launch::search_entries(
+                    &results,
+                    query,
+                    index.search_paths,
+                    &index.ranking,
+                )
+                .into_iter()
+                .take(MAX_LIST_RESULTS)
+                .cloned()
+                .collect()
+            };
+            per_key.push_str(&format!(
+                "{:.2} ",
+                key_start.elapsed().as_secs_f64() * 1000.0
+            ));
+        }
+        println!(
+            "incremental '{word}' total {:>7.3} ms  per-key: {per_key}",
+            start.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+}
+
+/// 索引構築のうち、動的な差し替え (`refresh_dynamic`) で毎回走る部分。
+/// Recent/Frequent Folders と開いているウィンドウが変わるたびに走る。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_index_rebuild() {
+    use std::time::Instant;
+    let index = large_index(2000, 3000, 5000, 500);
+
+    let entries = index.entries.clone();
+    let start = Instant::now();
+    for _ in 0..100 {
+        std::hint::black_box(super::super::search::LowerKeys::build_for(&entries));
+    }
+    println!(
+        "LowerKeys::build_for({})  {:>7.3} ms",
+        entries.len(),
+        start.elapsed().as_secs_f64() * 1000.0 / 100.0
+    );
+
+    let start = Instant::now();
+    for _ in 0..100 {
+        std::hint::black_box(super::super::search::bench_dedup(entries.clone()));
+    }
+    let dedup = start.elapsed().as_secs_f64() * 1000.0 / 100.0;
+    let start = Instant::now();
+    for _ in 0..100 {
+        std::hint::black_box(entries.clone());
+    }
+    let clone_only = start.elapsed().as_secs_f64() * 1000.0 / 100.0;
+    println!(
+        "dedup_by_path({})         {:>7.3} ms  (clone {:.3} ms)",
+        entries.len(),
+        dedup - clone_only,
+        clone_only
+    );
+
+    let start = Instant::now();
+    for _ in 0..100 {
+        std::hint::black_box(Ranking::default());
+    }
+    println!(
+        "Ranking::default()        {:>7.3} ms",
+        start.elapsed().as_secs_f64() * 1000.0 / 100.0
+    );
 }
