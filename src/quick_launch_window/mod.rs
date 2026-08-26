@@ -77,6 +77,17 @@ pub const WM_QUICK_LAUNCH_AZURE_RESULTS: u32 = WM_APP + 7;
 /// Quick Launch が一度に Everything へ要求する最大件数。
 /// 全件表示はしない (`visible_results` の上限と同じ枠で足りる)。
 const EVERYTHING_MAX_RESULTS: u32 = 24;
+/// リストボックスへ流し込む候補の上限。
+///
+/// ウィンドウの高さは `visible_results` (12〜24) で決まるので、それを超える
+/// 行を作っても画面には出ない。にもかかわらず 1 キー入力ごとに
+/// `HSTRING` の生成 → `LB_ADDSTRING` の同期送信 → オーナードローの
+/// `WM_MEASUREITEM` 再入が候補数だけ走るため、母集団が大きいモードでは
+/// そのまま体感のカクつきになる (実測: `az wit` のキャッシュは 300 件規模で、
+/// 24 行しか見えないのに毎打鍵で全件ぶんを構築していた)。
+/// Everything が `EVERYTHING_MAX_RESULTS` で先に絞っているのと同じ理由・
+/// 同じ枠を、ローカル検索の結果にも適用する。
+const MAX_LIST_RESULTS: usize = 24;
 const CLASS_NAME: PCWSTR = w!("WaypointQuickLaunchWindow");
 
 thread_local! {
@@ -170,7 +181,11 @@ pub fn configure(config: &Config, dynamic: &Menus) {
             let tabs = state.browser_tabs.clone();
             state.index.set_browser_tabs(&tabs);
             state.previous_query = None;
-            state.visible_results = config.settings.quick_launch.visible_results.clamp(12, 24);
+            state.visible_results = config
+                .settings
+                .quick_launch
+                .visible_results
+                .clamp(12, MAX_LIST_RESULTS);
             state.everything_enabled = config.settings.quick_launch.include_everything;
             state.azure_devops = config.settings.quick_launch.azure_devops.clone();
             state.window.is_some()

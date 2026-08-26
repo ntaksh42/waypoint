@@ -44,6 +44,21 @@ fn refined_search_only_reuses_candidates_for_a_narrower_local_query() {
     assert_eq!(refined_search_term("az pr", "az pra"), None);
 }
 
+/// リストへ流し込む上限は、ウィンドウに実際に映る行数 (`visible_results`
+/// の上限 24) 以上あれば足り、それを超えて作った行は画面に出ないまま
+/// 1 打鍵ごとの `LB_ADDSTRING` と `WM_MEASUREITEM` を増やすだけになる
+/// (`az wit` のキャッシュ 300 件規模でカクつきとして表面化した)。
+/// 両者がずれると無駄が再発するので、ここで結び付けておく。
+#[test]
+fn list_result_cap_matches_the_largest_visible_row_count() {
+    assert_eq!(super::super::MAX_LIST_RESULTS, 24);
+    // Everything も同じ枠で先に絞っている (要求段階での上限)
+    assert_eq!(
+        super::super::EVERYTHING_MAX_RESULTS as usize,
+        super::super::MAX_LIST_RESULTS
+    );
+}
+
 #[test]
 fn build_rows_without_headers_is_a_flat_one_to_one_mapping() {
     let results = vec![folder_entry("a"), folder_entry("b")];
