@@ -951,3 +951,33 @@ fn bench_record_async_persists() {
     );
     println!("書き込み後の count = {}", u64::MAX - count_rank);
 }
+
+/// お気に入り登録 (`Ctrl+Shift+Enter`) で走る設定ファイルの保存。
+/// `config::save` も `write_atomic` 経由なのでディスク flush を伴う。
+///
+/// 実測 6.08ms。`quick_launch_history::record` (18.8ms) と同じ形だが、
+/// **こちらは非同期にしない。** 履歴は次回以降の並び順にしか効かない
+/// カウンタなので落としても実害が無いのに対し、config はユーザーが今
+/// 追加した項目そのもの。書き終わる前にプロセスが落ちれば「登録したのに
+/// 消えた」になる。頻度も「選択のたび」ではなく明示操作のときだけなので、
+/// 6ms を同期で払う方が妥当。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_config_save() {
+    use std::time::Instant;
+    let config = match crate::config::load() {
+        crate::config::LoadOutcome::Loaded(config)
+        | crate::config::LoadOutcome::Created(config) => config,
+        crate::config::LoadOutcome::Failed(_) => return,
+    };
+    // 読み込んだものをそのまま保存し直す (内容は変えない)
+    let _ = crate::config::save(&config);
+    let start = Instant::now();
+    for _ in 0..20 {
+        let _ = crate::config::save(&config);
+    }
+    println!(
+        "config::save {:>8.3} ms/回 (お気に入り登録のたびに UI スレッドで同期実行)",
+        start.elapsed().as_secs_f64() * 1000.0 / 20.0
+    );
+}
