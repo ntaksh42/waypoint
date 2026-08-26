@@ -652,10 +652,41 @@ impl AzureProjectPicker {
         self.priority_suggestion_area_loading = None;
         match result {
             Ok(nodes) => {
-                self.priority_suggestion_area_trees.insert(key, nodes);
+                self.priority_suggestion_area_trees
+                    .insert(key.clone(), nodes);
                 self.priority_suggestion_area_error = None;
+                self.check_recent_activity_areas(&key);
             }
             Err(error) => self.priority_suggestion_area_error = Some(error),
+        }
+    }
+
+    /// Area ツリーを初めて読み込んだ直後、そのプロジェクトの直近アクティビティ
+    /// (アサイン + メンション) に出現した Area Path をデフォルトでチェック済みに
+    /// する (`interest_areas` へ追加する)。ツリーはプロジェクトごとに一度しか
+    /// 取得しないため、ユーザーが手動でチェックを外してもツリーを開き直した
+    /// だけでは再度チェックされ直さない。
+    pub(super) fn check_recent_activity_areas(&mut self, key: &(String, String)) {
+        let paths: Vec<String> = self
+            .priority_suggestions
+            .iter()
+            .find(|entry| {
+                entry.organization.eq_ignore_ascii_case(&key.0)
+                    && entry.project.eq_ignore_ascii_case(&key.1)
+            })
+            .map(|entry| entry.areas.iter().map(|(path, _)| path.clone()).collect())
+            .unwrap_or_default();
+        let Some(project_entry) = self.find_mut(&key.0, &key.1) else {
+            return;
+        };
+        for path in paths {
+            if !project_entry
+                .interest_areas
+                .iter()
+                .any(|area| area == &path)
+            {
+                project_entry.interest_areas.push(path);
+            }
         }
     }
 
