@@ -10,8 +10,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::HSTRING;
 
 use super::{
-    EDIT_HEIGHT, EVERYTHING_MAX_RESULTS, EVERYTHING_REPLY_ID_START, PADDING, RowKind, STATE, State,
-    WM_QUICK_LAUNCH_AZURE_RESULTS,
+    EDIT_HEIGHT, EVERYTHING_MAX_RESULTS, EVERYTHING_REPLY_ID_START, MAX_LIST_RESULTS, PADDING,
+    RowKind, STATE, State, WM_QUICK_LAUNCH_AZURE_RESULTS,
 };
 use crate::config::OpenMode;
 use crate::quick_launch::Entry;
@@ -117,10 +117,17 @@ pub(super) fn update_results(state: &RefCell<State>) {
                     &state.index.ranking,
                 )
                 .into_iter()
+                .take(MAX_LIST_RESULTS)
                 .cloned()
                 .collect()
             } else {
-                state.index.search(&query).into_iter().cloned().collect()
+                state
+                    .index
+                    .search(&query)
+                    .into_iter()
+                    .take(MAX_LIST_RESULTS)
+                    .cloned()
+                    .collect()
             };
             // PR 検索がキャッシュで 0 件だったとき、末尾に明示的なライブ
             // 検索の入口を足す。API 全文検索が無いため、打ち切り期間を
@@ -204,6 +211,7 @@ pub(super) fn start_azure_work_item_query(state: &RefCell<State>, text: &str) {
             .index
             .search_cached_work_items(text)
             .into_iter()
+            .take(MAX_LIST_RESULTS)
             .cloned()
             .collect();
         let trimmed = text.trim();
@@ -337,6 +345,7 @@ pub(super) fn handle_azure_work_item_results(reply_id: u32) {
         state.results = reply
             .candidates
             .into_iter()
+            .take(MAX_LIST_RESULTS)
             .map(|candidate| Entry {
                 name: candidate.name,
                 breadcrumb: candidate.detail,
@@ -452,6 +461,7 @@ pub(super) fn handle_azure_pull_request_results(reply_id: u32) {
         state.results = reply
             .candidates
             .into_iter()
+            .take(MAX_LIST_RESULTS)
             .map(|candidate| Entry {
                 name: candidate.name,
                 breadcrumb: candidate.detail,
