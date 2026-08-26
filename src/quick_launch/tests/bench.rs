@@ -623,3 +623,37 @@ fn bench_index_build_full() {
     let config_ms = start.elapsed().as_secs_f64() * 1000.0;
     println!("refresh_dynamic {dynamic_ms:>8.3} ms  refresh_config_items {config_ms:>8.3} ms");
 }
+
+/// 1 行描くたびに走る `Entry` の複製。`draw_list_item` は借用を解放してから
+/// 描くために結果を clone しており、再描画のたびに行数ぶん走る
+/// (`LBS_OWNERDRAWVARIABLE` なので打鍵ごとの `LB_RESETCONTENT` で全行再描画)。
+///
+/// 結論: 再描画 1 回ぶんで 0.0016ms しかかからないので手を入れない。
+/// この clone は再入 (`RefCell` の借用を解放してから描く) のために
+/// あるので、消すと `quick_launch_reentrancy_test` が守っている性質を
+/// 壊す。コストが無視できる以上、触る理由がない。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_row_entry_clone() {
+    use std::time::Instant;
+    const VISIBLE_ROWS: usize = 24;
+    let index = large_index(2000, 3000, 5000, 500);
+    let results: Vec<Entry> = index
+        .search("project")
+        .into_iter()
+        .take(VISIBLE_ROWS)
+        .cloned()
+        .collect();
+
+    let start = Instant::now();
+    for _ in 0..2000 {
+        // 1 回の再描画ぶん (可視行すべて)
+        for entry in &results {
+            std::hint::black_box(entry.clone());
+        }
+    }
+    println!(
+        "Entry::clone x{VISIBLE_ROWS} (再描画 1 回ぶん) {:>8.4} ms",
+        start.elapsed().as_secs_f64() * 1000.0 / 2000.0
+    );
+}
