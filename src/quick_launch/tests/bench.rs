@@ -748,3 +748,69 @@ fn bench_dynamic_refresh() {
     );
     assert_eq!(menus.all_windows.len(), menus2.all_windows.len());
 }
+
+/// 実機の設定・ブックマーク・履歴・アプリをそのまま読んで検索する。
+/// 合成データのベンチが実運用と乖離していないかの答え合わせ。
+///
+/// 実測 (entries 22 / bookmarks 18 / history 1000 / apps 87 / windows 6):
+/// 1 打鍵あたり 0.014〜0.032ms。表示予算 50ms の 0.03% 程度でしかない。
+///
+/// **合成データのベンチ (候補 5500 件) は実機の 20 倍以上の規模がある。**
+/// あちらで見えた 1〜2ms 級の差は、この規模では 0.02ms 級に縮む。検索の
+/// 最適化はヘッドルーム確保としては意味があるが、実運用のボトルネックは
+/// 検索ではない。効くのは `Index::build` を UI スレッドで何度も呼ばない
+/// こと (91ms / 35ms 対 軽量版 0.001ms) の方。判断を誤らないよう、
+/// 合成ベンチの数字を見るときは必ずこちらと並べること。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_real_config_search() {
+    use std::time::Instant;
+    unsafe {
+        let _ = windows::Win32::System::Com::CoInitializeEx(
+            None,
+            windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
+        );
+    }
+    let config = match crate::config::load() {
+        crate::config::LoadOutcome::Loaded(config)
+        | crate::config::LoadOutcome::Created(config) => config,
+        crate::config::LoadOutcome::Failed(error) => {
+            println!("(実機の config を読めないので skip: {error})");
+            return;
+        }
+    };
+    let dynamic = crate::dynamic::refresh();
+    let index = Index::build(&config, &dynamic);
+    println!(
+        "実機 index: entries={} bookmarks={} history={} apps={} windows={}",
+        index.entries.len(),
+        index.bookmarks.len(),
+        index.history.len(),
+        index.apps.len(),
+        index.windows.len(),
+    );
+
+    for query in ["w", "wa", "way", "waypoint", "src", "co", "zzqqxx"] {
+        for _ in 0..3 {
+            std::hint::black_box(index.search(query));
+        }
+        let start = Instant::now();
+        for _ in 0..500 {
+            std::hint::black_box(index.search(std::hint::black_box(query)));
+        }
+        let hits = index.search(query).len();
+        println!(
+            "  query={query:<10} hits={hits:<5} {:>8.4} ms/iter",
+            start.elapsed().as_secs_f64() * 1000.0 / 500.0
+        );
+    }
+    // 空クエリ (ウィンドウを開いた直後の表示)
+    let start = Instant::now();
+    for _ in 0..500 {
+        std::hint::black_box(index.sections());
+    }
+    println!(
+        "  sections (空クエリ)         {:>8.4} ms/iter",
+        start.elapsed().as_secs_f64() * 1000.0 / 500.0
+    );
+}
