@@ -92,7 +92,7 @@ fn romaji_query_does_not_match_kanji_name() {
 /// (ASCII 経路はバイト単位なので、マルチバイト文字の途中に一致しないこと)。
 #[test]
 fn subsequence_ascii_and_unicode_paths_agree() {
-    use super::super::search::bench_is_subsequence as is_sub;
+    use super::super::scoring::bench_is_subsequence as is_sub;
 
     // ASCII 経路
     assert!(is_sub("project folder", "pjf"));

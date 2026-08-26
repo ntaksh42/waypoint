@@ -60,9 +60,9 @@ fn bench_stages() {
     stage!("is_subsequence x3", {
         let mut n = 0;
         for (name, bread, path) in &lower {
-            if super::super::search::bench_is_subsequence(name, term)
-                || super::super::search::bench_is_subsequence(bread, term)
-                || super::super::search::bench_is_subsequence(path, term)
+            if super::super::scoring::bench_is_subsequence(name, term)
+                || super::super::scoring::bench_is_subsequence(bread, term)
+                || super::super::scoring::bench_is_subsequence(path, term)
             {
                 n += 1;
             }
@@ -81,7 +81,7 @@ fn bench_stages() {
     stage!("full match_score", {
         let mut n = 0;
         for (name, bread, path) in &lower {
-            if super::super::search::bench_match_score(name, bread, Some(path.as_str()), term)
+            if super::super::scoring::bench_match_score(name, bread, Some(path.as_str()), term)
                 .is_some()
             {
                 n += 1;
@@ -99,7 +99,7 @@ fn bench_stages() {
     stage!("full match_score (fuzzy hit)", {
         let mut n = 0;
         for (name, bread, path) in &lower {
-            if super::super::search::bench_match_score(name, bread, Some(path.as_str()), hit)
+            if super::super::scoring::bench_match_score(name, bread, Some(path.as_str()), hit)
                 .is_some()
             {
                 n += 1;
@@ -185,7 +185,7 @@ fn bench_fuzzy_share() {
     for term in ["projectfolder", "pr", "prjctfldr", "project"] {
         let subseq = lower
             .iter()
-            .filter(|n| super::super::search::bench_is_subsequence(n, term))
+            .filter(|n| super::super::scoring::bench_is_subsequence(n, term))
             .count();
         let contains = lower.iter().filter(|n| n.contains(term)).count();
         // サブシーケンス判定だけ
@@ -193,7 +193,7 @@ fn bench_fuzzy_share() {
         for _ in 0..50 {
             let mut n = 0;
             for name in &lower {
-                if super::super::search::bench_is_subsequence(name, term) {
+                if super::super::scoring::bench_is_subsequence(name, term) {
                     n += 1;
                 }
             }
@@ -205,7 +205,7 @@ fn bench_fuzzy_share() {
         for _ in 0..50 {
             let mut n = 0i64;
             for name in &lower {
-                if super::super::search::bench_is_subsequence(name, term)
+                if super::super::scoring::bench_is_subsequence(name, term)
                     && let Some(s) = super::super::FUZZY_MATCHER.fuzzy_match(name, term)
                 {
                     n += s;

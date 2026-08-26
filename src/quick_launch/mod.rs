@@ -9,6 +9,7 @@ use crate::quick_launch_history::Ranking;
 
 mod azure;
 mod index;
+mod scoring;
 mod search;
 #[cfg(test)]
 mod tests;
