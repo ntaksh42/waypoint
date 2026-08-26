@@ -191,3 +191,48 @@ fn refresh_config_items_adds_new_item_and_keeps_apps() {
     assert_eq!(index.apps.len(), 1, "apps が再スキャンされて消えている");
     assert_eq!(index.search("a visual").len(), 1);
 }
+
+/// 軽量版の差し替えはブラウザタブ (`t ` プレフィックスの母集団) を消さない。
+///
+/// `configure` / `configure_dynamic` は差し替え後に `set_browser_tabs` を
+/// 呼び直しているが、`refresh_azure` / `refresh_config_items` は呼んでいない。
+/// これらが触るのは azure* / entries だけで tabs は素通しになる、という
+/// 前提が崩れていないことを確かめる (崩れると `t ` 検索が静かに空になる)。
+#[test]
+fn lightweight_refreshes_keep_browser_tabs() {
+    use crate::browser_tabs::{Browser, Tab};
+
+    let config = config_without_live_scans();
+    let mut index = Index::build(&config, &Menus::default());
+    index.set_browser_tabs(&[(
+        Browser::Chrome,
+        Tab {
+            id: 7,
+            window_id: 1,
+            title: "Rust Programming Language".into(),
+            url: "https://www.rust-lang.org/".into(),
+        },
+    )]);
+    assert_eq!(index.search("t rust").len(), 1, "前提: タブが検索できる");
+
+    index.refresh_azure(&config);
+    assert_eq!(
+        index.search("t rust").len(),
+        1,
+        "refresh_azure でタブが消えた"
+    );
+
+    index.refresh_config_items(&config, &Menus::default());
+    assert_eq!(
+        index.search("t rust").len(),
+        1,
+        "refresh_config_items でタブが消えた"
+    );
+
+    index.refresh_dynamic(&config, &Menus::default());
+    assert_eq!(
+        index.search("t rust").len(),
+        1,
+        "refresh_dynamic でタブが消えた"
+    );
+}
