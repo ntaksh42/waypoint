@@ -577,3 +577,49 @@ fn bench_apps_scan() {
     );
     assert_eq!(apps.len(), again.len());
 }
+
+/// フル `Index::build` の実測。実機のブックマーク・履歴・スタートメニューを
+/// 読むので、起動時と設定リロード時のコストがそのまま出る。
+///
+/// この経路をユーザー操作のたびに通さないことが重要で、そのために
+/// `refresh_dynamic` / `refresh_azure` / `refresh_config_items` がある。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_index_build_full() {
+    use crate::config::Config;
+    use crate::dynamic::Menus;
+    use std::time::Instant;
+    unsafe {
+        let _ = windows::Win32::System::Com::CoInitializeEx(
+            None,
+            windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
+        );
+    }
+    let config = Config::default();
+    let dynamic = Menus::default();
+
+    let start = Instant::now();
+    let index = Index::build(&config, &dynamic);
+    let cold = start.elapsed().as_secs_f64() * 1000.0;
+    let start = Instant::now();
+    let warm_index = Index::build(&config, &dynamic);
+    let warm = start.elapsed().as_secs_f64() * 1000.0;
+
+    println!(
+        "Index::build 1 回目 {cold:>8.2} ms  2 回目 {warm:>8.2} ms  (entries={} bookmarks={} history={} apps={})",
+        index.entries.len(),
+        index.bookmarks.len(),
+        index.history.len(),
+        index.apps.len(),
+    );
+
+    // 軽量版との比較
+    let mut index = warm_index;
+    let start = Instant::now();
+    index.refresh_dynamic(&config, &dynamic);
+    let dynamic_ms = start.elapsed().as_secs_f64() * 1000.0;
+    let start = Instant::now();
+    index.refresh_config_items(&config, &dynamic);
+    let config_ms = start.elapsed().as_secs_f64() * 1000.0;
+    println!("refresh_dynamic {dynamic_ms:>8.3} ms  refresh_config_items {config_ms:>8.3} ms");
+}
