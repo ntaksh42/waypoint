@@ -493,10 +493,8 @@ fn bench_index_rebuild() {
 fn bench_sections_breakdown() {
     use std::time::Instant;
     let index = large_index(2000, 3000, 5000, 500);
-    let total: usize = index.entries.len()
-        + index.bookmarks.len()
-        + index.history.len()
-        + index.apps.len();
+    let total: usize =
+        index.entries.len() + index.bookmarks.len() + index.history.len() + index.apps.len();
     println!("sections が触る候補の総数 = {total}");
 
     // rank_lower 全件
@@ -504,7 +502,12 @@ fn bench_sections_breakdown() {
     for _ in 0..100 {
         let mut acc = 0u64;
         for (e, k) in index.entries.iter().zip(&index.entries_lower) {
-            acc = acc.wrapping_add(index.ranking.rank_lower(e, super::super::search::keys_path(k)).0);
+            acc = acc.wrapping_add(
+                index
+                    .ranking
+                    .rank_lower(e, super::super::search::keys_path(k))
+                    .0,
+            );
         }
         std::hint::black_box(acc);
     }

@@ -4,6 +4,7 @@ mod badge;
 mod dispatch;
 mod draw;
 mod draw_icons;
+mod gdi_cache;
 mod input;
 mod layout;
 mod search;

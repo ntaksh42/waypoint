@@ -2,9 +2,9 @@
 
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreatePen, CreateSolidBrush, DT_CALCRECT, DT_CENTER, DT_END_ELLIPSIS, DT_NOPREFIX,
-    DT_SINGLELINE, DT_VCENTER, DeleteObject, DrawTextW, EndPaint, FillRect, HDC, HFONT,
-    PAINTSTRUCT, PS_SOLID, RoundRect, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
+    BeginPaint, DT_CALCRECT, DT_CENTER, DT_END_ELLIPSIS, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER,
+    DrawTextW, EndPaint, FillRect, HDC, HFONT, PAINTSTRUCT, RoundRect, SelectObject, SetBkMode,
+    SetTextColor, TRANSPARENT,
 };
 use windows::Win32::UI::Controls::{DRAWITEMSTRUCT, ODS_SELECTED};
 
@@ -13,10 +13,11 @@ use super::draw_icons::{
     FaviconFallback, backdrop_tint, draw_azure_icon, draw_command_icon, draw_favicon_icon,
     draw_icon_backdrop, draw_path_icon, draw_window_icon,
 };
+use super::gdi_cache;
 use super::layout::{scale, weekday_label};
 use super::{
-    ACCENT, BACKGROUND, BADGE_WIDTH, EDIT_HEIGHT, ICON_LEFT, PADDING, STATE, SURFACE,
-    SURFACE_HOVER, TEXT_LEFT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY, rgb,
+    ACCENT, BADGE_WIDTH, EDIT_HEIGHT, ICON_LEFT, PADDING, STATE, TEXT_LEFT, TEXT_MUTED,
+    TEXT_PRIMARY, TEXT_SECONDARY,
 };
 use crate::quick_launch::{Action, Entry};
 
@@ -56,7 +57,7 @@ pub(super) fn paint_window(window: HWND) {
                 right: client.right - padding,
                 bottom: padding + edit_height,
             };
-            let surface_pen = CreatePen(PS_SOLID, 1, SURFACE);
+            let surface_pen = gdi_cache::surface_pen();
             let old_pen = SelectObject(hdc, surface_pen.into());
             let old_brush = SelectObject(hdc, surface.into());
             let radius = scale(10, dpi);
@@ -71,7 +72,6 @@ pub(super) fn paint_window(window: HWND) {
             );
             SelectObject(hdc, old_brush);
             SelectObject(hdc, old_pen);
-            let _ = DeleteObject(surface_pen.into());
 
             if let Some(badge) = badge {
                 draw_badge(hdc, badge, search, dpi, detail_font);
@@ -107,10 +107,10 @@ pub(super) unsafe fn draw_badge(
         // バッジ地はカードと同じ低彩度トーンにし、縁取りだけモード色を残す。
         // 塗りつぶし全体を原色にすると検索窓から浮いて見えるため
         // (計画: 検索窓・バッジ周りの調整)。
-        let brush = CreateSolidBrush(backdrop_tint(color));
+        let brush = gdi_cache::brush_for(backdrop_tint(color));
         let radius = height / 2;
         let old_brush = SelectObject(hdc, brush.into());
-        let pen = CreatePen(PS_SOLID, 1, color);
+        let pen = gdi_cache::pen_for(color);
         let old_pen = SelectObject(hdc, pen.into());
         let _ = RoundRect(
             hdc,
@@ -123,8 +123,6 @@ pub(super) unsafe fn draw_badge(
         );
         SelectObject(hdc, old_brush);
         SelectObject(hdc, old_pen);
-        let _ = DeleteObject(brush.into());
-        let _ = DeleteObject(pen.into());
 
         if let Some(font) = detail_font {
             let old_font = SelectObject(hdc, font.into());
@@ -201,10 +199,8 @@ pub(super) unsafe fn draw_everything_flag_badges(
                 right,
                 bottom: search.top + (search.bottom - search.top - height) / 2 + height,
             };
-            let brush = CreateSolidBrush(SURFACE_HOVER);
-            let pen = CreatePen(PS_SOLID, 1, ACCENT);
-            let old_brush = SelectObject(hdc, brush.into());
-            let old_pen = SelectObject(hdc, pen.into());
+            let old_brush = SelectObject(hdc, gdi_cache::surface_hover_brush().into());
+            let old_pen = SelectObject(hdc, gdi_cache::accent_pen().into());
             let radius = height / 2;
             let _ = RoundRect(
                 hdc,
@@ -217,8 +213,6 @@ pub(super) unsafe fn draw_everything_flag_badges(
             );
             SelectObject(hdc, old_brush);
             SelectObject(hdc, old_pen);
-            let _ = DeleteObject(brush.into());
-            let _ = DeleteObject(pen.into());
 
             if let Some(font) = detail_font {
                 let old_font = SelectObject(hdc, font.into());
@@ -259,15 +253,13 @@ pub(super) unsafe fn draw_section_header(
             SelectObject(hdc, old_font);
         }
 
-        let divider = CreateSolidBrush(SURFACE_HOVER);
         let divider_rect = RECT {
             left: rect.left + scale(ICON_LEFT, dpi),
             top: rect.bottom - scale(1, dpi),
             right: rect.right - scale(8, dpi),
             bottom: rect.bottom,
         };
-        FillRect(hdc, &divider_rect, divider);
-        let _ = DeleteObject(divider.into());
+        FillRect(hdc, &divider_rect, gdi_cache::surface_hover_brush());
     }
 }
 
@@ -299,9 +291,7 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
 
     unsafe {
         let selected = draw.itemState.0 & ODS_SELECTED.0 != 0;
-        let background = CreateSolidBrush(BACKGROUND);
-        FillRect(draw.hDC, &draw.rcItem, background);
-        let _ = DeleteObject(background.into());
+        FillRect(draw.hDC, &draw.rcItem, gdi_cache::background_brush());
 
         if let super::RowKind::Header(label) = row {
             draw_section_header(draw.hDC, label, draw.rcItem, dpi, detail_font);
@@ -333,11 +323,8 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
             };
             // 枠線を地の SURFACE_HOVER より一段明るくし、選択カードに
             // 「押せる」輪郭を持たせる (計画: 選択行の演出強化)。
-            let card_pen_color = rgb(58, 90, 110);
-            let card_brush = CreateSolidBrush(SURFACE_HOVER);
-            let card_pen = CreatePen(PS_SOLID, 1, card_pen_color);
-            let old_brush = SelectObject(draw.hDC, card_brush.into());
-            let old_pen = SelectObject(draw.hDC, card_pen.into());
+            let old_brush = SelectObject(draw.hDC, gdi_cache::surface_hover_brush().into());
+            let old_pen = SelectObject(draw.hDC, gdi_cache::card_pen().into());
             let radius = scale(8, dpi);
             let _ = RoundRect(
                 draw.hDC,
@@ -350,10 +337,8 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
             );
             SelectObject(draw.hDC, old_brush);
             SelectObject(draw.hDC, old_pen);
-            let _ = DeleteObject(card_brush.into());
-            let _ = DeleteObject(card_pen.into());
 
-            let accent = CreateSolidBrush(accent_color);
+            let accent = gdi_cache::brush_for(accent_color);
             let accent_rect = RECT {
                 left: card.left,
                 top: card.top + scale(6, dpi),
@@ -361,7 +346,6 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
                 bottom: card.bottom - scale(6, dpi),
             };
             FillRect(draw.hDC, &accent_rect, accent);
-            let _ = DeleteObject(accent.into());
         }
 
         if let Some(kind) = azure_icon_kind(badge, &entry.path) {
