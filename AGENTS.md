@@ -20,6 +20,45 @@ The goal is to be the most capable general launcher on Windows — broader than 
 2. **Follow the scope table, not scope minimalism** — see the scope rule below. Breadth of capability is now a stated goal, not something to resist; the table exists so additions are deliberate and documented, not to keep the feature set small.
 3. **Keyboard-complete operation** — every frequent action reachable without the mouse.
 
+### どこが遅いか (実測値)
+
+最適化に手を付ける前にこれを読むこと。**ボトルネックは検索ではない。**
+
+ベンチは `cargo test --release --lib -- --ignored --nocapture bench_` で走る
+(`src/quick_launch/tests/bench_*.rs`)。合成データ (候補 5500 件) と実機データ
+(候補 133 件 + 履歴 1000 件) の両方があり、**合成側は実機の 20 倍以上の規模**な
+ので、合成の数字だけを見て判断しないこと。
+
+| 経路 | 実測 | 備考 |
+|---|---|---|
+| 検索 1 打鍵 (実機データ) | 0.014〜0.032 ms | 表示予算 50ms の 0.03%。十分速い |
+| 表示直後の一覧 (`sections`) | 0.157 ms | 予算の 0.31% |
+| `Index::build` (フル) | 91 ms / 35 ms | **UI スレッドで呼ばないこと** |
+| `Index::refresh_*` (軽量版) | 0.001 ms | 4 桁以上の差 |
+| `menu::build` (アイコン未キャッシュ) | 90 ms | キャッシュ温なら 0.81 ms |
+| `apps::scan` | 30 ms | 9 割が `.lnk` の COM 実体解決 |
+| `dynamic::refresh` | 44 ms | バックグラウンドスレッドなので可 |
+| 使用履歴の保存 | 18.8 ms | `record_async` で UI スレッド外へ |
+| `config::save` | 6 ms | 同期のまま (失うと実害があるため) |
+
+効く改善は「速くする」より **「UI スレッドで何度も走らせない」**。実際に効いた例:
+
+- Azure 同期の完了通知・お気に入り登録がフル `Index::build` を呼んでいた
+  → `refresh_azure` / `refresh_config_items` へ (35ms → 0.001ms)
+- 候補を選んだ直後の履歴保存が同期だった
+  → `record_async` へ (15.1ms → 0.025ms)
+- `WM_SETTINGCHANGE` を lParam を見ずに全部処理していた
+  → `"ImmersiveColorSet"` に限定 (無関係な設定変更ごとの 15ms を除去)
+
+**試して駄目だったもの** (繰り返さないこと):
+
+| 手 | 結果 |
+|---|---|
+| `apps::scan` で COM オブジェクトを使い回す / バッファ縮小 | 差が出ない。ボトルネックは `IPersistFile::Load` のファイル I/O |
+| `SLGP_RAWPATH` で `.lnk` の解決を省く | 環境変数が展開されず、正しいアプリまで落ちる (87 件 → 45 件) |
+| `rank_matches` を部分ソート (`select_nth_unstable`) に | 誤差。支配的なのはソートではなく Vec 確保 |
+| アイコンキャッシュのキー生成で確保を使い回す | 0.003ms → 0.001ms。複雑さに見合わない |
+
 ## Commands
 
 ```powershell
