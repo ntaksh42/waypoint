@@ -469,6 +469,17 @@ pub fn text_extent_cache_len() -> usize {
 }
 
 #[cfg(test)]
+pub fn text_extent_for_bench(text: &str) -> (i32, i32) {
+    let size = text_extent(text);
+    (size.cx, size.cy)
+}
+
+#[cfg(test)]
+pub fn clear_for_bench() {
+    clear();
+}
+
+#[cfg(test)]
 mod extent_cache_tests {
     use super::{clear, reset_font, text_extent, text_extent_cache_len};
 
@@ -513,15 +524,4 @@ mod extent_cache_tests {
         reset_font();
         assert_eq!(text_extent_cache_len(), 0, "フォント変更で捨てていない");
     }
-}
-
-#[cfg(test)]
-pub fn text_extent_for_bench(text: &str) -> (i32, i32) {
-    let size = text_extent(text);
-    (size.cx, size.cy)
-}
-
-#[cfg(test)]
-pub fn clear_for_bench() {
-    clear();
 }

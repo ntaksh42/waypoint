@@ -547,3 +547,67 @@ fn bench_menu_measure() {
     );
     println!("  実装 (キャッシュ付き): 1 回目 {cold:>8.4} ms  /  2 回目以降 {warm:>8.4} ms");
 }
+
+/// メニューの `WM_DRAWITEM` で項目ごとに走るブラシ生成・破棄。
+/// `fill_background` が 1 項目につき `CreateSolidBrush` → `FillRect` →
+/// `DeleteObject` を回す。実機は 48 項目。
+///
+/// 結論: 48 項目で 0.056ms、色ごとに使い回しても 0.036ms にしかならない
+/// (差 0.02ms)。`CreateSolidBrush` は `GetDC` (同じ 48 回で 0.73ms、
+/// `bench_menu_measure` 参照) より 1 桁以上安い。「GDI オブジェクトの
+/// 生成・破棄は重い」と一括りにせず、種類ごとに測ること。
+/// この差では使い回しの複雑さに見合わないので手を入れない。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_menu_fill_brush() {
+    use std::time::Instant;
+    use windows::Win32::Foundation::{COLORREF, RECT};
+    use windows::Win32::Graphics::Gdi::{
+        CreateCompatibleDC, CreateSolidBrush, DeleteDC, DeleteObject, FillRect, GetDC, HGDIOBJ,
+        ReleaseDC,
+    };
+
+    let rect = RECT {
+        left: 0,
+        top: 0,
+        right: 240,
+        bottom: 24,
+    };
+    // 実際の描画先に近いメモリ DC で測る
+    unsafe {
+        let screen = GetDC(None);
+        let hdc = CreateCompatibleDC(Some(screen));
+
+        // 現行: 項目ごとに作って捨てる
+        let start = Instant::now();
+        for _ in 0..50 {
+            for i in 0..48 {
+                let color = COLORREF(if i % 8 == 0 { 0x0041_4141 } else { 0x0020_2020 });
+                let brush = CreateSolidBrush(color);
+                FillRect(hdc, &rect, brush);
+                let _ = DeleteObject(HGDIOBJ(brush.0));
+            }
+        }
+        let per_item = start.elapsed().as_secs_f64() * 1000.0 / 50.0;
+
+        // 比較: 色ごとに 1 本だけ作って使い回す (2 色)
+        let normal = CreateSolidBrush(COLORREF(0x0020_2020));
+        let hot = CreateSolidBrush(COLORREF(0x0041_4141));
+        let start = Instant::now();
+        for _ in 0..50 {
+            for i in 0..48 {
+                let brush = if i % 8 == 0 { hot } else { normal };
+                FillRect(hdc, &rect, brush);
+            }
+        }
+        let cached = start.elapsed().as_secs_f64() * 1000.0 / 50.0;
+        let _ = DeleteObject(HGDIOBJ(normal.0));
+        let _ = DeleteObject(HGDIOBJ(hot.0));
+
+        let _ = DeleteDC(hdc);
+        ReleaseDC(None, screen);
+        println!(
+            "48 項目の地塗り: 項目ごとに生成 {per_item:>8.4} ms  /  色ごとに使い回し {cached:>8.4} ms"
+        );
+    }
+}
