@@ -24,6 +24,31 @@ pub(crate) struct LowerKeys {
     path: String,
 }
 
+/// スコアリングが見る、小文字化済みのフィールド一式。
+///
+/// `path` は「マッチ対象に含めるか」(`search_paths`) を反映した `Option`、
+/// `path_lower` は常に実体。使用履歴の順位付け (`Ranking::rank_lower`) が
+/// パスの小文字化を要求するため、マッチ対象でなくても値自体は必要になる。
+#[derive(Debug, Clone, Copy)]
+struct Fields<'a> {
+    name: &'a str,
+    breadcrumb: &'a str,
+    path: Option<&'a str>,
+    path_lower: &'a str,
+}
+
+impl<'a> Fields<'a> {
+    /// 事前計算済みの `LowerKeys` から組み立てる。
+    fn from_keys(keys: &'a LowerKeys, search_paths: bool) -> Self {
+        Self {
+            name: &keys.name,
+            breadcrumb: &keys.breadcrumb,
+            path: search_paths.then_some(keys.path.as_str()),
+            path_lower: &keys.path,
+        }
+    }
+}
+
 impl LowerKeys {
     pub(crate) fn new(entry: &Entry) -> Self {
         Self {
@@ -210,6 +235,33 @@ impl Index {
     }
 }
 
+/// スコアリングで fuzzy (tier6〜8) を評価するかどうか。
+///
+/// fuzzy は Skim の DP で、候補文字列ぶんの `Vec<char>` 確保を伴う。実測で
+/// 候補 2000 件に対し 2.3ms と、安価なティア判定 (0.1ms) の 20 倍以上かかる。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Fuzzy {
+    Include,
+    Skip,
+}
+
+/// 安価なティア (0〜5) の一致がこの件数に達したら、fuzzy を評価しない。
+///
+/// ソートキーの第一要素は tier で、fuzzy は tier6〜8 と必ず tier0〜5 より
+/// 下位に並ぶ。表示側 (`quick_launch_window::MAX_LIST_RESULTS` = 24) が
+/// 使うのは上位 24 件だけなので、tier5 以下で 24 件揃っていれば fuzzy の
+/// 結果は一覧に載り得ず、計算しても捨てるだけになる。
+///
+/// 表示上限に直結させず余裕を持たせてあるのは、表示側を増やしたときに
+/// 静かに候補が減らないようにするため。
+const FUZZY_SKIP_THRESHOLD: usize = 64;
+
+/// 候補 1 件のスコア (検索一致の質、Fuzzy スコア、使用履歴)。
+type Score = (u8, i64, (u64, u64));
+
+/// スコア付きの一致。`rank_matches` へ渡す前の中間表現。
+type ScoredMatch<'a> = (Score, usize, &'a Entry);
+
 /// 検索一致の質、Fuzzy スコア、使用履歴、元の順序と候補本体。
 type SearchMatch<'a> = (u8, i64, (u64, u64), usize, &'a Entry);
 
@@ -225,22 +277,17 @@ pub(crate) fn search_entries<'a>(
             .into_iter()
             .enumerate()
             .filter_map(|(order, entry)| {
-                let name = entry.name.to_lowercase();
-                let breadcrumb = entry.breadcrumb.to_lowercase();
                 // ranking.rank も path の小文字化を要求するため、search_paths に
                 // 関わらず 1 回だけ計算して使い回す (rank 側で to_lowercase を
                 // やり直すと、事前計算キャッシュを通らないこの経路のコストが
                 // さらに増えてしまう)。
-                let path_lower = entry.path.to_lowercase();
-                let path = search_paths.then_some(path_lower.as_str());
+                let keys = LowerKeys::new(entry);
                 score_entry(
                     entry,
-                    &name,
-                    &breadcrumb,
-                    path,
-                    &path_lower,
+                    Fields::from_keys(&keys, search_paths),
                     &terms,
                     ranking,
+                    Fuzzy::Include,
                 )
                 .map(|score| (score, order, entry))
             }),
@@ -274,47 +321,63 @@ pub(crate) fn search_entries_cached_multi<'a>(
     ranking: &Ranking,
 ) -> Vec<&'a Entry> {
     let terms = lower_terms(query);
-    let mut order = 0usize;
-    let mut scored = Vec::new();
-    for &(entries, lower_keys) in sources {
-        if entries.len() == lower_keys.len() {
-            for (entry, keys) in entries.iter().zip(lower_keys) {
-                let path = search_paths.then_some(keys.path.as_str());
-                if let Some(score) = score_entry(
-                    entry,
-                    &keys.name,
-                    &keys.breadcrumb,
-                    path,
-                    &keys.path,
-                    &terms,
-                    ranking,
-                ) {
-                    scored.push((score, order, entry));
-                }
-                order += 1;
-            }
-        } else {
-            for entry in entries {
-                let name = entry.name.to_lowercase();
-                let breadcrumb = entry.breadcrumb.to_lowercase();
-                let path_lower = entry.path.to_lowercase();
-                let path = search_paths.then_some(path_lower.as_str());
-                if let Some(score) = score_entry(
-                    entry,
-                    &name,
-                    &breadcrumb,
-                    path,
-                    &path_lower,
-                    &terms,
-                    ranking,
-                ) {
-                    scored.push((score, order, entry));
-                }
-                order += 1;
-            }
-        }
+    // fuzzy (tier6〜8) は Skim の DP で、候補文字列ぶんの `Vec<char>` 確保を
+    // 伴う。実測で候補 2000 件に対し 2.3ms と、安価なティア (0〜5) の判定
+    // (0.4ms) の 5 倍以上かかる。
+    //
+    // 一方でソートキーの第一要素は tier なので、tier5 以下で表示ぶん
+    // (`FUZZY_SKIP_THRESHOLD`) が埋まれば fuzzy の結果は一覧に載り得ない。
+    // そこで 1 巡目は fuzzy を飛ばし、埋まったらそのまま返す。埋まらなければ
+    // fuzzy 込みで組み直す。
+    //
+    // 組み直しでは tier0〜5 の判定をやり直すことになる。外れた候補だけを
+    // 控えて 2 巡目へ回す形も試したが、控えるための `Vec` のコストが
+    // 再判定の節約を上回り速くならなかった (実測: `zzqqxx` でどちらも
+    // 約 1.18ms)。単純な方を採る。
+    let mut scored = scan_sources(sources, &terms, search_paths, ranking, Fuzzy::Skip);
+    if scored.len() < FUZZY_SKIP_THRESHOLD {
+        scored = scan_sources(sources, &terms, search_paths, ranking, Fuzzy::Include);
     }
     rank_matches(scored.into_iter())
+}
+
+/// `sources` を順に走査してスコア付きの一致を集める。`order` はソースを
+/// またいで通し番号にし、ソース内の元の並びとソースの列挙順を同点時の
+/// 並び順として保つ。
+fn scan_sources<'a>(
+    sources: &[(&'a [Entry], &[LowerKeys])],
+    terms: &[String],
+    search_paths: bool,
+    ranking: &Ranking,
+    fuzzy: Fuzzy,
+) -> Vec<ScoredMatch<'a>> {
+    let mut scored = Vec::new();
+    let mut order = 0usize;
+    for &(entries, lower_keys) in sources {
+        // `entries.len() != lower_keys.len()` のときは都度計算にフォールバック
+        // する (`search_entries_cached` と同じ規約)。
+        let cached = entries.len() == lower_keys.len();
+        for (position, entry) in entries.iter().enumerate() {
+            let owned;
+            let keys = if cached {
+                &lower_keys[position]
+            } else {
+                owned = LowerKeys::new(entry);
+                &owned
+            };
+            if let Some(score) = score_entry(
+                entry,
+                Fields::from_keys(keys, search_paths),
+                terms,
+                ranking,
+                fuzzy,
+            ) {
+                scored.push((score, order, entry));
+            }
+            order += 1;
+        }
+    }
+    scored
 }
 
 /// `az pr` / `az pipeline` 等、ステータスでフィルタしてから検索する経路向け。
@@ -333,15 +396,12 @@ pub(crate) fn search_indexed<'a>(
             .into_iter()
             .enumerate()
             .filter_map(|(order, (entry, keys))| {
-                let path = search_paths.then_some(keys.path.as_str());
                 score_entry(
                     entry,
-                    &keys.name,
-                    &keys.breadcrumb,
-                    path,
-                    &keys.path,
+                    Fields::from_keys(keys, search_paths),
                     &terms,
                     ranking,
+                    Fuzzy::Include,
                 )
                 .map(|score| (score, order, entry))
             }),
@@ -360,20 +420,27 @@ fn lower_terms(query: &str) -> Vec<String> {
 /// ここで `entry.path.to_lowercase()` を再計算しないようにする。
 fn score_entry(
     entry: &Entry,
-    name: &str,
-    breadcrumb: &str,
-    path: Option<&str>,
-    path_lower: &str,
+    fields: Fields<'_>,
     terms: &[String],
     ranking: &Ranking,
-) -> Option<(u8, i64, (u64, u64))> {
+    fuzzy: Fuzzy,
+) -> Option<Score> {
+    let Fields {
+        name,
+        breadcrumb,
+        path,
+        path_lower,
+    } = fields;
     // 中間 Vec を作らず、全語一致を要求しつつ一番弱い一致へ畳み込む
     // (`Option<Vec<_>>` の collect は語ごとに match_score を呼ぶのは同じだが、
     // クエリのたびに毎候補でヒープ確保が走っていた。単語 1 個の検索が
     // 最頻出のため、そのケースの割り当てを消す効果が大きい)。
     let mut result: Option<(u8, i64)> = None;
     for term in terms {
-        let score = match_score(name, breadcrumb, path, term)?;
+        let score = match fuzzy {
+            Fuzzy::Include => match_score(name, breadcrumb, path, term)?,
+            Fuzzy::Skip => match_score_cheap(name, breadcrumb, path, term)?,
+        };
         result = Some(match result {
             Some(acc) => std::cmp::max_by_key(acc, score, |(tier, fuzzy_score)| {
                 (*tier, Reverse(*fuzzy_score))
@@ -419,6 +486,22 @@ pub(crate) fn dedup_by_path(entries: Vec<Entry>) -> Vec<Entry> {
 }
 
 fn match_score(name: &str, breadcrumb: &str, path: Option<&str>, term: &str) -> Option<(u8, i64)> {
+    match_score_cheap(name, breadcrumb, path, term)
+        .or_else(|| match_score_fuzzy(name, breadcrumb, path, term))
+}
+
+/// tier0〜5 (完全一致・前方一致・境界一致・部分一致・breadcrumb・path) と
+/// tier9 (ローマ字) だけを見る、DP を伴わない安価な判定。
+///
+/// tier6〜8 の fuzzy より上位のティアはここで全て決まる。fuzzy を飛ばして
+/// よいか判定するため (`fuzzy_needed`)、fuzzy 抜きで単独に呼べるよう
+/// 分離してある。
+fn match_score_cheap(
+    name: &str,
+    breadcrumb: &str,
+    path: Option<&str>,
+    term: &str,
+) -> Option<(u8, i64)> {
     if name == term {
         Some((0, 0))
     } else if name.starts_with(term) {
@@ -432,13 +515,27 @@ fn match_score(name: &str, breadcrumb: &str, path: Option<&str>, term: &str) -> 
         Some((4, 0))
     } else if path.is_some_and(|path| path.contains(term)) {
         Some((5, 0))
-    // fuzzy_match は候補文字列ぶんの Vec<char> 確保を伴う DP なので、term の
-    // 各文字が順序を保って含まれているか (サブシーケンス) を先に O(n) で
-    // 見て、成立しない候補は呼び出しごと避ける。fuzzy_matcher 内部の
-    // cheap_matches も同じ判定をするが、そちらは choice を Vec<char> 化して
-    // からでないと判定できない。name/breadcrumb/path は候補・語ともに
-    // 既に小文字化済みなので大小無視のケース分けは不要。
-    } else if is_subsequence(name, term) {
+    } else {
+        None
+    }
+}
+
+/// tier6〜8 (fuzzy) と tier9 (ローマ字)。`match_score_cheap` が `None` を
+/// 返した候補にだけ意味がある。
+///
+/// fuzzy_match は候補文字列ぶんの `Vec<char>` 確保を伴う DP なので、term の
+/// 各文字が順序を保って含まれているか (サブシーケンス) を先に O(n) で
+/// 見て、成立しない候補は呼び出しごと避ける。fuzzy_matcher 内部の
+/// cheap_matches も同じ判定をするが、そちらは choice を `Vec<char>` 化して
+/// からでないと判定できない。name/breadcrumb/path は候補・語ともに
+/// 既に小文字化済みなので大小無視のケース分けは不要。
+fn match_score_fuzzy(
+    name: &str,
+    breadcrumb: &str,
+    path: Option<&str>,
+    term: &str,
+) -> Option<(u8, i64)> {
+    if is_subsequence(name, term) {
         FUZZY_MATCHER
             .fuzzy_match(name, term)
             .map(|score| (6, score))
@@ -512,4 +609,36 @@ pub(crate) fn bench_match_score(
     term: &str,
 ) -> Option<(u8, i64)> {
     match_score(name, breadcrumb, path, term)
+}
+
+#[cfg(test)]
+pub(crate) fn bench_score_cheap(
+    entry: &Entry,
+    keys: &LowerKeys,
+    search_paths: bool,
+    terms: &[String],
+    ranking: &Ranking,
+) -> Option<(u8, i64, (u64, u64))> {
+    score_entry(
+        entry,
+        Fields::from_keys(keys, search_paths),
+        terms,
+        ranking,
+        Fuzzy::Skip,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn bench_cached_multi<'a>(
+    sources: &[(&'a [Entry], &[LowerKeys])],
+    query: &str,
+    search_paths: bool,
+    ranking: &Ranking,
+) -> Vec<&'a Entry> {
+    search_entries_cached_multi(sources, query, search_paths, ranking)
+}
+
+#[cfg(test)]
+pub(crate) fn fuzzy_skip_threshold() -> usize {
+    FUZZY_SKIP_THRESHOLD
 }
