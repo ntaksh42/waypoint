@@ -64,6 +64,10 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 winresource = "0.1"
 
 [profile.release]
-opt-level = "z"
+# 速度優先。既定の "z" (サイズ優先) では Quick Launch の検索が体感で遅くなる。
+# 実測 (候補 5500 件、"projectfolder" を 13 打鍵): "z" 22.5ms → 3 で 14.7ms。
+# 引き換えに exe が 3.3MB → 4.5MB になるが、perUser MSI で配る常駐アプリ
+# なので 1.2MB の増加より表示遅延 50ms (AGENTS.md の最優先事項) を採る。
+opt-level = 3
 lto = true
 strip = true
