@@ -814,3 +814,41 @@ fn bench_real_config_search() {
         start.elapsed().as_secs_f64() * 1000.0 / 500.0
     );
 }
+
+/// ホットキーを押してから一覧が出るまでに走る計算部分。
+///
+/// Win32 のウィンドウ生成・表示は測れないので、`show()` が同期で誘発する
+/// 計算 (`SetWindowTextW("")` → `EN_CHANGE` → `update_results` →
+/// `sections()`) を実機データで測る。表示予算 50ms に対する余裕を見る。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_show_path_compute() {
+    use std::time::Instant;
+    unsafe {
+        let _ = windows::Win32::System::Com::CoInitializeEx(
+            None,
+            windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
+        );
+    }
+    let config = match crate::config::load() {
+        crate::config::LoadOutcome::Loaded(config)
+        | crate::config::LoadOutcome::Created(config) => config,
+        crate::config::LoadOutcome::Failed(_) => return,
+    };
+    let dynamic = crate::dynamic::refresh();
+    let index = Index::build(&config, &dynamic);
+
+    // 表示直後の一覧 = 空クエリの sections
+    for _ in 0..3 {
+        std::hint::black_box(index.sections());
+    }
+    let start = Instant::now();
+    for _ in 0..500 {
+        std::hint::black_box(index.sections());
+    }
+    let sections = start.elapsed().as_secs_f64() * 1000.0 / 500.0;
+    println!(
+        "表示直後の一覧 (sections) {sections:>8.4} ms  — 表示予算 50ms に対し {:.2}%",
+        sections / 50.0 * 100.0
+    );
+}
