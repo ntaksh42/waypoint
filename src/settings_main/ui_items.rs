@@ -85,7 +85,13 @@ impl SettingsApp {
                 self.show_menu_tree(ui);
             });
         egui::CentralPanel::default().show(root, |ui| {
+            // `horizontal` は中身の自然な高さに縮む。パネルの残り高さを
+            // 明示しないと、一覧が数行ぶんで打ち切られ、下に使われない
+            // 余白が残ったまま項目が見切れる (ScrollArea の
+            // `auto_shrink` では直らない。制約はこの外側で決まるため)。
+            let body_height = ui.available_height();
             ui.horizontal(|ui| {
+                ui.set_height(body_height);
                 let selected = !self.selected_items.is_empty();
                 ui.vertical(|ui| {
                     if ui
@@ -113,9 +119,15 @@ impl SettingsApp {
                 ui.vertical(|ui| {
                     ui.set_width(ui.available_width());
                     let rows = self.current_items().cloned().unwrap_or_default();
+                    // 下の説明文ぶんを先に確保してから、残りを一覧へ回す。
+                    // 引かないと枠が説明文を押し出して見切れる。
+                    let hint_height = ui.text_style_height(&egui::TextStyle::Body)
+                        + ui.spacing().item_spacing.y * 2.0;
+                    let list_height = (body_height - hint_height).max(80.0);
                     egui::Frame::group(ui.style()).show(ui, |ui| {
                         ui.set_min_width(ui.available_width());
                         egui::ScrollArea::both()
+                            .max_height(list_height)
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
                                 self.show_item_rows(ui, &rows);
