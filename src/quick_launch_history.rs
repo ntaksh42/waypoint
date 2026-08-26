@@ -85,11 +85,36 @@ fn split_key(key: &str) -> Option<(&str, &str)> {
     key.split_once('|')
 }
 
-/// 選択を記録する。表示経路とは別に、選んだ後の一手なので同期 I/O で構わない。
-pub fn record(entry: &Entry) {
+/// 選択をバックグラウンドスレッドで記録する。
+///
+/// 記録は次回以降の並び順にしか影響しないので、書き終わるのを待つ理由が
+/// 無い。待つと保存の `REPLACEFILE_WRITE_THROUGH` によるディスク flush
+/// (実測 18.8ms) がそのまま「選んでから実際にフォルダ・アプリが開くまで」の
+/// 遅延になる (読み込みは 0.049ms で誤差)。
+///
+/// スレッドは投げっぱなしにする。書き込みが失敗しても次回の記録で
+/// 上書きされるだけなので、待って確認する意味が無い。プロセスが直後に
+/// 終了した場合は最後の 1 件を落とすが、頻度ランキングの 1 カウントなので
+/// 実害が無い。
+///
+/// 保存は read-modify-write なので、書き込み中に次の記録が始まると
+/// 片方のカウント +1 が失われ得る。ただし選択のたびに Quick Launch は
+/// 閉じるため、次の記録にはホットキー → 入力 → Enter が要る。書き込みは
+/// 20ms 弱で終わるので現実的には競合しない。競合しても失うのは 1 カウント
+/// だけで、ファイルが壊れることは無い (`write_atomic` が temp → replace で
+/// 差し替えるため、途中状態のファイルは見えない)。ロックを導入するほどの
+/// 実害が無いので、この単純さを採る。
+pub fn record_async(entry: &Entry) {
+    // Entry は呼び出し元スレッドが所有するので、キーだけ取り出して渡す
     let Some(key) = key_for(entry) else {
         return;
     };
+    std::thread::spawn(move || record_key(key));
+}
+
+/// キー 1 件ぶんの使用回数と最終選択時刻を更新して保存する。
+/// 呼び出し元スレッドで同期に I/O する。
+fn record_key(key: String) {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs());
@@ -102,6 +127,14 @@ pub fn record(entry: &Entry) {
     record.count += 1;
     record.last_used = now;
     let _ = save(&history);
+}
+
+/// ベンチ用。`record_async` の同期版 (スレッドを挟まず測るため)。
+#[cfg(test)]
+pub fn record_blocking(entry: &Entry) {
+    if let Some(key) = key_for(entry) {
+        record_key(key);
+    }
 }
 
 /// 使用頻度・最終選択時刻の順位。小さいほど優先してソート先頭に出す。
@@ -181,5 +214,22 @@ fn normalize_kind(kind: &str) -> Option<&'static str> {
         "default" => Some("default"),
         "app" => Some("app"),
         _ => None,
+    }
+}
+
+/// ベンチ用。`record` の内訳を測るために load / save を個別に呼ぶ。
+#[cfg(test)]
+pub mod bench_parts {
+    use super::*;
+
+    pub fn load_len() -> usize {
+        load().entries.len()
+    }
+
+    /// 読み込んだ内容をそのまま保存し直す (更新は挟まない)。
+    pub fn save_roundtrip() -> usize {
+        let history = load();
+        let _ = save(&history);
+        history.entries.len()
     }
 }

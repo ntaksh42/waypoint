@@ -852,3 +852,102 @@ fn bench_show_path_compute() {
         sections / 50.0 * 100.0
     );
 }
+
+/// 候補を選んだ直後に走る使用履歴の記録 (`quick_launch_history::record`)。
+///
+/// `WM_QUICK_LAUNCH_EXECUTE` の中で、実際にフォルダやアプリを開く**前**に
+/// 同期で呼ばれる。JSON 全体の読み込み → 更新 → 原子的保存 (temp→replace) を
+/// 行うため、ここが遅いとユーザーの体感 (選んでから開くまで) に直接乗る。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_history_record() {
+    use std::time::Instant;
+    let entry = Entry {
+        name: "Waypoint".into(),
+        breadcrumb: "Projects".into(),
+        path: r"E:\waypoint".into(),
+        action: Action::OpenFolder(crate::config::OpenMode::NewWindow),
+        branch: None,
+    };
+    // 実機の履歴ファイルをそのまま使う (件数がコストに効く)
+    for _ in 0..3 {
+        crate::quick_launch_history::record_blocking(&entry);
+    }
+    let start = Instant::now();
+    for _ in 0..20 {
+        crate::quick_launch_history::record_blocking(&entry);
+    }
+    println!(
+        "quick_launch_history::record {:>8.3} ms/回 (選択のたびに UI スレッドで同期実行)",
+        start.elapsed().as_secs_f64() * 1000.0 / 20.0
+    );
+}
+
+/// `record` の内訳。load / update / save のどこに 15ms が乗っているか。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_history_record_breakdown() {
+    use crate::quick_launch_history::bench_parts;
+    use std::time::Instant;
+
+    let entry = Entry {
+        name: "Waypoint".into(),
+        breadcrumb: "Projects".into(),
+        path: r"E:\waypoint".into(),
+        action: Action::OpenFolder(crate::config::OpenMode::NewWindow),
+        branch: None,
+    };
+    macro_rules! part {
+        ($label:expr, $body:expr) => {{
+            for _ in 0..3 {
+                std::hint::black_box($body);
+            }
+            let start = Instant::now();
+            for _ in 0..20 {
+                std::hint::black_box($body);
+            }
+            println!(
+                "{:<26} {:>8.3} ms",
+                $label,
+                start.elapsed().as_secs_f64() * 1000.0 / 20.0
+            );
+        }};
+    }
+    part!("load (JSON 読み込み)", bench_parts::load_len());
+    part!("save (原子的保存)", bench_parts::save_roundtrip());
+    part!("record 全体", {
+        crate::quick_launch_history::record_blocking(&entry);
+        0
+    });
+}
+
+/// `record_async` がバックグラウンドスレッドでも確実に書き込むかの確認。
+/// 実機の履歴ファイルを更新するので、ベンチ扱い (`#[ignore]`) にしてある。
+#[test]
+#[ignore = "実機の履歴を更新するため手動実行"]
+fn bench_record_async_persists() {
+    use std::time::Instant;
+    let entry = Entry {
+        name: "Waypoint".into(),
+        breadcrumb: "Projects".into(),
+        path: r"E:\waypoint".into(),
+        action: Action::OpenFolder(crate::config::OpenMode::NewWindow),
+        branch: None,
+    };
+    // 呼び出し側が待たされないことを見る (スレッド生成のみ)
+    let start = Instant::now();
+    crate::quick_launch_history::record_async(&entry);
+    let call = start.elapsed().as_secs_f64() * 1000.0;
+    println!("record_async の呼び出し側 {call:>8.4} ms (書き込みは待たない)");
+
+    // 書き込み完了を待ってから結果を確認する
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let ranking = crate::quick_launch_history::Ranking::load();
+    let (count_rank, _) = ranking.rank_lower(&entry, &entry.path.to_lowercase());
+    assert_ne!(
+        count_rank,
+        u64::MAX,
+        "record_async の書き込みが履歴に反映されていない"
+    );
+    println!("書き込み後の count = {}", u64::MAX - count_rank);
+}
