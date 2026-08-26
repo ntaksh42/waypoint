@@ -389,3 +389,67 @@ fn bench_config_save() {
         start.elapsed().as_secs_f64() * 1000.0 / 20.0
     );
 }
+
+/// 起動シーケンスの内訳。`--selftest` は完了まで実測 1035ms かかっており、
+/// `Index::build` (91ms) だけでは説明がつかない。どこで時間を使っているか。
+///
+/// トレイアイコンは設定読込とホットキー登録を終えてから出す設計なので
+/// (`main.rs` のコメント参照)、ここが長いとアイコンが出るまで待たされる。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_startup_parts() {
+    use std::time::Instant;
+    unsafe {
+        let _ = windows::Win32::System::Com::CoInitializeEx(
+            None,
+            windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
+        );
+    }
+    macro_rules! part {
+        ($label:expr, $body:expr) => {{
+            let start = Instant::now();
+            let value = $body;
+            println!(
+                "{:<34} {:>8.2} ms",
+                $label,
+                start.elapsed().as_secs_f64() * 1000.0
+            );
+            value
+        }};
+    }
+    // 初回 (キャッシュが温まっていない状態) を見たいので 1 回ずつ
+    let config = part!(
+        "config::load",
+        match crate::config::load() {
+            crate::config::LoadOutcome::Loaded(c) | crate::config::LoadOutcome::Created(c) => c,
+            crate::config::LoadOutcome::Failed(_) => return,
+        }
+    );
+    let dynamic = part!("dynamic::refresh", crate::dynamic::refresh());
+    part!("menu::build (1 回目)", {
+        let _ = crate::menu::build(&config, &dynamic);
+    });
+    // アイコンキャッシュが温まった状態。差が大きければアイコン解決が支配的
+    part!("menu::build (2 回目)", {
+        let _ = crate::menu::build(&config, &dynamic);
+    });
+    part!("icon::clear_cache 後の menu::build", {
+        crate::icon::clear_cache();
+        let _ = crate::menu::build(&config, &dynamic);
+    });
+    part!("Index::build", {
+        let _ = Index::build(&config, &dynamic);
+    });
+    part!("bookmarks::scan", {
+        let _ = crate::bookmarks::scan();
+    });
+    part!("browser_history::scan", {
+        let _ = crate::browser_history::scan();
+    });
+    part!("apps::scan", {
+        let _ = crate::apps::scan();
+    });
+    part!("Ranking::load", {
+        let _ = crate::quick_launch_history::Ranking::load();
+    });
+}

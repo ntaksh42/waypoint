@@ -162,13 +162,21 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
             LRESULT(1)
         }
         // ダーク / ライトの切り替えでアイコンの見え方が変わる。
-        // 古いビットマップを捨て、次回表示で引き直す
+        // 古いビットマップを捨て、次回表示で引き直す。
+        //
+        // `WM_SETTINGCHANGE` はテーマ以外 (環境変数・ポリシー・ロケール・
+        // 電源設定など) でも飛んでくる。全部に反応するとアイコンキャッシュを
+        // 捨ててメニューを組み直す処理が毎回走り、UI スレッドで実測 15ms
+        // かかる。テーマ変更は lParam が "ImmersiveColorSet" で判別できる
+        // ので、それ以外は無視する。
         WM_SETTINGCHANGE | WM_THEMECHANGED => {
-            crate::icon::clear_cache();
-            // メニューフォントとテーマの色も変わる。掴んだまま使わない
-            crate::menu_draw::reset_font();
-            crate::theme::enable_dark_menus();
-            rebuild_menu();
+            if msg == WM_THEMECHANGED || is_immersive_color_set(lparam) {
+                crate::icon::clear_cache();
+                // メニューフォントとテーマの色も変わる。掴んだまま使わない
+                crate::menu_draw::reset_font();
+                crate::theme::enable_dark_menus();
+                rebuild_menu();
+            }
             unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
         }
         // オーナードロー項目の採寸と描画 (FR-2.3)
@@ -201,4 +209,92 @@ pub(crate) fn cursor_pos() -> POINT {
         let _ = GetCursorPos(&mut p);
     }
     p
+}
+
+/// `WM_SETTINGCHANGE` の lParam がテーマ変更 (`"ImmersiveColorSet"`) を
+/// 指しているか。
+///
+/// lParam は変更されたセクション名を指す UTF-16 文字列 (無い場合は NULL)。
+/// ダーク / ライトの切り替えはこの名前で通知される。他の設定変更でも同じ
+/// メッセージが飛ぶため、名前を見ないと無関係な変更でメニューを組み直す
+/// ことになる。
+fn is_immersive_color_set(lparam: LPARAM) -> bool {
+    if lparam.0 == 0 {
+        return false;
+    }
+    // 送り元は別プロセスだが、文字列は共有される形で渡る (Win32 の規約)。
+    // NUL 終端までを読む。長さが妥当な範囲に収まらなければ弾く。
+    let ptr = lparam.0 as *const u16;
+    let mut len = 0usize;
+    // "ImmersiveColorSet" は 17 文字。想定より長ければ別の通知なので
+    // 途中で打ち切ってよい (全体を読み切る必要が無い)。
+    const MAX: usize = 32;
+    unsafe {
+        while len < MAX && *ptr.add(len) != 0 {
+            len += 1;
+        }
+        if len == 0 || len >= MAX {
+            return false;
+        }
+        let name = std::slice::from_raw_parts(ptr, len);
+        String::from_utf16_lossy(name) == "ImmersiveColorSet"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_immersive_color_set;
+    use windows::Win32::Foundation::LPARAM;
+
+    /// UTF-16 の NUL 終端文字列を作り、その先頭を指す LPARAM を返す。
+    /// バッファは呼び出し側が保持し続ける必要がある (寿命を借用で縛る)。
+    fn lparam_for(buffer: &[u16]) -> LPARAM {
+        LPARAM(buffer.as_ptr() as isize)
+    }
+
+    fn wide(text: &str) -> Vec<u16> {
+        text.encode_utf16().chain(Some(0)).collect()
+    }
+
+    #[test]
+    fn immersive_color_set_is_recognized() {
+        let buffer = wide("ImmersiveColorSet");
+        assert!(is_immersive_color_set(lparam_for(&buffer)));
+    }
+
+    /// テーマ以外の通知では組み直さない。これが効かないと、無関係な設定変更
+    /// のたびにアイコンキャッシュ破棄とメニュー再構築 (実測 15ms) が走る。
+    #[test]
+    fn other_sections_are_ignored() {
+        for name in ["Environment", "Policy", "intl", "WindowsThemeElement"] {
+            let buffer = wide(name);
+            assert!(
+                !is_immersive_color_set(lparam_for(&buffer)),
+                "{name} を誤ってテーマ変更として扱っている"
+            );
+        }
+    }
+
+    /// lParam は NULL のことがある (セクション名を伴わない通知)。
+    #[test]
+    fn null_lparam_is_ignored() {
+        assert!(!is_immersive_color_set(LPARAM(0)));
+    }
+
+    /// 空文字列と、想定より長い文字列は弾く (打ち切り条件の確認)。
+    #[test]
+    fn empty_and_overlong_names_are_ignored() {
+        let empty = wide("");
+        assert!(!is_immersive_color_set(lparam_for(&empty)));
+
+        let overlong = wide(&"A".repeat(64));
+        assert!(!is_immersive_color_set(lparam_for(&overlong)));
+    }
+
+    /// 前方一致では通さない (`ImmersiveColorSetting` のような別名を弾く)。
+    #[test]
+    fn prefix_match_is_not_enough() {
+        let buffer = wide("ImmersiveColorSetting");
+        assert!(!is_immersive_color_set(lparam_for(&buffer)));
+    }
 }
