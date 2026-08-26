@@ -116,6 +116,27 @@ impl Index {
         self.windows_lower = windows_lower;
     }
 
+    /// config 由来の候補 (`config_entries`) と、それを含む `entries` /
+    /// `windows` を組み直す。apps / bookmarks / history / azure* は保持する。
+    ///
+    /// Quick Launch からのお気に入り登録 (`Ctrl+Shift+Enter`、FR-9.7) のように
+    /// config だけが変わったときに使う。ここでフル `Index::build` を呼ぶと、
+    /// 変わっていないスタートメニューの再スキャン (実測で数十 ms) が
+    /// ユーザー操作のたびに UI スレッドで走る。
+    pub fn refresh_config_items(&mut self, config: &Config, dynamic: &Menus) {
+        let mut config_entries = Vec::new();
+        collect_items(
+            &config.items,
+            &config.variables,
+            &mut Vec::new(),
+            false,
+            &mut config_entries,
+        );
+        self.config_entries = config_entries;
+        self.search_paths = config.settings.quick_launch.search_paths;
+        self.refresh_dynamic(config, dynamic);
+    }
+
     /// Azure DevOps の候補だけを組み直す。
     ///
     /// バックグラウンド同期の完了通知 (`WM_AZURE_DEVOPS_REFRESHED`) から使う。

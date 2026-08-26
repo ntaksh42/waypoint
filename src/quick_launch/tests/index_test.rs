@@ -148,3 +148,46 @@ fn refresh_azure_keeps_apps_bookmarks_history_and_folders() {
     assert_eq!(index.search("b github").len(), 1);
     assert_eq!(index.search("h rust").len(), 1);
 }
+
+/// `Index::refresh_config_items` は config 由来の候補を組み直しつつ、
+/// apps / bookmarks / history は保持する。
+///
+/// お気に入り登録 (`Ctrl+Shift+Enter`) の経路。新しく足した項目が
+/// すぐ検索できること (これが目的) と、スタートメニューの再スキャンが
+/// 起きていないこと (これが最適化) の両方を見る。
+#[test]
+fn refresh_config_items_adds_new_item_and_keeps_apps() {
+    use crate::config::Item;
+
+    let mut config = config_without_live_scans();
+    let mut index = Index::build(&config, &Menus::default());
+
+    // 実マシンをスキャンしない設定なので、保持を確かめる対象を直接差し込む
+    index.apps = vec![Entry {
+        name: "Visual Studio Code".into(),
+        breadcrumb: String::new(),
+        path: r"C:\Start Menu\Visual Studio Code.lnk".into(),
+        action: Action::LaunchApp,
+        branch: None,
+    }];
+    index.apps_lower = search::LowerKeys::build_for(&index.apps);
+
+    // お気に入り登録に相当する config の変更
+    config.items.push(Item::Folder {
+        name: "Waypoint source".into(),
+        path: r"E:\waypoint\src".into(),
+        open: None,
+        icon: None,
+        show_branch: false,
+    });
+    index.refresh_config_items(&config, &Menus::default());
+
+    // 足した項目がすぐ検索できる
+    let found = index.search("waypoint source");
+    assert_eq!(found.len(), 1, "追加した項目が検索できない");
+    assert_eq!(found[0].path, r"E:\waypoint\src");
+
+    // apps は再スキャンされていない
+    assert_eq!(index.apps.len(), 1, "apps が再スキャンされて消えている");
+    assert_eq!(index.search("a visual").len(), 1);
+}

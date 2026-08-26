@@ -103,7 +103,9 @@ pub(crate) fn add_entry_to_favorites(entry: quick_launch::Entry) {
         with_state(|s| {
             let state = s.borrow();
             if let Some(state) = state.as_ref() {
-                quick_launch_window::configure(&state.config, &dynamic);
+                // 増えたのは config の項目 1 件だけ。フル `configure` にすると
+                // スタートメニューの再スキャンが道連れになる
+                quick_launch_window::configure_config_items(&state.config, &dynamic);
             }
         });
     }

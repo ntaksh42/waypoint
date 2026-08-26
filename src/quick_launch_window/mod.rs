@@ -222,6 +222,33 @@ pub fn configure_dynamic(config: &Config, dynamic: &Menus) {
     });
 }
 
+/// `configure` の軽量版その 3。config 由来の候補だけを差し替え、
+/// apps / bookmarks / history / azure* は保持する
+/// (`Index::refresh_config_items` 参照)。
+///
+/// Quick Launch からのお気に入り登録 (`Ctrl+Shift+Enter`) から使う。
+/// 項目が 1 件増えるだけの操作で、変わっていないスタートメニューの
+/// 再スキャン (実測で数十 ms) を UI スレッドで走らせない。
+///
+/// 設定エディターからの保存 (`WM_RELOAD_CONFIG`) はこちらではなく
+/// `configure` を使う。あちらは Quick Launch の設定 (include_apps など)
+/// 自体が変わり得るので、全体を組み直す必要がある。
+pub fn configure_config_items(config: &Config, dynamic: &Menus) {
+    STATE.with(|state| {
+        let has_window = {
+            let mut state = state.borrow_mut();
+            state.index.refresh_config_items(config, dynamic);
+            // Index の中身 (entries) が変わったので、前回結果への絞り込み
+            // 最適化 (`refined_search_term`) をそのまま使い回さない
+            state.previous_query = None;
+            state.window.is_some()
+        };
+        if has_window {
+            update_results(state);
+        }
+    });
+}
+
 /// `configure` の軽量版その 2。Azure DevOps の候補だけを差し替え、
 /// apps / bookmarks / history / Recent/Frequent は保持する
 /// (`Index::refresh_azure` 参照)。
