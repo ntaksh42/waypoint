@@ -611,3 +611,80 @@ fn bench_menu_fill_brush() {
         );
     }
 }
+
+/// Quick Launch の行描画で走る GDI オブジェクト生成。
+/// `draw_list_item` は 1 行につき最大 4 個 (地・選択カードのブラシとペン・
+/// アクセント) を作って捨てる。可視 24 行ぶんで再描画 1 回。
+///
+/// 結論: 再描画 1 回で 0.0272ms、使い回しても 0.0216ms (差 0.006ms)。
+/// 表示予算 50ms の 0.01% でしかない。`perf/quick-launch-gdi-cache`
+/// ブランチで使い回しを実装したが、162 行のモジュールと色キー表を
+/// 足す価値が無いので採用しない (`bench_menu_fill_brush` と同じ結論)。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_quick_launch_row_brushes() {
+    use std::time::Instant;
+    use windows::Win32::Foundation::{COLORREF, RECT};
+    use windows::Win32::Graphics::Gdi::{
+        CreateCompatibleDC, CreatePen, CreateSolidBrush, DeleteDC, DeleteObject, FillRect, GetDC,
+        HGDIOBJ, PS_SOLID, ReleaseDC,
+    };
+    const ROWS: usize = 24;
+
+    let rect = RECT {
+        left: 0,
+        top: 0,
+        right: 560,
+        bottom: 40,
+    };
+    unsafe {
+        let screen = GetDC(None);
+        let hdc = CreateCompatibleDC(Some(screen));
+
+        // 現行: 行ごとに作って捨てる (地 1 + 選択行だけ 3)
+        let start = Instant::now();
+        for _ in 0..50 {
+            for row in 0..ROWS {
+                let background = CreateSolidBrush(COLORREF(0x000D_0D0D));
+                FillRect(hdc, &rect, background);
+                let _ = DeleteObject(HGDIOBJ(background.0));
+                if row == 0 {
+                    let card = CreateSolidBrush(COLORREF(0x002C_2926));
+                    let pen = CreatePen(PS_SOLID, 1, COLORREF(0x006E_5A3A));
+                    let accent = CreateSolidBrush(COLORREF(0x006F_A8C9));
+                    FillRect(hdc, &rect, card);
+                    let _ = DeleteObject(HGDIOBJ(card.0));
+                    let _ = DeleteObject(HGDIOBJ(pen.0));
+                    let _ = DeleteObject(HGDIOBJ(accent.0));
+                }
+            }
+        }
+        let per_row = start.elapsed().as_secs_f64() * 1000.0 / 50.0;
+
+        // 使い回し
+        let background = CreateSolidBrush(COLORREF(0x000D_0D0D));
+        let card = CreateSolidBrush(COLORREF(0x002C_2926));
+        let pen = CreatePen(PS_SOLID, 1, COLORREF(0x006E_5A3A));
+        let accent = CreateSolidBrush(COLORREF(0x006F_A8C9));
+        let start = Instant::now();
+        for _ in 0..50 {
+            for row in 0..ROWS {
+                FillRect(hdc, &rect, background);
+                if row == 0 {
+                    FillRect(hdc, &rect, card);
+                }
+            }
+        }
+        let cached = start.elapsed().as_secs_f64() * 1000.0 / 50.0;
+        for obj in [background.0, card.0, accent.0] {
+            let _ = DeleteObject(HGDIOBJ(obj));
+        }
+        let _ = DeleteObject(HGDIOBJ(pen.0));
+
+        let _ = DeleteDC(hdc);
+        ReleaseDC(None, screen);
+        println!(
+            "{ROWS} 行の再描画 1 回: 行ごとに生成 {per_row:>8.4} ms  /  使い回し {cached:>8.4} ms"
+        );
+    }
+}

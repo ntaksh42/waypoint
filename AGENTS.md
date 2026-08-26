@@ -58,6 +58,12 @@ The goal is to be the most capable general launcher on Windows — broader than 
 | `SLGP_RAWPATH` で `.lnk` の解決を省く | 環境変数が展開されず、正しいアプリまで落ちる (87 件 → 45 件) |
 | `rank_matches` を部分ソート (`select_nth_unstable`) に | 誤差。支配的なのはソートではなく Vec 確保 |
 | アイコンキャッシュのキー生成で確保を使い回す | 0.003ms → 0.001ms。複雑さに見合わない |
+| 描画の `CreateSolidBrush` / `CreatePen` を色ごとに使い回す | Quick Launch の 24 行で 0.027ms → 0.022ms、メニューの 48 項目で 0.056ms → 0.036ms。ブラシ生成は `GetDC` より 1 桁以上安い |
+
+**「GDI の生成・破棄は重い」と一括りにしないこと。** 同じ 48 回でも
+`GetDC` は 0.73ms、`CreateSolidBrush` は 0.056ms と 1 桁以上違う。
+効いたのは採寸 (`GetDC` を伴う) のキャッシュ化の方で、ブラシの使い回しは
+誤差だった。種類ごとに測ってから手を入れる。
 
 ## Commands
 
