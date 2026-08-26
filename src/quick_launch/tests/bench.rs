@@ -485,3 +485,41 @@ fn bench_index_rebuild() {
         start.elapsed().as_secs_f64() * 1000.0 / 100.0
     );
 }
+
+/// 空クエリ (`sections`) の内訳。全語一致の判定は走らないが、
+/// 候補全件に `rank_lower` をかけて全件ソートしている。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_sections_breakdown() {
+    use std::time::Instant;
+    let index = large_index(2000, 3000, 5000, 500);
+    let total: usize = index.entries.len()
+        + index.bookmarks.len()
+        + index.history.len()
+        + index.apps.len();
+    println!("sections が触る候補の総数 = {total}");
+
+    // rank_lower 全件
+    let start = Instant::now();
+    for _ in 0..100 {
+        let mut acc = 0u64;
+        for (e, k) in index.entries.iter().zip(&index.entries_lower) {
+            acc = acc.wrapping_add(index.ranking.rank_lower(e, super::super::search::keys_path(k)).0);
+        }
+        std::hint::black_box(acc);
+    }
+    println!(
+        "rank_lower x{}  {:>7.3} ms",
+        index.entries.len(),
+        start.elapsed().as_secs_f64() * 1000.0 / 100.0
+    );
+
+    let start = Instant::now();
+    for _ in 0..100 {
+        std::hint::black_box(index.sections());
+    }
+    println!(
+        "sections()      {:>7.3} ms",
+        start.elapsed().as_secs_f64() * 1000.0 / 100.0
+    );
+}

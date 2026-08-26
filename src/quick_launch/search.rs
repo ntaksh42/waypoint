@@ -647,3 +647,8 @@ pub(crate) fn fuzzy_skip_threshold() -> usize {
 pub(crate) fn bench_dedup(entries: Vec<Entry>) -> Vec<Entry> {
     dedup_by_path(entries)
 }
+
+#[cfg(test)]
+pub(crate) fn keys_path(keys: &LowerKeys) -> &str {
+    &keys.path
+}
