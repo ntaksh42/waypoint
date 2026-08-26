@@ -657,3 +657,94 @@ fn bench_row_entry_clone() {
         start.elapsed().as_secs_f64() * 1000.0 / 2000.0
     );
 }
+
+/// アイコンのキャッシュ参照キー。`bitmap_for_sized` 等が呼び出しごとに
+/// `format!` でキーを作るため、再描画のたびに行数ぶんの確保とハッシュが走る。
+///
+/// 結論: 再描画 1 回ぶん (24 行) で 0.003ms。確保を使い回しても 0.001ms に
+/// なるだけで、キーの組み立てを呼び出し側へ引き回す複雑さに見合わない。
+/// 手を入れない判断の根拠として計測値だけ残す。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_icon_cache_key() {
+    use std::collections::HashMap;
+    use std::time::Instant;
+    const VISIBLE_ROWS: usize = 24;
+    let paths: Vec<String> = (0..VISIBLE_ROWS)
+        .map(|i| format!(r"E:\projects\group{}\project-{i}\src", i % 8))
+        .collect();
+    let mut cache: HashMap<String, isize> = HashMap::new();
+    for (i, path) in paths.iter().enumerate() {
+        cache.insert(format!("{}:{path}", 32), i as isize);
+    }
+
+    // 現行: format! でキーを作って引く
+    let start = Instant::now();
+    for _ in 0..2000 {
+        let mut found = 0;
+        for path in &paths {
+            let key = format!("{}:{path}", 32);
+            if cache.contains_key(&key) {
+                found += 1;
+            }
+        }
+        std::hint::black_box(found);
+    }
+    let with_format = start.elapsed().as_secs_f64() * 1000.0 / 2000.0;
+
+    // 比較: 確保を使い回した場合 (1 本の String をクリアして詰め直す)
+    let start = Instant::now();
+    let mut key = String::new();
+    for _ in 0..2000 {
+        let mut found = 0;
+        for path in &paths {
+            key.clear();
+            key.push_str("32:");
+            key.push_str(path);
+            if cache.contains_key(key.as_str()) {
+                found += 1;
+            }
+        }
+        std::hint::black_box(found);
+    }
+    let reused = start.elapsed().as_secs_f64() * 1000.0 / 2000.0;
+
+    println!(
+        "icon cache key x{VISIBLE_ROWS}: format! {with_format:>8.5} ms  /  確保使い回し {reused:>8.5} ms"
+    );
+}
+
+/// Recent/Frequent Folders と開いているウィンドウの列挙 (`dynamic::refresh`)。
+/// メニューを閉じるたびにバックグラウンドスレッドで走る。UI は塞がないが、
+/// 遅すぎると次回表示までに結果が間に合わない。
+///
+/// 内訳 (実測、Recent 33 件): `scan_recent_items` が 27.6ms でほぼ全部。
+/// `apps::scan` と同じく `.lnk` の COM 実体解決が理由。履歴の読み書きは
+/// 0.05ms、`enumerate_windows` は 0.15ms、`frequent_entries` は 0.35ms で
+/// いずれも誤差。
+///
+/// `refresh_async` が再入ガード付きでバックグラウンドに逃がし、UI 側は
+/// 軽量な `configure_dynamic` しか通らないので、この 44ms は表示経路には
+/// 乗らない。手を入れる対象ではない。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_dynamic_refresh() {
+    use std::time::Instant;
+    unsafe {
+        let _ = windows::Win32::System::Com::CoInitializeEx(
+            None,
+            windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
+        );
+    }
+    let menus = crate::dynamic::refresh(); // ウォームアップ
+    let start = Instant::now();
+    let menus2 = crate::dynamic::refresh();
+    let ms = start.elapsed().as_secs_f64() * 1000.0;
+    println!(
+        "dynamic::refresh {ms:>8.2} ms  (recent={} frequent={} windows={})",
+        menus2.recent_folders.len(),
+        menus2.frequent_folders.len(),
+        menus2.all_windows.len(),
+    );
+    assert_eq!(menus.all_windows.len(), menus2.all_windows.len());
+}
