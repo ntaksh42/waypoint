@@ -86,3 +86,29 @@ fn romaji_query_does_not_match_kanji_name() {
     };
     assert!(index.search("kaihatsu").is_empty());
 }
+
+/// `is_subsequence` は ASCII をバイト列で走査する高速経路と、非 ASCII を
+/// `chars()` で走査する経路に分かれる。両経路が同じ判定を返すことを確かめる
+/// (ASCII 経路はバイト単位なので、マルチバイト文字の途中に一致しないこと)。
+#[test]
+fn subsequence_ascii_and_unicode_paths_agree() {
+    use super::super::search::bench_is_subsequence as is_sub;
+
+    // ASCII 経路
+    assert!(is_sub("project folder", "pjf"));
+    assert!(is_sub("project folder", "project folder"));
+    assert!(is_sub("project folder", ""));
+    assert!(!is_sub("project folder", "pfj"), "順序が違えば不一致");
+    assert!(!is_sub("project", "projectx"), "語が長ければ不一致");
+    assert!(!is_sub("", "a"));
+
+    // 非 ASCII 経路 (どちらかが非 ASCII なら chars 経路)
+    assert!(is_sub("ドキュメント folder", "ドメ"));
+    assert!(is_sub("プロジェクト", "プジト"));
+    assert!(!is_sub("プロジェクト", "トプ"));
+    assert!(is_sub("日本語 project", "日p"));
+
+    // ASCII の語をマルチバイト候補に当てても、バイト境界を跨いで
+    // 誤一致しないこと
+    assert!(!is_sub("あいう", "a"));
+}

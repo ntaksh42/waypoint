@@ -1,3 +1,4 @@
+mod bench;
 mod fixture;
 
 mod convert_test;

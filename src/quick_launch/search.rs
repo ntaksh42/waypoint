@@ -458,9 +458,31 @@ fn match_score(name: &str, breadcrumb: &str, path: Option<&str>, term: &str) -> 
 
 /// `term` の全文字が `text` 中に順序を保って (連続していなくてよい) 現れるか。
 /// fuzzy_match を試す価値があるかどうかの安価な事前判定。
+///
+/// 候補・語ともに小文字化済みで、実際の入力はほぼ ASCII のため、両方が
+/// ASCII の場合はバイト列として走査する。`chars()` の UTF-8 デコードを挟むと
+/// 1 バイトずつ分岐が入って自動ベクトル化が効かず、ここが無一致クエリの
+/// コストの大半を占めていた (実測: 5500 候補 x 3 フィールドで 1.375ms、
+/// `match_score` 全体 1.73ms の約 8 割)。
 fn is_subsequence(text: &str, term: &str) -> bool {
+    if text.is_ascii() && term.is_ascii() {
+        return is_subsequence_ascii(text.as_bytes(), term.as_bytes());
+    }
     let mut chars = text.chars();
     term.chars().all(|t| chars.any(|c| c == t))
+}
+
+/// ASCII 限定のサブシーケンス判定。語の各バイトを `memchr` 相当の
+/// バイト検索 (`iter().position`) で順に追う。
+fn is_subsequence_ascii(text: &[u8], term: &[u8]) -> bool {
+    let mut rest = text;
+    for &want in term {
+        match rest.iter().position(|&c| c == want) {
+            Some(at) => rest = &rest[at + 1..],
+            None => return false,
+        }
+    }
+    true
 }
 
 /// `name` が `term` を含むときそのティアを返す (境界一致なら tier2、
@@ -475,4 +497,19 @@ fn name_contains_tier(name: &str, term: &str) -> Option<u8> {
         found = true;
     }
     found.then_some(3)
+}
+
+#[cfg(test)]
+pub(crate) fn bench_is_subsequence(text: &str, term: &str) -> bool {
+    is_subsequence(text, term)
+}
+
+#[cfg(test)]
+pub(crate) fn bench_match_score(
+    name: &str,
+    breadcrumb: &str,
+    path: Option<&str>,
+    term: &str,
+) -> Option<(u8, i64)> {
+    match_score(name, breadcrumb, path, term)
 }
