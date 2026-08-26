@@ -13,6 +13,8 @@ mod shortcuts;
 mod tests;
 mod trigger_draft;
 mod ui_azure;
+mod ui_azure_detail;
+mod ui_azure_suggest;
 mod ui_confirm;
 mod ui_editors;
 mod ui_import;
@@ -34,9 +36,12 @@ fn main() -> eframe::Result<()> {
 
     let icon = app_icon();
     let options = eframe::NativeOptions {
+        // Azure DevOps 設定 (一覧 + 詳細の 2 ペイン) が最も広い領域を要る。
+        // egui::Window はホストのビューポートを超えられないため、ここが
+        // 狭いとダイアログごと切り詰められて中身が見切れる。
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([880.0, 620.0])
-            .with_min_inner_size([700.0, 480.0])
+            .with_inner_size([1100.0, 760.0])
+            .with_min_inner_size([820.0, 560.0])
             .with_icon(icon),
         ..Default::default()
     };

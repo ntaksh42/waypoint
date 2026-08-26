@@ -74,6 +74,10 @@ pub(super) struct AzureProjectPicker {
     pub(super) priority_suggestion_area_trees: HashMap<(String, String), Vec<AreaNode>>,
     pub(super) priority_suggestion_area_loading: Option<(String, String)>,
     pub(super) priority_suggestion_area_error: Option<String>,
+    /// 展開中の Area ツリーの絞り込み。ツリーは数百件になることがあり、
+    /// スクロールだけでは目的の Area に届かない。展開するプロジェクトを
+    /// 切り替えたら消す (別ツリーに前の絞り込みが残ると 0 件に見える)。
+    pub(super) priority_suggestion_area_filter: String,
     priority_suggestion_area_loader: Option<Receiver<AreaLoad>>,
 }
 
@@ -136,6 +140,7 @@ impl AzureProjectPicker {
             priority_suggestion_area_trees: HashMap::new(),
             priority_suggestion_area_loading: None,
             priority_suggestion_area_error: None,
+            priority_suggestion_area_filter: String::new(),
             priority_suggestion_area_loader: None,
         }
     }
@@ -355,6 +360,21 @@ impl AzureProjectPicker {
         self.poll_priority_suggestion_area_load();
     }
 
+    /// 進行中の非同期取得が 1 つでもあるか。
+    ///
+    /// **`poll_load` が見ている loader をすべて含めること。** 受信スレッドは
+    /// egui のイベントループを起こせず、`poll_load` は描画のたびにしか
+    /// 走らない。ここから漏れたローダは再描画が予約されず、結果が
+    /// 永久に反映されない (提案モーダルの Area ツリーが実際にそうなった)。
+    pub(super) fn is_loading_anything(&self) -> bool {
+        self.loading
+            || self.area_loading
+            || self.area_suggestion_loading
+            || self.repository_loading
+            || self.priority_suggestion_loading
+            || self.priority_suggestion_area_loading.is_some()
+    }
+
     fn poll_project_load(&mut self) {
         let Some(receiver) = self.project_loader.as_ref() else {
             return;
@@ -539,6 +559,7 @@ impl AzureProjectPicker {
         self.priority_suggestion_error = None;
         self.priority_suggestion_open = true;
         self.priority_suggestion_filter.clear();
+        self.priority_suggestion_area_filter.clear();
         self.priority_suggestion_checked.clear();
     }
 
@@ -614,6 +635,9 @@ impl AzureProjectPicker {
         project: &str,
     ) {
         let key = (organization.to_string(), project.to_string());
+        // 別ツリーへ移るので絞り込みは持ち越さない。残すと、開いた直後に
+        // 前の Area 名で 0 件になり「ツリーが空」に見える。
+        self.priority_suggestion_area_filter.clear();
         if self.priority_suggestion_expanded.as_ref() == Some(&key) {
             self.priority_suggestion_expanded = None;
             return;

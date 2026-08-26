@@ -1,4 +1,4 @@
-//! Azure DevOps 設定画面の描画。
+//! Azure DevOps 設定画面の描画 (ウィンドウ骨格・接続行・プロジェクト一覧)。
 //!
 //! 有効化トグルと監視プロジェクトの選択・詳細編集を 1 つのウィンドウに
 //! まとめる。上部に有効化チェックボックスとキャッシュ鮮度、その下に
@@ -8,14 +8,25 @@
 //! 個別に設定できる。OK/Cancel は 1 組だけで、有効化トグルとプロジェクト
 //! 選択の両方を一度にコミットする (以前は 2 段のダイアログにそれぞれ
 //! 独立した OK/Apply があり、片方だけ保存し忘れる罠があった)。
+//!
+//! 詳細ペインと優先度提案モーダルは `ui_azure_detail` にある。
 
 use eframe::egui;
-use waypoint::azure_devops::ProjectActivity;
 use waypoint::config::AzureDevOpsSettings;
 
 use super::app::SettingsApp;
-use super::azure_draft::{AzureProjectPicker, Scope};
+use super::azure_draft::AzureProjectPicker;
 use super::keys::{dialog_keys, lock_modal_focus};
+use super::ui_azure_detail::show_detail_panel;
+use super::ui_azure_suggest::show_priority_suggestion_modal;
+
+/// 左ペイン (一覧) が本文幅に占める割合。残りが右ペイン (詳細) になる。
+const LIST_PANE_FRACTION: f32 = 0.38;
+/// 左ペインの下限幅。これを割ると、プロジェクト名とエイリアスが
+/// 横に潰れて読めなくなる。
+const LIST_PANE_MIN_WIDTH: f32 = 220.0;
+/// 本文 (一覧 + 詳細) に最低限確保する高さ。
+const BODY_MIN_HEIGHT: f32 = 200.0;
 
 impl SettingsApp {
     pub(super) fn show_azure_project_picker(&mut self, ctx: &egui::Context) {
@@ -23,108 +34,64 @@ impl SettingsApp {
             return;
         };
         picker.poll_load();
-        if picker.loading || picker.area_loading || picker.priority_suggestion_loading {
-            // 受信スレッドは egui のイベントループを起こせないため、取得中だけ再描画する。
+        // 受信スレッドは egui のイベントループを起こせないため、取得中だけ再描画する。
+        // **取得中を表すフラグを 1 つでも落とすと、その取得結果は永久に
+        // 反映されない** — poll は描画のたびにしか走らないので、再描画が
+        // 予約されないと egui はアイドルのままになる。提案モーダルの
+        // Area ツリー (`priority_suggestion_area_loading`) がこれで、
+        // 展開しても空のままだった。
+        if picker.is_loading_anything() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
 
         let mut apply = false;
         let mut cancel = false;
+        // ホストのビューポートを超えるサイズを要求すると、ウィンドウごと
+        // 切り詰められて中身が見切れる。実寸から上限を決めて、その中で
+        // 収まる既定サイズにする。
+        let (host_width, host_height) = ctx.input(|input| {
+            input
+                .viewport()
+                .inner_rect
+                .map_or((1100.0, 760.0), |rect| (rect.width(), rect.height()))
+        });
+        let max_width = (host_width - 24.0).max(560.0);
+        let max_height = (host_height - 24.0).max(400.0);
         let window = egui::Window::new("Azure DevOps")
             .collapsible(false)
             .resizable(true)
-            .default_size([1000.0, 860.0])
-            .min_size([760.0, 520.0])
-            .max_height(
-                ctx.input(|input| input.viewport().outer_rect)
-                    .map_or(900.0, |rect| rect.height() * 0.92)
-                    .max(520.0),
-            )
+            .default_size([max_width.min(1000.0), max_height.min(860.0)])
+            .min_size([max_width.min(560.0), max_height.min(400.0)])
+            .max_size([max_width, max_height])
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                ui.checkbox(
-                    &mut picker.enabled,
-                    "Enable Azure DevOps search (type \"az \" to search)",
-                );
-                let azure_status = waypoint::azure_devops::cache_status(&AzureDevOpsSettings {
-                    enabled: picker.enabled,
-                    projects: picker.projects.clone(),
-                });
-                ui.weak(waypoint::azure_devops::cache_status_label(&azure_status));
-                if let Some(error) = azure_status.last_error {
-                    ui.weak(format!("Last Azure DevOps error: {error}"));
-                }
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(
-                            !picker.priority_suggestion_loading && !picker.projects.is_empty(),
-                            egui::Button::new("Suggest priorities from recent activity..."),
-                        )
-                        .on_hover_text(
-                            "Rank watched projects by your assignments and @mentions \
-                             in the last 90 days",
-                        )
-                        .clicked()
-                    {
-                        picker.start_priority_suggestions();
-                    }
-                    if picker.priority_suggestion_loading {
-                        ui.spinner();
-                        ui.label("Scanning recent activity...");
-                    }
-                });
-                ui.separator();
-                show_connection_row(ui, picker);
-                ui.separator();
-                // OK/Cancel とステータス行の高さを確保してから、残りを一覧・詳細に回す。
-                let footer_height = 76.0;
-                let body_height = (ui.available_height() - footer_height).max(240.0);
-                ui.horizontal(|ui| {
-                    ui.set_min_height(body_height);
-                    ui.vertical(|ui| {
-                        ui.set_width(ui.available_width() * 0.38);
-                        show_project_list(ui, picker, body_height);
+                // フッター (Export/Import と OK/Cancel) をパネルで先に確保する。
+                // 高さを定数で見積もって本文から引く方式だと、ステータス行や
+                // エラー行が出た分だけ OK/Cancel がウィンドウ下端の外へ押し
+                // 出され、確定できなくなっていた。
+                egui::Panel::bottom("azure_footer")
+                    .show_separator_line(false)
+                    .frame(egui::Frame::NONE.inner_margin(egui::Margin {
+                        top: 6,
+                        ..Default::default()
+                    }))
+                    .show(ui, |ui| {
+                        show_footer(ui, picker, &mut apply, &mut cancel);
                     });
-                    ui.separator();
-                    ui.vertical(|ui| {
-                        ui.set_width(ui.available_width());
-                        egui::ScrollArea::vertical()
-                            .id_salt("azure_detail_panel")
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                show_detail_panel(ui, picker);
-                            });
+                egui::Panel::top("azure_header")
+                    .show_separator_line(false)
+                    .frame(egui::Frame::NONE.inner_margin(egui::Margin {
+                        bottom: 6,
+                        ..Default::default()
+                    }))
+                    .show(ui, |ui| {
+                        show_header(ui, picker);
                     });
-                });
-                ui.separator();
-                if let Some(status) = &picker.status {
-                    ui.colored_label(egui::Color32::LIGHT_GREEN, status);
-                }
-                if let Some(error) = &picker.error {
-                    ui.colored_label(egui::Color32::RED, error);
-                }
-                ui.horizontal(|ui| {
-                    if ui
-                        .button("Export...")
-                        .on_hover_text("Save the watched project list to a JSON file")
-                        .clicked()
-                    {
-                        picker.export_to_file();
-                    }
-                    if ui
-                        .button("Import...")
-                        .on_hover_text(
-                            "Replace the watched project list with one loaded from a JSON file",
-                        )
-                        .clicked()
-                    {
-                        picker.import_from_file();
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        cancel = ui.button("Cancel").clicked();
-                        apply = ui.button("OK").clicked();
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::NONE)
+                    .show(ui, |ui| {
+                        show_body(ui, picker);
                     });
-                });
             });
         lock_modal_focus(ctx, &window);
 
@@ -154,209 +121,158 @@ impl SettingsApp {
     }
 }
 
-/// 直近アクティビティからの Project / Area 優先度提案を表示する専用モーダル。
-/// フィルタで絞り込み、チェックした行だけ Apply で確定する
-/// (`azure_draft::apply_priority_suggestions` が実際の書き戻しを行う)。
-fn show_priority_suggestion_modal(ctx: &egui::Context, picker: &mut AzureProjectPicker) {
-    if !picker.priority_suggestion_open {
-        return;
-    }
-    let mut apply = false;
-    let mut cancel = false;
-    let window = egui::Window::new("Suggest priorities from recent activity")
-        .collapsible(false)
-        .resizable(true)
-        .default_size([560.0, 520.0])
-        .min_size([420.0, 320.0])
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-        .show(ctx, |ui| {
-            ui.weak("Ranked by assignments and @mentions in the last 90 days.");
-            if let Some(error) = &picker.priority_suggestion_error {
-                ui.colored_label(egui::Color32::RED, error);
-            }
-            ui.add(
-                egui::TextEdit::singleline(&mut picker.priority_suggestion_filter)
-                    .hint_text("Filter by project name")
-                    .desired_width(260.0),
-            );
-
-            let filter = picker.priority_suggestion_filter.to_lowercase();
-            let shown: Vec<_> = picker
-                .priority_suggestions
-                .iter()
-                .filter(|entry| filter.is_empty() || entry.project.to_lowercase().contains(&filter))
-                .cloned()
-                .collect();
-
-            ui.horizontal(|ui| {
-                ui.label(format!(
-                    "{} of {} shown; {} checked",
-                    shown.len(),
-                    picker.priority_suggestions.len(),
-                    picker.priority_suggestion_checked.len()
-                ));
-                if ui.button("Check shown").clicked() {
-                    for entry in &shown {
-                        picker
-                            .priority_suggestion_checked
-                            .insert((entry.organization.clone(), entry.project.clone()));
-                    }
-                }
-                if ui.button("Uncheck shown").clicked() {
-                    for entry in &shown {
-                        picker
-                            .priority_suggestion_checked
-                            .remove(&(entry.organization.clone(), entry.project.clone()));
-                    }
-                }
-            });
-
-            // フッター (説明文 + Apply/Cancel) の高さを確保してから、残りをリストへ回す。
-            // `auto_shrink` だけに任せると、展開したツリーで内容が伸びたときに
-            // フッターごとウィンドウ下端の外へ押し出され、Apply が見切れていた。
-            let footer_height = 56.0;
-            let list_height = (ui.available_height() - footer_height).max(120.0);
-            egui::ScrollArea::vertical()
-                .id_salt("azure_priority_suggestion_list")
-                .max_height(list_height)
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    if shown.is_empty() {
-                        ui.weak("No projects match the filter.");
-                    }
-                    for entry in &shown {
-                        show_priority_suggestion_row(ui, picker, entry);
-                    }
-                });
-
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.weak(
-                    "Checked projects are ranked by activity. Expand a project to pick its areas.",
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    cancel = ui.button("Cancel").clicked();
-                    apply = ui
-                        .add_enabled(
-                            !picker.priority_suggestion_checked.is_empty(),
-                            egui::Button::new("Apply"),
-                        )
-                        .clicked();
-                });
-            });
+/// 上部: 有効化トグル・キャッシュ鮮度・接続設定・優先度提案。
+///
+/// 接続設定 (Organization / PAT) は一度入れれば触らないので折りたたむ。
+/// 常時展開しておくと本文の高さを 100px 近く食い、狭いウィンドウでは
+/// 一覧と詳細が数行しか見えなくなっていた。
+fn show_header(ui: &mut egui::Ui, picker: &mut AzureProjectPicker) {
+    ui.horizontal_wrapped(|ui| {
+        ui.checkbox(
+            &mut picker.enabled,
+            "Enable Azure DevOps search (type \"az \" to search)",
+        );
+        ui.separator();
+        let azure_status = waypoint::azure_devops::cache_status(&AzureDevOpsSettings {
+            enabled: picker.enabled,
+            projects: picker.projects.clone(),
         });
-    lock_modal_focus(ctx, &window);
-    let (_, dismiss) = dialog_keys(ctx, false);
-    cancel |= dismiss;
-    if apply {
-        picker.apply_priority_suggestions();
-    } else if cancel {
-        picker.priority_suggestion_open = false;
-    }
-}
-
-/// 提案モーダル 1 行分: チェックボックス + プロジェクト名 + 活動件数 +
-/// 展開ボタン。展開すると、そのプロジェクトの Area ツリー全体を
-/// (ルートから子階層まで) チェックボックス付きで表示する。
-fn show_priority_suggestion_row(
-    ui: &mut egui::Ui,
-    picker: &mut AzureProjectPicker,
-    entry: &ProjectActivity,
-) {
-    let key = (entry.organization.clone(), entry.project.clone());
-    let mut checked = picker.priority_suggestion_checked.contains(&key);
-    let is_expanded = picker.priority_suggestion_expanded.as_ref() == Some(&key);
-    ui.horizontal(|ui| {
-        if ui.checkbox(&mut checked, "").changed() {
-            if checked {
-                picker.priority_suggestion_checked.insert(key.clone());
-            } else {
-                picker.priority_suggestion_checked.remove(&key);
-            }
-        }
-        ui.strong(&entry.project);
-        ui.weak(format!("{} activity item(s)", entry.count));
-        let toggle_label = if is_expanded {
-            "▼ Areas"
-        } else {
-            "▶ Areas"
-        };
-        if ui.small_button(toggle_label).clicked() {
-            picker.toggle_priority_suggestion_expanded(&entry.organization, &entry.project);
+        ui.weak(waypoint::azure_devops::cache_status_label(&azure_status));
+        if let Some(error) = azure_status.last_error {
+            ui.weak("·");
+            ui.colored_label(
+                egui::Color32::from_rgb(220, 140, 90),
+                truncate_for_row(&error, 90),
+            )
+            .on_hover_text(error);
         }
     });
-    if !is_expanded {
-        return;
-    }
-    ui.indent(("azure_priority_suggestion_areas", &key), |ui| {
-        show_priority_suggestion_area_tree(ui, picker, &entry.organization, &entry.project);
-    });
-}
 
-/// 展開中プロジェクトの Area ツリー。既存の詳細パネル (`show_area_path_picker`)
-/// と同じ「ルートからの深さでインデントしたチェックボックス」表示だが、
-/// こちらは複数プロジェクトを同時に展開できるようキーをプロジェクト単位で持つ。
-fn show_priority_suggestion_area_tree(
-    ui: &mut egui::Ui,
-    picker: &mut AzureProjectPicker,
-    organization: &str,
-    project: &str,
-) {
-    let key = (organization.to_string(), project.to_string());
-    if picker.priority_suggestion_area_loading.as_ref() == Some(&key) {
-        ui.horizontal(|ui| {
+    egui::CollapsingHeader::new("Connection")
+        .id_salt("azure_connection")
+        // 未接続 (組織が空 / プロジェクト未取得) のときだけ最初から開く。
+        // 設定済みなら畳んだまま出して、本文へ高さを譲る。
+        .default_open(picker.organization.trim().is_empty() || picker.available_projects.is_empty())
+        .show(ui, |ui| show_connection_row(ui, picker));
+
+    ui.horizontal_wrapped(|ui| {
+        if ui
+            .add_enabled(
+                !picker.priority_suggestion_loading && !picker.projects.is_empty(),
+                egui::Button::new("Suggest priorities from recent activity..."),
+            )
+            .on_hover_text(
+                "Rank watched projects by your assignments and @mentions \
+                 in the last 90 days",
+            )
+            .clicked()
+        {
+            picker.start_priority_suggestions();
+        }
+        if picker.priority_suggestion_loading {
             ui.spinner();
-            ui.weak("Loading area tree...");
+            ui.label("Scanning recent activity...");
+        }
+    });
+    ui.separator();
+}
+
+/// 本文: 左に一覧、右に詳細。左右とも親の高さいっぱいに広げ、
+/// はみ出す分はそれぞれのペイン内でスクロールさせる。
+fn show_body(ui: &mut egui::Ui, picker: &mut AzureProjectPicker) {
+    let body_height = ui.available_height().max(BODY_MIN_HEIGHT);
+    let total_width = ui.available_width();
+    // セパレータと左右の余白ぶんを引いてから配分する。引かずに割ると、
+    // 右ペインが親の幅を数 px 超えて末尾の列が切れる。
+    let usable_width = (total_width - ui.spacing().item_spacing.x * 2.0 - 8.0).max(120.0);
+    let list_width = (usable_width * LIST_PANE_FRACTION)
+        .max(LIST_PANE_MIN_WIDTH.min(usable_width * 0.5))
+        .min(usable_width - 160.0_f32.min(usable_width * 0.5));
+
+    ui.horizontal_top(|ui| {
+        ui.set_min_height(body_height);
+        ui.allocate_ui_with_layout(
+            egui::vec2(list_width, body_height),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.set_width(list_width);
+                show_project_list(ui, picker);
+            },
+        );
+        ui.separator();
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), body_height),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("azure_detail_panel")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        show_detail_panel(ui, picker);
+                    });
+            },
+        );
+    });
+}
+
+/// 下部: 入出力と OK/Cancel。ステータス・エラーもここに置き、
+/// 出ても本文を押し縮めるだけでボタンは動かないようにする。
+fn show_footer(
+    ui: &mut egui::Ui,
+    picker: &mut AzureProjectPicker,
+    apply: &mut bool,
+    cancel: &mut bool,
+) {
+    ui.separator();
+    if let Some(status) = &picker.status {
+        ui.colored_label(egui::Color32::LIGHT_GREEN, truncate_for_row(status, 120))
+            .on_hover_text(status);
+    }
+    if let Some(error) = &picker.error {
+        ui.colored_label(egui::Color32::RED, truncate_for_row(error, 120))
+            .on_hover_text(error);
+    }
+    ui.horizontal(|ui| {
+        // 右詰めを先に置く。左詰めを先に流すと、可変長のボタン群が
+        // 幅を食い切ったときに OK/Cancel が行外へこぼれる。
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            *cancel = ui.button("Cancel").clicked();
+            *apply = ui.button("OK").clicked();
+            ui.separator();
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                if ui
+                    .button("Export...")
+                    .on_hover_text("Save the watched project list to a JSON file")
+                    .clicked()
+                {
+                    picker.export_to_file();
+                }
+                if ui
+                    .button("Import...")
+                    .on_hover_text(
+                        "Replace the watched project list with one loaded from a JSON file",
+                    )
+                    .clicked()
+                {
+                    picker.import_from_file();
+                }
+            });
         });
-        return;
-    }
-    if let Some(error) = &picker.priority_suggestion_area_error {
-        ui.colored_label(egui::Color32::RED, format!("Could not load areas: {error}"));
-        return;
-    }
-    let Some(nodes) = picker.priority_suggestion_area_trees.get(&key).cloned() else {
-        return;
-    };
-    if nodes.is_empty() {
-        ui.weak("No areas found for this project.");
-        return;
-    }
-    let selected_areas = picker
-        .find_project(organization, project)
-        .map(|entry| entry.interest_areas.clone())
-        .unwrap_or_default();
-    egui::ScrollArea::vertical()
-        .id_salt(("azure_priority_suggestion_area_scroll", &key))
-        .max_height(180.0)
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            for node in &nodes {
-                let mut checked = selected_areas.contains(&node.path);
-                ui.horizontal(|ui| {
-                    ui.add_space(node.depth as f32 * 16.0);
-                    let name = node.path.rsplit('\\').next().unwrap_or(&node.path);
-                    if ui.checkbox(&mut checked, name).changed() {
-                        picker.toggle_priority_suggestion_area(
-                            organization,
-                            project,
-                            &node.path,
-                            checked,
-                        );
-                    }
-                });
-            }
-        });
+    });
 }
 
 fn show_connection_row(ui: &mut egui::Ui, picker: &mut AzureProjectPicker) {
+    // 入力欄は親の幅に追従させる。固定幅だと、狭いウィンドウで
+    // ボタン列ごと右へはみ出して押せなくなる。
+    let field_width = (ui.available_width() * 0.28).clamp(120.0, 240.0);
     ui.horizontal_wrapped(|ui| {
         ui.label("Organization");
-        ui.add(egui::TextEdit::singleline(&mut picker.organization).desired_width(200.0));
+        ui.add(egui::TextEdit::singleline(&mut picker.organization).desired_width(field_width));
         ui.label("PAT");
         ui.add(
             egui::TextEdit::singleline(&mut picker.pat)
                 .password(true)
-                .desired_width(220.0),
+                .desired_width(field_width),
         );
         if ui.button("Save PAT and load projects").clicked() {
             match waypoint::azure_devops::save_pat(&picker.organization, &picker.pat) {
@@ -398,14 +314,16 @@ fn show_connection_row(ui: &mut egui::Ui, picker: &mut AzureProjectPicker) {
 }
 
 /// 左ペイン: フィルタ・一括操作・チェックボックス一覧。
-fn show_project_list(ui: &mut egui::Ui, picker: &mut AzureProjectPicker, available_height: f32) {
-    ui.horizontal(|ui| {
-        ui.add(
-            egui::TextEdit::singleline(&mut picker.filter)
-                .hint_text("Filter by project name or alias")
-                .desired_width(ui.available_width().min(220.0)),
-        );
-    });
+/// 一覧は親の高さの残り全部を使う (以前は `available_height` から
+/// `min_rect().height()` を引いていたが、`min_rect` は Ui の原点からの
+/// 矩形でヘッダの消費高ではないため二重に引かれ、一覧が不必要に縮んで
+/// いた)。
+fn show_project_list(ui: &mut egui::Ui, picker: &mut AzureProjectPicker) {
+    ui.add(
+        egui::TextEdit::singleline(&mut picker.filter)
+            .hint_text("Filter by project name or alias")
+            .desired_width(ui.available_width()),
+    );
     ui.checkbox(&mut picker.show_selected_only, "Selected only");
 
     let organization = picker.loaded_organization.clone();
@@ -445,18 +363,16 @@ fn show_project_list(ui: &mut egui::Ui, picker: &mut AzureProjectPicker, availab
             .then_with(|| a.to_lowercase().cmp(&b.to_lowercase()))
     });
 
-    ui.horizontal(|ui| {
-        ui.label(format!(
-            "{} of {} shown; {} selected",
-            filtered.len(),
-            picker.available_projects.len(),
-            picker
-                .projects
-                .iter()
-                .filter(|entry| entry.organization.eq_ignore_ascii_case(&organization))
-                .count()
-        ));
-    });
+    ui.weak(format!(
+        "{} of {} shown; {} selected",
+        filtered.len(),
+        picker.available_projects.len(),
+        picker
+            .projects
+            .iter()
+            .filter(|entry| entry.organization.eq_ignore_ascii_case(&organization))
+            .count()
+    ));
     ui.horizontal_wrapped(|ui| {
         if ui.button("Select shown").clicked() {
             for project in &filtered {
@@ -474,13 +390,19 @@ fn show_project_list(ui: &mut egui::Ui, picker: &mut AzureProjectPicker, availab
             }
         }
     });
+    ui.add_space(2.0);
 
-    let list_height = (available_height - ui.min_rect().height()).max(160.0);
     egui::ScrollArea::vertical()
         .id_salt("azure_project_list")
-        .max_height(list_height)
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            if filtered.is_empty() {
+                ui.weak(if picker.available_projects.is_empty() {
+                    "No projects loaded. Open Connection above and load them."
+                } else {
+                    "No projects match the filter."
+                });
+            }
             for project in &filtered {
                 let mut checked = picker.is_selected(&organization, project);
                 let is_open = picker.selected.as_ref().is_some_and(|(org, proj)| {
@@ -490,265 +412,39 @@ fn show_project_list(ui: &mut egui::Ui, picker: &mut AzureProjectPicker, availab
                     if ui.checkbox(&mut checked, "").changed() {
                         picker.set_selected(project, checked);
                     }
-                    let label = ui.selectable_label(is_open, project);
+                    let aliases = aliases_of(project);
+                    // 名前とエイリアスを 1 つのラベルにまとめる。別ウィジェット
+                    // として横に並べると、長い名前のときにエイリアスがペイン外へ
+                    // 出て切れていた。
+                    let label_text = if aliases.is_empty() {
+                        project.clone()
+                    } else {
+                        format!("{project}  ({})", aliases.join(", "))
+                    };
+                    let label = ui.add(
+                        egui::Button::selectable(is_open, truncate_for_row(&label_text, 48))
+                            .truncate(),
+                    );
+                    let label = if label_text.chars().count() > 48 {
+                        label.on_hover_text(&label_text)
+                    } else {
+                        label
+                    };
                     if label.clicked() && checked {
                         picker.open_detail(&organization, project);
                     }
-                    let aliases = aliases_of(project);
-                    if !aliases.is_empty() {
-                        ui.weak(format!("({})", aliases.join(", ")));
-                    }
                 });
             }
         });
 }
 
-/// 右ペイン: 選択中プロジェクトのエイリアス・優先度・スコープ・Area Path。
-fn show_detail_panel(ui: &mut egui::Ui, picker: &mut AzureProjectPicker) {
-    let Some((organization, project)) = picker.selected.clone() else {
-        ui.weak("Select a checked project on the left to edit its details.");
-        return;
-    };
-    ui.strong(format!("{organization}/{project}"));
-    ui.add_space(4.0);
-
-    ui.horizontal(|ui| {
-        ui.label("Aliases");
-        ui.add(
-            egui::TextEdit::singleline(&mut picker.aliases_text)
-                .hint_text("comma, separated")
-                .desired_width(220.0),
-        );
-    });
-    ui.horizontal(|ui| {
-        ui.label("Priority");
-        ui.add(egui::TextEdit::singleline(&mut picker.priority_text).desired_width(60.0));
-        ui.weak("Lower sorts first");
-    });
-    picker.commit_text_fields();
-
-    ui.add_space(6.0);
-    ui.label("Sync");
-    let current = picker.projects.iter().find(|entry| {
-        entry.organization.eq_ignore_ascii_case(&organization)
-            && entry.project.eq_ignore_ascii_case(&project)
-    });
-    let mut include_pr = current.is_some_and(|entry| entry.include_pull_requests);
-    let mut include_pipelines = current.is_some_and(|entry| entry.include_pipelines);
-    let mut include_wit = current.is_some_and(|entry| entry.include_work_items);
-    ui.horizontal(|ui| {
-        if ui.checkbox(&mut include_pr, "Pull Requests").changed() {
-            picker.set_scope(&organization, &project, Scope::PullRequests, include_pr);
-        }
-        if ui.checkbox(&mut include_pipelines, "Pipelines").changed() {
-            picker.set_scope(&organization, &project, Scope::Pipelines, include_pipelines);
-        }
-        if ui.checkbox(&mut include_wit, "Work Items").changed() {
-            picker.set_scope(&organization, &project, Scope::WorkItems, include_wit);
-        }
-    });
-
-    ui.add_space(6.0);
-    show_area_path_picker(ui, picker);
-
-    ui.add_space(6.0);
-    show_repository_picker(ui, picker);
-}
-
-/// リポジトリ一覧: 検索フィルタ + チェックボックス。PR の取得範囲を絞る
-/// (`interest_repositories`、空ならプロジェクト全体)。
-fn show_repository_picker(ui: &mut egui::Ui, picker: &mut AzureProjectPicker) {
-    ui.horizontal(|ui| {
-        ui.label("Interest repositories");
-        ui.weak("(empty = whole project, affects Pull Requests only)");
-        if picker.repository_loading {
-            ui.spinner();
-        }
-    });
-    if let Some(error) = &picker.repository_error {
-        ui.colored_label(
-            egui::Color32::RED,
-            format!("Could not load repositories: {error}"),
-        );
-        return;
+/// 1 行に収まらない長さのテキストを省略する。egui の `truncate()` は
+/// ウィジェット幅までしか効かず、`weak`/`colored_label` のような
+/// 折り返すラベルには使えないため、文字数で先に切っておく。
+pub(super) fn truncate_for_row(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
     }
-
-    let selected_repositories = picker.selected_interest_repositories();
-    if !selected_repositories.is_empty() {
-        ui.horizontal_wrapped(|ui| {
-            for repository in &selected_repositories {
-                ui.weak(format!("[{repository}]"));
-            }
-            if ui.small_button("Clear").clicked() {
-                picker.clear_interest_repositories();
-            }
-        });
-    }
-
-    ui.add(
-        egui::TextEdit::singleline(&mut picker.repository_filter)
-            .hint_text("Filter repositories")
-            .desired_width(260.0),
-    );
-
-    let filter = picker.repository_filter.to_lowercase();
-    let names: Vec<_> = picker
-        .repositories
-        .iter()
-        .filter(|name| filter.is_empty() || name.to_lowercase().contains(&filter))
-        .cloned()
-        .collect();
-
-    ui.horizontal_wrapped(|ui| {
-        ui.label(format!("{} shown", names.len()));
-        if ui.button("Select shown").clicked() {
-            for name in &names {
-                picker.toggle_interest_repository(name, true);
-            }
-        }
-        if ui.button("Clear shown").clicked() {
-            for name in &names {
-                picker.toggle_interest_repository(name, false);
-            }
-        }
-    });
-
-    egui::ScrollArea::vertical()
-        .id_salt("azure_repository_list")
-        .max_height(200.0)
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            if names.is_empty() && !picker.repository_loading {
-                ui.weak("No repositories found (or none match the filter).");
-            }
-            for name in &names {
-                let mut checked = selected_repositories.contains(name);
-                if ui.checkbox(&mut checked, name).changed() {
-                    picker.toggle_interest_repository(name, checked);
-                }
-            }
-        });
-}
-
-/// Area Path ツリー: 検索フィルタ + インデント付きチェックボックス。
-fn show_area_path_picker(ui: &mut egui::Ui, picker: &mut AzureProjectPicker) {
-    ui.horizontal(|ui| {
-        ui.label("Interest areas");
-        ui.weak("(empty = whole project)");
-        if picker.area_loading {
-            ui.spinner();
-        }
-    });
-    if let Some(error) = &picker.area_error {
-        ui.colored_label(egui::Color32::RED, format!("Could not load areas: {error}"));
-        return;
-    }
-
-    let selected_areas = picker.selected_interest_areas();
-    if !selected_areas.is_empty() {
-        ui.horizontal_wrapped(|ui| {
-            for area in &selected_areas {
-                ui.weak(format!("[{area}]"));
-            }
-            if ui.small_button("Clear").clicked() {
-                picker.clear_interest_areas();
-            }
-        });
-    }
-
-    show_area_suggestions(ui, picker, &selected_areas);
-
-    ui.add(
-        egui::TextEdit::singleline(&mut picker.area_filter)
-            .hint_text("Filter area paths")
-            .desired_width(260.0),
-    );
-
-    let filter = picker.area_filter.to_lowercase();
-    let nodes: Vec<_> = picker
-        .area_nodes
-        .iter()
-        .filter(|node| filter.is_empty() || node.path.to_lowercase().contains(&filter))
-        .cloned()
-        .collect();
-
-    ui.horizontal_wrapped(|ui| {
-        ui.label(format!("{} shown", nodes.len()));
-        if ui.button("Select shown").clicked() {
-            for node in &nodes {
-                picker.toggle_interest_area(&node.path, true);
-            }
-        }
-        if ui.button("Clear shown").clicked() {
-            for node in &nodes {
-                picker.toggle_interest_area(&node.path, false);
-            }
-        }
-    });
-
-    egui::ScrollArea::vertical()
-        .id_salt("azure_area_tree")
-        .max_height(260.0)
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            if nodes.is_empty() && !picker.area_loading {
-                ui.weak("No areas found (or none match the filter).");
-            }
-            for node in &nodes {
-                let mut checked = selected_areas.contains(&node.path);
-                ui.horizontal(|ui| {
-                    ui.add_space(node.depth as f32 * 16.0);
-                    let name = node.path.rsplit('\\').next().unwrap_or(&node.path);
-                    if ui.checkbox(&mut checked, name).changed() {
-                        picker.toggle_interest_area(&node.path, checked);
-                    }
-                });
-            }
-        });
-}
-
-/// 自分に割り当てられた Work Item から集計した Area Path 候補。
-/// ボタンを押すまでは何も取得しない (明示的な操作のみ API を呼ぶ)。
-fn show_area_suggestions(
-    ui: &mut egui::Ui,
-    picker: &mut AzureProjectPicker,
-    selected_areas: &std::collections::BTreeSet<String>,
-) {
-    ui.horizontal(|ui| {
-        if ui
-            .add_enabled(
-                !picker.area_suggestion_loading,
-                egui::Button::new("Suggest from my assigned work items"),
-            )
-            .clicked()
-        {
-            picker.suggest_areas_from_my_work_items();
-        }
-        if picker.area_suggestion_loading {
-            ui.spinner();
-        }
-    });
-    if let Some(error) = &picker.area_suggestion_error {
-        ui.weak(error);
-    }
-    if picker.area_suggestions.is_empty() {
-        return;
-    }
-    ui.weak("Suggested (from your assigned work items):");
-    egui::ScrollArea::vertical()
-        .id_salt("azure_area_suggestions")
-        .max_height(120.0)
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            for (path, count) in picker.area_suggestions.clone() {
-                let mut checked = selected_areas.contains(&path);
-                if ui
-                    .checkbox(&mut checked, format!("{path} ({count})"))
-                    .changed()
-                {
-                    picker.toggle_interest_area(&path, checked);
-                }
-            }
-        });
-    ui.separator();
+    let head: String = text.chars().take(max_chars.saturating_sub(1)).collect();
+    format!("{head}\u{2026}")
 }

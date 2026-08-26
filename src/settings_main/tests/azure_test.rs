@@ -496,3 +496,67 @@ fn loading_an_area_tree_does_not_check_areas_from_a_different_project() {
         .unwrap();
     assert!(waypoint.interest_areas.is_empty());
 }
+
+#[test]
+fn switching_the_expanded_project_clears_the_area_filter() {
+    // 絞り込みを持ち越すと、別プロジェクトを開いた直後に 0 件になり
+    // 「ツリーが空」に見える。
+    let mut picker = picker_with(
+        vec![project("contoso", "Waypoint"), project("contoso", "Other")],
+        "contoso",
+    );
+
+    picker.toggle_priority_suggestion_expanded("contoso", "Waypoint");
+    picker.priority_suggestion_area_filter = "launcher".to_string();
+
+    picker.toggle_priority_suggestion_expanded("contoso", "Other");
+
+    assert!(picker.priority_suggestion_area_filter.is_empty());
+}
+
+#[test]
+fn collapsing_the_expanded_project_clears_the_area_filter() {
+    let mut picker = picker_with(vec![project("contoso", "Waypoint")], "contoso");
+
+    picker.toggle_priority_suggestion_expanded("contoso", "Waypoint");
+    picker.priority_suggestion_area_filter = "launcher".to_string();
+
+    // 同じ行をもう一度押すと畳まれる。次に開いたときへ持ち越さない。
+    picker.toggle_priority_suggestion_expanded("contoso", "Waypoint");
+
+    assert_eq!(picker.priority_suggestion_expanded, None);
+    assert!(picker.priority_suggestion_area_filter.is_empty());
+}
+
+#[test]
+fn expanding_a_suggestion_row_reports_the_picker_as_loading() {
+    // `is_loading_anything` が false のままだと再描画が予約されず、
+    // 取得結果を受け取る `poll_load` が二度と走らない。展開しても
+    // Area ツリーが空のままになる回帰を防ぐ。
+    let mut picker = picker_with(vec![project("contoso", "Waypoint")], "contoso");
+    assert!(!picker.is_loading_anything());
+
+    picker.toggle_priority_suggestion_expanded("contoso", "Waypoint");
+
+    assert!(
+        picker.priority_suggestion_area_loading.is_some(),
+        "expanding should start an area fetch"
+    );
+    assert!(
+        picker.is_loading_anything(),
+        "a pending area fetch must keep the repaint loop alive"
+    );
+}
+
+#[test]
+fn collapsing_a_suggestion_row_does_not_start_a_fetch() {
+    let mut picker = picker_with(vec![project("contoso", "Waypoint")], "contoso");
+
+    picker.toggle_priority_suggestion_expanded("contoso", "Waypoint");
+    // 取得中の状態を消してから畳む (受信スレッドの完了を模す)。
+    picker.priority_suggestion_area_loading = None;
+    picker.toggle_priority_suggestion_expanded("contoso", "Waypoint");
+
+    assert_eq!(picker.priority_suggestion_expanded, None);
+    assert!(picker.priority_suggestion_area_loading.is_none());
+}
