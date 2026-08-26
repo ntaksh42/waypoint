@@ -652,7 +652,8 @@ impl AzureProjectPicker {
         self.priority_suggestion_area_loading = None;
         match result {
             Ok(nodes) => {
-                self.priority_suggestion_area_trees.insert(key.clone(), nodes);
+                self.priority_suggestion_area_trees
+                    .insert(key.clone(), nodes);
                 self.priority_suggestion_area_error = None;
                 self.check_recent_activity_areas(&key);
             }
@@ -679,7 +680,11 @@ impl AzureProjectPicker {
             return;
         };
         for path in paths {
-            if !project_entry.interest_areas.iter().any(|area| area == &path) {
+            if !project_entry
+                .interest_areas
+                .iter()
+                .any(|area| area == &path)
+            {
                 project_entry.interest_areas.push(path);
             }
         }

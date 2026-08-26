@@ -179,7 +179,12 @@ fn dynamic_entries(
     config_entries: &[Entry],
     settings: &crate::config::QuickLaunchSettings,
     dynamic: &Menus,
-) -> (Vec<Entry>, Vec<super::search::LowerKeys>, Vec<Entry>, Vec<super::search::LowerKeys>) {
+) -> (
+    Vec<Entry>,
+    Vec<super::search::LowerKeys>,
+    Vec<Entry>,
+    Vec<super::search::LowerKeys>,
+) {
     let mut entries = config_entries.to_vec();
     if settings.include_recent_folders {
         entries.extend(dynamic.recent_folders.iter().map(|item| Entry {

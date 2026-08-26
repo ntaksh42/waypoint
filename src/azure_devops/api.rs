@@ -302,9 +302,7 @@ fn fetch_pull_requests_history(
         let oldest_in_page = page.iter().filter_map(creation_date_unix).min();
         rows.extend(
             page.into_iter()
-                .filter(|item| {
-                    creation_date_unix(item).is_none_or(|created| created >= cutoff)
-                })
+                .filter(|item| creation_date_unix(item).is_none_or(|created| created >= cutoff))
                 .filter_map(|item| pull_request_row(project, &item, current_user)),
         );
         if should_stop_history_paging(
@@ -841,7 +839,21 @@ mod tests {
     fn history_paging_respects_a_custom_max_count_smaller_than_the_default() {
         // ライブ検索用の広い上限だけでなく、狭い上限を渡した場合でも
         // 正しく打ち切れることを確認する
-        assert!(should_stop_history_paging(500, 500, Some(2_000), 1_000, 50, 50));
-        assert!(!should_stop_history_paging(500, 500, Some(2_000), 1_000, 49, 50));
+        assert!(should_stop_history_paging(
+            500,
+            500,
+            Some(2_000),
+            1_000,
+            50,
+            50
+        ));
+        assert!(!should_stop_history_paging(
+            500,
+            500,
+            Some(2_000),
+            1_000,
+            49,
+            50
+        ));
     }
 }

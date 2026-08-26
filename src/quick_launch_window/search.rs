@@ -10,8 +10,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::HSTRING;
 
 use super::{
-    EDIT_HEIGHT, EVERYTHING_MAX_RESULTS, EVERYTHING_REPLY_ID_START, PADDING, RowKind, STATE,
-    State, WM_QUICK_LAUNCH_AZURE_RESULTS,
+    EDIT_HEIGHT, EVERYTHING_MAX_RESULTS, EVERYTHING_REPLY_ID_START, PADDING, RowKind, STATE, State,
+    WM_QUICK_LAUNCH_AZURE_RESULTS,
 };
 use crate::config::OpenMode;
 use crate::quick_launch::Entry;
