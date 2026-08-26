@@ -18,7 +18,7 @@ use windows::core::Result;
 use crate::config::{Config, OpenMode};
 use crate::dynamic::Menus as DynamicMenus;
 
-use build::{append_footer, append_in_the_works, build_level};
+use build::{MenuGuard, append_footer, append_in_the_works, build_level};
 
 /// メニュー項目が選ばれたときに実行する内容。
 /// メニュー ID (usize) からこれを引く。
@@ -87,12 +87,30 @@ impl BuiltMenu {
     ///
     /// `owner` は必ず事前に前面化する。そうしないとメニュー外を
     /// クリックしても閉じない (R-2) 。
+    ///
+    /// `TrackPopupMenuEx` はメニューが閉じるまでモーダルにメッセージを
+    /// 汲み続ける。呼び出し元がこれを `RefCell::borrow()` を保持したまま
+    /// 呼ぶと、その間に配送された別メッセージが同じ `RefCell` を
+    /// `borrow_mut()` した瞬間に `BorrowMutError` で panic する。
+    /// これを避けるため、表示自体は `&self` を必要としない
+    /// [`Self::show`] に切り出してある。呼び出し元は
+    /// [`Self::actions_snapshot`] で対応表を複製してから borrow を解放し、
+    /// `show` を呼んで、選ばれた ID を [`Self::resolve_from`] で動作へ
+    /// 変換すること。
     pub fn track(&self, owner: HWND, at: POINT) -> Option<Selection> {
+        let id = Self::show(self.menu, owner, at)?;
+        Self::resolve_from(&self.actions, id)
+    }
+
+    /// メニューを表示し、選ばれた ID を返す (Esc/領域外クリックなら
+    /// `None`)。`&self` を取らないので、呼び出し元は `RefCell` の
+    /// borrow を解放した状態でこれを呼べる。
+    pub fn show(menu: HMENU, owner: HWND, at: POINT) -> Option<usize> {
         let id = unsafe {
             // これを呼ばないとメニューが閉じなくなる
             let _ = SetForegroundWindow(owner);
             TrackPopupMenuEx(
-                self.menu,
+                menu,
                 (TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN).0,
                 at.x,
                 at.y,
@@ -103,11 +121,29 @@ impl BuiltMenu {
         if id.0 == 0 {
             return None; // Esc または領域外クリックで取り消し
         }
-        match id.0 as usize {
+        Some(id.0 as usize)
+    }
+
+    /// メニューの `HMENU`。[`Self::show`] を borrow の外で呼ぶために使う。
+    pub fn handle(&self) -> HMENU {
+        self.menu
+    }
+
+    /// ID → 動作の対応表の複製。表示のモーダルループ中に設定リロードで
+    /// `state.menu` 自体が別インスタンスへ差し替わっても、表示した
+    /// 瞬間のメニューに対応する対応表で解決できるよう、`show` の前に
+    /// 複製して呼び出し元へ渡すために使う。
+    pub fn actions_snapshot(&self) -> BTreeMap<usize, Action> {
+        self.actions.clone()
+    }
+
+    /// [`Self::actions_snapshot`] が返した対応表から動作を解決する。
+    pub fn resolve_from(actions: &BTreeMap<usize, Action>, id: usize) -> Option<Selection> {
+        match id {
             ID_SETTINGS => Some(Selection::Settings),
             ID_RELOAD => Some(Selection::Reload),
             ID_CLOSE => Some(Selection::Close),
-            id => self.action(id).cloned().map(Selection::Action),
+            id => actions.get(&id).cloned().map(Selection::Action),
         }
     }
 }
@@ -137,10 +173,13 @@ pub fn build(cfg: &Config, dynamic: &DynamicMenus) -> Result<BuiltMenu> {
         actions: BTreeMap::new(),
     };
     let menu = unsafe { build_level(&cfg.items, false, &mut ctx)? };
+    // ここから先で失敗したら menu (と接続済みの子サブメニュー) を解体する
+    let guard = MenuGuard::new(menu);
     unsafe {
         append_in_the_works(menu, dynamic, &mut ctx)?;
         append_footer(menu)?;
     }
+    let menu = guard.disarm();
     Ok(BuiltMenu {
         menu,
         actions: ctx.actions,

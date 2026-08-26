@@ -10,8 +10,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::HSTRING;
 
 use super::{
-    EDIT_HEIGHT, EVERYTHING_MAX_RESULTS, EVERYTHING_REPLY_ID_START, PADDING, RowKind, STATE,
-    State, WM_QUICK_LAUNCH_AZURE_RESULTS,
+    EDIT_HEIGHT, EVERYTHING_MAX_RESULTS, EVERYTHING_REPLY_ID_START, PADDING, RowKind, STATE, State,
+    WM_QUICK_LAUNCH_AZURE_RESULTS,
 };
 use crate::config::OpenMode;
 use crate::quick_launch::Entry;
@@ -83,12 +83,16 @@ pub(super) fn update_results(state: &RefCell<State>) {
         return;
     }
 
-    let (list, labels, rows) = {
+    let (list, labels, rows, copy_feedback_cleared, window, dpi) = {
         let mut state = state.borrow_mut();
         // プレフィックスを外れたら、遅れて届く Everything の応答を無視させる
         state.everything_active = false;
         state.azure_work_items_active = false;
         state.empty_message = None;
+        // COPIED バッジは update_badge のプレフィックスバッジ変化検知の
+        // 対象外なので、ここで変化を見て自前で再描画要求しないと、次に
+        // 何か別の理由で再描画されるまで古い COPIED 表示が残り続ける。
+        let copy_feedback_cleared = state.copy_feedback;
         state.copy_feedback = false;
         let section_headers = if query.is_empty() {
             // 絞り込みなし: Spotlight 風に区分見出し付きで一覧を組み立てる
@@ -134,8 +138,19 @@ pub(super) fn update_results(state: &RefCell<State>) {
         state.previous_query = Some(query);
         let (labels, rows) = build_rows(&state.results, &section_headers);
         state.rows = rows.clone();
-        (state.list, labels, rows)
+        (
+            state.list,
+            labels,
+            rows,
+            copy_feedback_cleared,
+            state.window,
+            state.dpi,
+        )
     }; // ← ここで借用が切れる。以降の再入は borrow() できる
+
+    if copy_feedback_cleared {
+        invalidate_search_bar(window, dpi);
+    }
 
     let Some(list) = list else {
         return;

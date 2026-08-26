@@ -9,9 +9,9 @@
 //! 後から `WM_COPYDATA` で届く。呼び出し側 (`quick_launch_window.rs`) が
 //! 自分のウィンドウハンドルを `reply_hwnd` にして受け取る。
 
-use windows::Win32::Foundation::{HWND, LPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::System::DataExchange::COPYDATASTRUCT;
-use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, SendMessageW};
+use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, SMTO_ABORTIFHUNG, SendMessageTimeoutW};
 use windows::core::w;
 
 /// Everything 常駐プロセスが常に持つ通知ウィンドウのクラス名。
@@ -92,12 +92,19 @@ pub fn query(
         lpData: buffer.as_mut_ptr().cast(),
     };
 
+    // UI スレッドからキー入力のたびに同期呼び出しされる。Everything の
+    // メッセージループが停止していても検索窓ごとフリーズしないよう、
+    // 無期限ブロッキングの SendMessageW ではなくタイムアウト付きを使う
+    // (browser_tabs.rs の request_focus と同じ作法)。
     unsafe {
-        SendMessageW(
+        let _ = SendMessageTimeoutW(
             everything,
             windows::Win32::UI::WindowsAndMessaging::WM_COPYDATA,
+            WPARAM(0),
+            LPARAM(std::ptr::from_mut(&mut copy_data) as isize),
+            SMTO_ABORTIFHUNG,
+            100,
             None,
-            Some(LPARAM(std::ptr::from_mut(&mut copy_data) as isize)),
         );
     }
     true

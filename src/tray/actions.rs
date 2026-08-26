@@ -27,11 +27,22 @@ pub(crate) fn show_launcher_at_cursor(hwnd: HWND) {
 
 /// ランチャーのメニューを表示し、選ばれた項目を実行する。
 pub(crate) fn show_launcher(hwnd: HWND, at: POINT, origin: Option<HWND>) {
-    let selection = with_state(|s| {
+    // `TrackPopupMenuEx` はメニューが閉じるまでモーダルにメッセージを
+    // 汲み続ける。表示中に配送された別メッセージ (WM_DYNAMIC_REFRESHED /
+    // WM_RELOAD_CONFIG 等) が STATE を borrow_mut() できるよう、表示
+    // そのものは borrow を解放してから行う (crate::menu::BuiltMenu::show
+    // 参照)。ID → 動作の対応表もここで複製しておく。表示中に設定が
+    // リロードされ state.menu が別インスタンスへ差し替わっても、実際に
+    // 表示したメニューの対応表で解決できるようにするため。
+    let snapshot = with_state(|s| {
         let state = s.borrow();
         let state = state.as_ref()?;
         let menu = state.menu.as_ref()?;
-        menu.track(hwnd, at)
+        Some((menu.handle(), menu.actions_snapshot()))
+    });
+    let selection = snapshot.and_then(|(handle, actions)| {
+        let id = crate::menu::BuiltMenu::show(handle, hwnd, at)?;
+        crate::menu::BuiltMenu::resolve_from(&actions, id)
     });
 
     match selection {
