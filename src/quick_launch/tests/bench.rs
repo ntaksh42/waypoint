@@ -1,5 +1,20 @@
 //! 検索経路の手動計測。`cargo test --release -- --ignored --nocapture bench_`
 //! で走らせる。CI では走らない (時間依存なので合否判定はしない)。
+//!
+//! 基準値 (候補 5500 件: entries 2000 / bookmarks 3000 / apps 500)。
+//! 0bf384f (最適化前) と 17a3b51 を同一機・同一ベンチで測った実測値:
+//!
+//! | 計測 | 0bf384f | 17a3b51 |
+//! |---|---|---|
+//! | search "pro" | 1.164 ms | 0.185 ms |
+//! | search "project" | 1.339 ms | 0.322 ms |
+//! | search "zzqqxx" (無一致) | 1.776 ms | 0.999 ms |
+//! | search "project 42" | 1.826 ms | 1.035 ms |
+//! | 13 打鍵 (毎回引き直し) | 35.1 ms | 14.5 ms |
+//! | "application" (実経路) | 0.928 ms | 0.517 ms |
+//!
+//! 効いた変更は 3 つ: サブシーケンス判定の ASCII バイト走査化、
+//! 上位ティアで埋まったときの fuzzy 打ち切り、`opt-level` を 3 へ。
 
 use super::super::*;
 use std::time::Instant;
@@ -493,10 +508,8 @@ fn bench_index_rebuild() {
 fn bench_sections_breakdown() {
     use std::time::Instant;
     let index = large_index(2000, 3000, 5000, 500);
-    let total: usize = index.entries.len()
-        + index.bookmarks.len()
-        + index.history.len()
-        + index.apps.len();
+    let total: usize =
+        index.entries.len() + index.bookmarks.len() + index.history.len() + index.apps.len();
     println!("sections が触る候補の総数 = {total}");
 
     // rank_lower 全件
@@ -504,7 +517,12 @@ fn bench_sections_breakdown() {
     for _ in 0..100 {
         let mut acc = 0u64;
         for (e, k) in index.entries.iter().zip(&index.entries_lower) {
-            acc = acc.wrapping_add(index.ranking.rank_lower(e, super::super::search::keys_path(k)).0);
+            acc = acc.wrapping_add(
+                index
+                    .ranking
+                    .rank_lower(e, super::super::search::keys_path(k))
+                    .0,
+            );
         }
         std::hint::black_box(acc);
     }
