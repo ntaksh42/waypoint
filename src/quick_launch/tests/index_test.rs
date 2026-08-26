@@ -76,3 +76,75 @@ fn refresh_dynamic_updates_recent_and_frequent_folders() {
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].path, r"C:\Users\me\Downloads");
 }
+
+/// `Index::refresh_azure` は Azure DevOps の候補だけを組み直し、
+/// apps / bookmarks / history / Recent Folders は保持する。
+///
+/// バックグラウンド同期の完了通知はフル `Index::build` を呼ばない
+/// (呼ぶとスタートメニューの再スキャンが同期のたびに UI スレッドで走る)。
+/// その前提が崩れていないことを、再スキャンすると消えるダミーデータが
+/// 残っているかで確かめる。
+#[test]
+fn refresh_azure_keeps_apps_bookmarks_history_and_folders() {
+    use crate::dynamic::PathEntry;
+
+    let mut config = config_without_live_scans();
+    // Azure は無効のまま (実際の API / SQLite を触らせない)。
+    // refresh_azure が azure* を空へ組み直すこと自体は問題なく、
+    // ここで見たいのは「それ以外が巻き添えで消えないこと」。
+    config.settings.quick_launch.azure_devops.enabled = false;
+
+    let dynamic = Menus {
+        recent_folders: vec![PathEntry {
+            name: "Downloads".into(),
+            path: r"C:\Users\me\Downloads".into(),
+        }],
+        ..Menus::default()
+    };
+    let mut index = Index::build(&config, &dynamic);
+
+    // 実マシンをスキャンしない設定なので、保持を確かめる対象を直接差し込む
+    index.apps = vec![Entry {
+        name: "Visual Studio Code".into(),
+        breadcrumb: String::new(),
+        path: r"C:\Start Menu\Visual Studio Code.lnk".into(),
+        action: Action::LaunchApp,
+        branch: None,
+    }];
+    index.apps_lower = search::LowerKeys::build_for(&index.apps);
+    index.bookmarks = vec![Entry {
+        name: "GitHub".into(),
+        breadcrumb: String::new(),
+        path: "https://github.com/".into(),
+        action: Action::OpenUrl("https://github.com/".into()),
+        branch: None,
+    }];
+    index.bookmarks_lower = search::LowerKeys::build_for(&index.bookmarks);
+    index.history = vec![Entry {
+        name: "Rust docs".into(),
+        breadcrumb: "Chrome History".into(),
+        path: "https://doc.rust-lang.org/".into(),
+        action: Action::OpenUrl("https://doc.rust-lang.org/".into()),
+        branch: None,
+    }];
+    index.history_lower = search::LowerKeys::build_for(&index.history);
+
+    index.refresh_azure(&config);
+
+    assert_eq!(index.apps.len(), 1, "apps が再スキャンされて消えている");
+    assert_eq!(index.apps[0].name, "Visual Studio Code");
+    assert_eq!(index.bookmarks.len(), 1, "bookmarks が消えている");
+    assert_eq!(index.bookmarks[0].name, "GitHub");
+    assert_eq!(index.history.len(), 1, "history が消えている");
+    assert_eq!(index.history[0].name, "Rust docs");
+
+    // Recent Folders (entries 側) も保持される
+    let found = index.search("downloads");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].path, r"C:\Users\me\Downloads");
+
+    // 検索経路からも引けること (lower キーが対で保たれている)
+    assert_eq!(index.search("a visual").len(), 1);
+    assert_eq!(index.search("b github").len(), 1);
+    assert_eq!(index.search("h rust").len(), 1);
+}

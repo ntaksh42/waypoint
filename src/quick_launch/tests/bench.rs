@@ -541,3 +541,29 @@ fn bench_sections_breakdown() {
         start.elapsed().as_secs_f64() * 1000.0 / 100.0
     );
 }
+
+/// スタートメニューの `.lnk` 列挙 (`a ` プレフィックスの母集団)。
+/// `Index::build` で走る。実機のスタートメニューをそのまま読む。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_apps_scan() {
+    use std::time::Instant;
+    // COM を使うので初期化しておく (常駐部は UI スレッドで初期化済み)。
+    unsafe {
+        let _ = windows::Win32::System::Com::CoInitializeEx(
+            None,
+            windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
+        );
+    }
+    let start = Instant::now();
+    let apps = crate::apps::scan();
+    let first = start.elapsed().as_secs_f64() * 1000.0;
+    let start = Instant::now();
+    let again = crate::apps::scan();
+    let second = start.elapsed().as_secs_f64() * 1000.0;
+    println!(
+        "apps::scan() {} 件  1 回目 {first:>8.2} ms  2 回目 {second:>8.2} ms",
+        apps.len()
+    );
+    assert_eq!(apps.len(), again.len());
+}

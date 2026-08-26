@@ -127,7 +127,9 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
             with_state(|state| {
                 let state = state.borrow();
                 if let Some(state) = state.as_ref() {
-                    quick_launch_window::configure(&state.config, &state.dynamic);
+                    // Azure の候補だけ差し替える。フル `configure` にすると
+                    // 同期のたびにスタートメニューの再スキャンが道連れになる
+                    quick_launch_window::configure_azure(&state.config);
                 }
             });
             LRESULT(0)

@@ -50,36 +50,8 @@ impl Index {
             Vec::new()
         };
 
-        let mut azure_candidates = if settings.azure_devops.enabled {
-            crate::azure_devops::project_candidates(&settings.azure_devops)
-        } else {
-            Vec::new()
-        };
-        azure_candidates.extend(crate::azure_devops::cached_candidates(
-            &settings.azure_devops,
-        ));
-        // 優先度を最優先しつつ、同一プロジェクト内では自分が関与する PR、
-        // 日常的に開く Active PR、失敗した Pipeline の順に先頭へ置く。
-        // 通常の使用履歴ランキングも後段で効く。
-        azure_candidates.sort_by_key(|candidate| (candidate.priority, azure_urgency(candidate)));
-        let azure = azure_candidates
-            .into_iter()
-            .map(|candidate| {
-                let entry = azure_candidate_entry(candidate.clone());
-                AzureIndexed {
-                    lower: super::search::LowerKeys::new(&entry),
-                    entry,
-                    kind: candidate.kind,
-                    status: candidate.status,
-                    is_mine: candidate.is_mine,
-                }
-            })
-            .collect();
-        let azure_work_items: Vec<Entry> =
-            crate::azure_devops::cached_work_item_candidates(&settings.azure_devops)
-                .into_iter()
-                .map(azure_candidate_entry)
-                .collect();
+        let azure = azure_indexed(settings);
+        let azure_work_items = azure_work_item_entries(settings);
 
         let apps = if settings.include_apps {
             crate::apps::scan()
@@ -144,6 +116,21 @@ impl Index {
         self.windows_lower = windows_lower;
     }
 
+    /// Azure DevOps の候補だけを組み直す。
+    ///
+    /// バックグラウンド同期の完了通知 (`WM_AZURE_DEVOPS_REFRESHED`) から使う。
+    /// ここでフル `Index::build` をやり直すと、変わっていない apps /
+    /// bookmarks / history まで道連れで再スキャンされる。特に
+    /// `crate::apps::scan` はショートカット 1 件ごとに COM の ShellLink を
+    /// 作るため実測で数十 ms かかり、UI スレッドを塞ぐ
+    /// (`refresh_dynamic` が Recent/Frequent だけを差し替えるのと同じ理由)。
+    pub fn refresh_azure(&mut self, config: &Config) {
+        let settings = &config.settings.quick_launch;
+        self.azure = azure_indexed(settings);
+        self.azure_work_items = azure_work_item_entries(settings);
+        self.azure_work_items_lower = super::search::LowerKeys::build_for(&self.azure_work_items);
+    }
+
     /// 拡張から届いた全ブラウザのタブ一覧で、検索用候補を差し替える。
     /// タブの URL / タイトルは常駐プロセスのメモリだけに置き、設定や履歴には保存しない。
     pub(crate) fn set_browser_tabs(
@@ -170,6 +157,44 @@ impl Index {
             .collect();
         self.tabs_lower = super::search::LowerKeys::build_for(&self.tabs);
     }
+}
+
+/// Azure DevOps の PR / Pipeline / Project 候補を、検索用の索引へ組む。
+/// `Index::build` と `Index::refresh_azure` の共通部分。
+fn azure_indexed(settings: &crate::config::QuickLaunchSettings) -> Vec<AzureIndexed> {
+    let mut candidates = if settings.azure_devops.enabled {
+        crate::azure_devops::project_candidates(&settings.azure_devops)
+    } else {
+        Vec::new()
+    };
+    candidates.extend(crate::azure_devops::cached_candidates(
+        &settings.azure_devops,
+    ));
+    // 優先度を最優先しつつ、同一プロジェクト内では自分が関与する PR、
+    // 日常的に開く Active PR、失敗した Pipeline の順に先頭へ置く。
+    // 通常の使用履歴ランキングも後段で効く。
+    candidates.sort_by_key(|candidate| (candidate.priority, azure_urgency(candidate)));
+    candidates
+        .into_iter()
+        .map(|candidate| {
+            let entry = azure_candidate_entry(candidate.clone());
+            AzureIndexed {
+                lower: super::search::LowerKeys::new(&entry),
+                entry,
+                kind: candidate.kind,
+                status: candidate.status,
+                is_mine: candidate.is_mine,
+            }
+        })
+        .collect()
+}
+
+/// Work Item のキャッシュ候補。`azure_indexed` と同じく共通部分。
+fn azure_work_item_entries(settings: &crate::config::QuickLaunchSettings) -> Vec<Entry> {
+    crate::azure_devops::cached_work_item_candidates(&settings.azure_devops)
+        .into_iter()
+        .map(azure_candidate_entry)
+        .collect()
 }
 
 /// config 由来の候補 (`config_entries`) に Recent/Frequent Folders を足して

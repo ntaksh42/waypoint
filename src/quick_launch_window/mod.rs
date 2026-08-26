@@ -222,6 +222,30 @@ pub fn configure_dynamic(config: &Config, dynamic: &Menus) {
     });
 }
 
+/// `configure` の軽量版その 2。Azure DevOps の候補だけを差し替え、
+/// apps / bookmarks / history / Recent/Frequent は保持する
+/// (`Index::refresh_azure` 参照)。
+///
+/// バックグラウンド同期の完了通知 (`WM_AZURE_DEVOPS_REFRESHED`) から使う。
+/// 同期は定期的に走るため、ここでフル `Index::build` をやり直すと、変わって
+/// いないスタートメニューの再スキャン (実測で数十 ms) が同期のたびに
+/// UI スレッドで起きる。
+pub fn configure_azure(config: &Config) {
+    STATE.with(|state| {
+        let has_window = {
+            let mut state = state.borrow_mut();
+            state.index.refresh_azure(config);
+            // Index の中身 (azure*) が変わったので、前回結果への絞り込み
+            // 最適化 (`refined_search_term`) をそのまま使い回さない
+            state.previous_query = None;
+            state.window.is_some()
+        };
+        if has_window {
+            update_results(state);
+        }
+    });
+}
+
 /// Native Messaging host が届けた 1 ブラウザ分のタブ一覧を入れ替える。
 ///
 /// タブの変更通知時だけ呼ばれる。Quick Launch が表示中なら、現在の `t ` 検索結果も
