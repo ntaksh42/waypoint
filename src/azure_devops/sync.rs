@@ -20,6 +20,23 @@ use super::cache;
 use super::convert::{pull_request_cached_row_to_candidate, valid_project};
 use super::credential::load_pat;
 
+/// poisoned でも中身を取り出してロックする。
+///
+/// ライブ検索の結果置き場は `thread::spawn` した先から書き、UI スレッドから
+/// 読む。どこか 1 つのスレッドがロック保持中にパニックすると、以後この
+/// Mutex は永久に poisoned のままになる。`expect` で落とすと以降の Azure
+/// 検索がすべてパニックし、`.ok()?` で握り潰すと結果が黙って返らなくなる
+/// (どちらも 1 回のパニックが恒久的な機能停止になる)。
+///
+/// 中身は `HashMap<u32, Reply>` で、途中まで書けた状態でも壊れているのは
+/// 高々 1 件ぶん。次のリクエストで上書きされるので、回収して続ける方が
+/// 実害が小さい。`dynamic.rs` の `ResultSlot` と同じ方針。
+fn lock_recovering<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct WorkItemReply {
     pub candidates: Vec<Candidate>,
@@ -185,9 +202,7 @@ pub fn search_work_items_async(
         } else {
             None
         };
-        let mut pending = pending_work_items()
-            .lock()
-            .expect("work item result lock poisoned");
+        let mut pending = lock_recovering(pending_work_items());
         pending.insert(
             request_id,
             WorkItemReply {
@@ -209,7 +224,7 @@ pub fn search_work_items_async(
 }
 
 pub fn take_work_item_results(request_id: u32) -> Option<WorkItemReply> {
-    pending_work_items().lock().ok()?.remove(&request_id)
+    lock_recovering(pending_work_items()).remove(&request_id)
 }
 
 fn pending_work_items() -> &'static Mutex<HashMap<u32, WorkItemReply>> {
@@ -321,9 +336,7 @@ pub fn search_pull_requests_live_async(
         } else {
             None
         };
-        let mut pending = pending_pull_requests()
-            .lock()
-            .expect("pull request result lock poisoned");
+        let mut pending = lock_recovering(pending_pull_requests());
         pending.insert(
             request_id,
             PullRequestReply {
@@ -345,7 +358,7 @@ pub fn search_pull_requests_live_async(
 }
 
 pub fn take_pull_request_results(request_id: u32) -> Option<PullRequestReply> {
-    pending_pull_requests().lock().ok()?.remove(&request_id)
+    lock_recovering(pending_pull_requests()).remove(&request_id)
 }
 
 fn pending_pull_requests() -> &'static Mutex<HashMap<u32, PullRequestReply>> {
@@ -466,5 +479,34 @@ mod tests {
     #[test]
     fn count_areas_is_empty_without_input() {
         assert!(count_areas(Vec::new()).is_empty());
+    }
+
+    /// poisoned な Mutex でも中身を取り出して続行する。
+    ///
+    /// ライブ検索の結果置き場はワーカースレッドが書き UI スレッドが読む。
+    /// 1 スレッドのパニックで以後の Azure 検索が全滅しないことを固定する。
+    #[test]
+    fn lock_recovering_survives_a_poisoned_mutex() {
+        use std::sync::{Arc, Mutex};
+
+        let mutex = Arc::new(Mutex::new(vec![1u32, 2, 3]));
+
+        // ロックを保持したままパニックさせて poisoned にする
+        let poisoner = Arc::clone(&mutex);
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoner.lock().expect("最初の取得は成功する");
+            panic!("ワーカーがロック保持中に落ちた");
+        })
+        .join();
+        assert!(mutex.is_poisoned(), "前提: poisoned になっていること");
+
+        // expect なら落ちる状況でも、中身を取り出して続けられる
+        let mut guard = super::lock_recovering(&mutex);
+        assert_eq!(*guard, vec![1, 2, 3], "poisoned でも中身は読める");
+        guard.push(4);
+        drop(guard);
+
+        // 2 回目以降も同じく使える (恒久的な機能停止にならない)
+        assert_eq!(*super::lock_recovering(&mutex), vec![1, 2, 3, 4]);
     }
 }
