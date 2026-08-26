@@ -474,3 +474,76 @@ fn bench_startup_parts() {
         let _ = crate::quick_launch_history::Ranking::load();
     });
 }
+
+/// メニューを開くたびに走る `WM_MEASUREITEM` の採寸。
+///
+/// `menu_draw::text_extent` は項目 1 件ごとに `GetDC` →
+/// `SelectObject` → `GetTextExtentPoint32W` → `ReleaseDC` を回す。
+/// 実機は 48 項目あり、これがトリガー経路 (表示予算 50ms) に乗る。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_menu_measure() {
+    use std::time::Instant;
+    use windows::Win32::Foundation::SIZE;
+    use windows::Win32::Graphics::Gdi::{GetDC, GetTextExtentPoint32W, ReleaseDC};
+
+    let labels: Vec<String> = (0..48)
+        .map(|i| format!("Project Folder {i}  [main]"))
+        .collect();
+
+    // 現行と同じ形: 項目ごとに GetDC / ReleaseDC
+    let start = Instant::now();
+    for _ in 0..50 {
+        let mut total = 0i32;
+        for label in &labels {
+            let wide: Vec<u16> = label.encode_utf16().collect();
+            unsafe {
+                let hdc = GetDC(None);
+                let mut size = SIZE::default();
+                let _ = GetTextExtentPoint32W(hdc, &wide, &mut size);
+                ReleaseDC(None, hdc);
+                total += size.cx;
+            }
+        }
+        std::hint::black_box(total);
+    }
+    let per_item_dc = start.elapsed().as_secs_f64() * 1000.0 / 50.0;
+
+    // 比較: DC を 1 回だけ取って使い回す
+    let start = Instant::now();
+    for _ in 0..50 {
+        let mut total = 0i32;
+        unsafe {
+            let hdc = GetDC(None);
+            for label in &labels {
+                let wide: Vec<u16> = label.encode_utf16().collect();
+                let mut size = SIZE::default();
+                let _ = GetTextExtentPoint32W(hdc, &wide, &mut size);
+                total += size.cx;
+            }
+            ReleaseDC(None, hdc);
+        }
+        std::hint::black_box(total);
+    }
+    let shared_dc = start.elapsed().as_secs_f64() * 1000.0 / 50.0;
+
+    // 実装 (キャッシュ付き `menu_draw::text_extent`) を通した場合
+    crate::menu_draw::clear_for_bench();
+    let start = Instant::now();
+    for label in &labels {
+        std::hint::black_box(crate::menu_draw::text_extent_for_bench(label));
+    }
+    let cold = start.elapsed().as_secs_f64() * 1000.0;
+    let start = Instant::now();
+    for _ in 0..50 {
+        for label in &labels {
+            std::hint::black_box(crate::menu_draw::text_extent_for_bench(label));
+        }
+    }
+    let warm = start.elapsed().as_secs_f64() * 1000.0 / 50.0;
+
+    println!(
+        "48 項目の採寸: 項目ごとに GetDC {per_item_dc:>8.4} ms  /  DC 使い回し {shared_dc:>8.4} ms"
+    );
+    println!("  実装 (キャッシュ付き): 1 回目 {cold:>8.4} ms  /  2 回目以降 {warm:>8.4} ms");
+}
