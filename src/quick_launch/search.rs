@@ -233,8 +233,16 @@ pub(crate) fn search_entries<'a>(
                 // さらに増えてしまう)。
                 let path_lower = entry.path.to_lowercase();
                 let path = search_paths.then_some(path_lower.as_str());
-                score_entry(entry, &name, &breadcrumb, path, &path_lower, &terms, ranking)
-                    .map(|score| (score, order, entry))
+                score_entry(
+                    entry,
+                    &name,
+                    &breadcrumb,
+                    path,
+                    &path_lower,
+                    &terms,
+                    ranking,
+                )
+                .map(|score| (score, order, entry))
             }),
     )
 }
@@ -291,9 +299,15 @@ pub(crate) fn search_entries_cached_multi<'a>(
                 let breadcrumb = entry.breadcrumb.to_lowercase();
                 let path_lower = entry.path.to_lowercase();
                 let path = search_paths.then_some(path_lower.as_str());
-                if let Some(score) =
-                    score_entry(entry, &name, &breadcrumb, path, &path_lower, &terms, ranking)
-                {
+                if let Some(score) = score_entry(
+                    entry,
+                    &name,
+                    &breadcrumb,
+                    path,
+                    &path_lower,
+                    &terms,
+                    ranking,
+                ) {
                     scored.push((score, order, entry));
                 }
                 order += 1;

@@ -124,7 +124,10 @@ struct ResultSlot(std::sync::Mutex<Option<Menus>>);
 
 impl ResultSlot {
     fn with_lock<R>(&self, f: impl FnOnce(&mut Option<Menus>) -> R) -> R {
-        let mut guard = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut guard = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         f(&mut guard)
     }
 }

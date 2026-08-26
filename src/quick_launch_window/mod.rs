@@ -318,7 +318,10 @@ pub fn handle_message(message: &windows::Win32::UI::WindowsAndMessaging::MSG) ->
         // 見出し行 (区分見出し) は選択対象外。results.len() を直接使うと
         // 見出しの数だけ結果がずれる不具合になる (実測で End が最終項目
         // 手前に着地した)。first/last_selectable_row で行番号ベースに揃える。
-        0x24 => {
+        //
+        // Edit にフォーカスがある間はネイティブの行頭/行末カーソル移動を
+        // 奪わないよう、Ctrl+C と同様リスト側で押されたときだけ扱う。
+        0x24 if Some(message.hwnd) == STATE.with(|state| state.borrow().list) => {
             let (list, rows) = STATE.with(|state| {
                 let state = state.borrow();
                 (state.list, state.rows.clone())
@@ -327,7 +330,7 @@ pub fn handle_message(message: &windows::Win32::UI::WindowsAndMessaging::MSG) ->
                 select_at(list, row);
             }
         }
-        0x23 => {
+        0x23 if Some(message.hwnd) == STATE.with(|state| state.borrow().list) => {
             let (list, rows) = STATE.with(|state| {
                 let state = state.borrow();
                 (state.list, state.rows.clone())

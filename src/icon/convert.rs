@@ -209,7 +209,12 @@ fn resize_bitmap(bitmap: HBITMAP, from: SIZE, to: SIZE) -> Option<HBITMAP> {
         let pixels =
             std::slice::from_raw_parts(info.bmBits.cast::<u8>(), stride * from.cy as usize);
         let mut rgba = vec![0u8; pixels.len()];
-        for (source, target) in pixels.chunks_exact(4).zip(rgba.chunks_exact_mut(4)) {
+        for (source, target) in pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(rgba.as_chunks_mut::<4>().0)
+        {
             let alpha = source[3];
             let unmultiply = |value: u8| {
                 if alpha == 0 {
@@ -252,7 +257,12 @@ pub(crate) fn rgba_to_bitmap(rgba: &[u8], size: SIZE) -> Option<HBITMAP> {
         let mut bits = std::ptr::null_mut();
         let bitmap = CreateDIBSection(None, &header, DIB_RGB_COLORS, &mut bits, None, 0).ok()?;
         let pixels = std::slice::from_raw_parts_mut(bits.cast::<u8>(), rgba.len());
-        for (source, target) in rgba.chunks_exact(4).zip(pixels.chunks_exact_mut(4)) {
+        for (source, target) in rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(pixels.as_chunks_mut::<4>().0)
+        {
             let alpha = u16::from(source[3]);
             target[0] = (u16::from(source[2]) * alpha / 255) as u8;
             target[1] = (u16::from(source[1]) * alpha / 255) as u8;

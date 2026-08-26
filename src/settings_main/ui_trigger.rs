@@ -22,6 +22,7 @@ impl SettingsApp {
             .default_height(520.0)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
+                let previous_tab = draft.active_tab;
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut draft.active_tab, TriggerTab::General, "General");
                     ui.selectable_value(
@@ -30,6 +31,14 @@ impl SettingsApp {
                         "Quick Launch",
                     );
                 });
+                if draft.active_tab != previous_tab && draft.recording.is_some() {
+                    // 記録中の欄は切り替え先タブでは見えなくなるが、
+                    // フック自体は張られたままなので記録を明示的に止める。
+                    // 放置すると、非表示のまま記録が続いた欄が、いま
+                    // 見えている別欄のつもりで押したキーで上書きされる。
+                    hotkey_capture::stop();
+                    draft.recording = None;
+                }
                 ui.separator();
                 egui::ScrollArea::vertical().show(ui, |ui| match draft.active_tab {
                     TriggerTab::General => {
@@ -100,15 +109,17 @@ impl SettingsApp {
             draft.recording = None;
         }
         if apply {
-            if waypoint::trigger::parse_hotkey(draft.hotkey.trim()).is_none() {
+            let parsed_menu = waypoint::trigger::parse_hotkey(draft.hotkey.trim());
+            let parsed_quick_launch =
+                waypoint::trigger::parse_hotkey(draft.quick_launch_hotkey.trim());
+            if parsed_menu.is_none() {
                 draft.error = Some("Hotkey is invalid.".to_string());
-            } else if waypoint::trigger::parse_hotkey(draft.quick_launch_hotkey.trim()).is_none() {
+            } else if parsed_quick_launch.is_none() {
                 draft.error = Some("Quick Launch hotkey is invalid.".to_string());
-            } else if draft
-                .hotkey
-                .trim()
-                .eq_ignore_ascii_case(draft.quick_launch_hotkey.trim())
-            {
+            } else if parsed_menu == parsed_quick_launch {
+                // 文字列比較だと "Ctrl+Shift+W" と "Shift+Ctrl+W" のような
+                // 表記違いを見逃す。parse_hotkey が返す (modifiers, vk) の
+                // 組で比較し、意味的な重複を確実に検知する。
                 draft.error = Some("The two hotkeys must be different.".to_string());
             } else {
                 self.config.settings.trigger.middle_click = draft.middle_click;

@@ -433,3 +433,66 @@ fn toggling_a_priority_suggestion_area_on_twice_does_not_duplicate_it() {
         1
     );
 }
+
+#[test]
+fn loading_an_area_tree_checks_areas_found_in_recent_activity_by_default() {
+    let mut picker = picker_with(vec![project("contoso", "Waypoint")], "contoso");
+    picker.priority_suggestions = vec![activity(
+        "contoso",
+        "Waypoint",
+        7,
+        vec![("Waypoint\\Launcher", 5), ("Waypoint\\Docs", 2)],
+    )];
+
+    picker.check_recent_activity_areas(&("contoso".to_string(), "Waypoint".to_string()));
+
+    let areas = &picker.projects[0].interest_areas;
+    assert!(areas.contains(&"Waypoint\\Launcher".to_string()));
+    assert!(areas.contains(&"Waypoint\\Docs".to_string()));
+}
+
+#[test]
+fn loading_an_area_tree_does_not_duplicate_an_area_already_selected() {
+    // project_with_details は既に "Waypoint\Launcher" を interest_areas に持つ
+    let mut picker = picker_with(vec![project_with_details("contoso", "Waypoint")], "contoso");
+    picker.priority_suggestions = vec![activity(
+        "contoso",
+        "Waypoint",
+        5,
+        vec![("Waypoint\\Launcher", 5)],
+    )];
+
+    picker.check_recent_activity_areas(&("contoso".to_string(), "Waypoint".to_string()));
+
+    let areas = &picker.projects[0].interest_areas;
+    assert_eq!(
+        areas.iter().filter(|a| *a == "Waypoint\\Launcher").count(),
+        1
+    );
+}
+
+#[test]
+fn loading_an_area_tree_does_not_check_areas_from_a_different_project() {
+    let mut picker = picker_with(
+        vec![
+            project("contoso", "Waypoint"),
+            project("contoso", "Platform"),
+        ],
+        "contoso",
+    );
+    picker.priority_suggestions = vec![activity(
+        "contoso",
+        "Platform",
+        3,
+        vec![("Platform\\Core", 3)],
+    )];
+
+    picker.check_recent_activity_areas(&("contoso".to_string(), "Waypoint".to_string()));
+
+    let waypoint = picker
+        .projects
+        .iter()
+        .find(|entry| entry.project == "Waypoint")
+        .unwrap();
+    assert!(waypoint.interest_areas.is_empty());
+}
