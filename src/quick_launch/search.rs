@@ -165,7 +165,7 @@ impl Index {
                     true,
                     &self.ranking,
                 ),
-                AzureCommand::WorkItems | AzureCommand::Suggest => Vec::new(),
+                AzureCommand::WorkItems { .. } | AzureCommand::Suggest => Vec::new(),
             };
         }
         search_entries_cached_multi(

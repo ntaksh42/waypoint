@@ -4,7 +4,7 @@ use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
     DefWindowProcW, GetCursorPos, PostQuitMessage, WM_COMMAND, WM_COPYDATA, WM_DESTROY,
     WM_DRAWITEM, WM_HOTKEY, WM_LBUTTONUP, WM_MEASUREITEM, WM_RBUTTONUP, WM_SETTINGCHANGE,
-    WM_THEMECHANGED,
+    WM_THEMECHANGED, WM_TIMER,
 };
 
 use crate::quick_launch;
@@ -18,7 +18,8 @@ use super::actions::{
     show_launcher, show_launcher_at_cursor, show_tray_menu,
 };
 use super::{
-    WM_AZURE_DEVOPS_REFRESHED, WM_DYNAMIC_REFRESHED, WM_RELOAD_CONFIG, WM_TRAY, reload, with_state,
+    AZURE_FULL_REFRESH_TIMER_ID, WM_AZURE_DEVOPS_REFRESHED, WM_DYNAMIC_REFRESHED, WM_RELOAD_CONFIG,
+    WM_TRAY, kick_azure_work_item_delta_sync, refresh_azure_devops, reload, with_state,
 };
 
 /// Win32 から呼ばれる入口。
@@ -74,6 +75,7 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                 let origin =
                     unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
                 let _ = quick_launch_window::show(hwnd, Some(origin));
+                kick_azure_work_item_delta_sync(hwnd);
             } else {
                 show_launcher_at_cursor(hwnd);
             }
@@ -138,6 +140,10 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         }
         WM_DYNAMIC_REFRESHED => {
             handle_dynamic_refreshed();
+            LRESULT(0)
+        }
+        WM_TIMER if wparam.0 == AZURE_FULL_REFRESH_TIMER_ID => {
+            refresh_azure_devops(hwnd);
             LRESULT(0)
         }
         WM_COPYDATA if lparam.0 != 0 => {

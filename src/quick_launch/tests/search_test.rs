@@ -393,13 +393,14 @@ fn azure_command_recognizes_all_supported_subcommands() {
             AzureCommand::PullRequests(PullRequestFilter {
                 status: crate::azure_devops::PullRequestStatus::Completed,
                 mine: false,
+                live: false,
             }),
             "done"
         ))
     );
     assert_eq!(
         azure_command("az wit bug"),
-        Some((AzureCommand::WorkItems, "bug"))
+        Some((AzureCommand::WorkItems { live: false }, "bug"))
     );
     assert_eq!(
         azure_command("az pipelines release"),
@@ -415,6 +416,7 @@ fn azure_command_recognizes_all_supported_subcommands() {
             AzureCommand::PullRequests(PullRequestFilter {
                 status: crate::azure_devops::PullRequestStatus::Active,
                 mine: true,
+                live: false,
             }),
             "launcher"
         ))
@@ -426,6 +428,7 @@ fn azure_command_recognizes_all_supported_subcommands() {
             AzureCommand::PullRequests(PullRequestFilter {
                 status: crate::azure_devops::PullRequestStatus::Active,
                 mine: true,
+                live: false,
             }),
             "launcher"
         ))
@@ -437,13 +440,14 @@ fn azure_command_recognizes_all_supported_subcommands() {
             AzureCommand::PullRequests(PullRequestFilter {
                 status: crate::azure_devops::PullRequestStatus::Active,
                 mine: false,
+                live: false,
             }),
             ""
         ))
     );
     assert_eq!(
         azure_command("az workitems defect"),
-        Some((AzureCommand::WorkItems, "defect"))
+        Some((AzureCommand::WorkItems { live: false }, "defect"))
     );
     assert_eq!(
         azure_command("az platform"),

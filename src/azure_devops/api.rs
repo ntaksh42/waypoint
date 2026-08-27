@@ -13,7 +13,8 @@ use super::cache::{CachedRow, record_project_success, replace_project_cache};
 use super::convert::{
     AreaNode, area_nodes, area_path_counts, encode_segment, json_i64, parse_rfc3339_unix,
     pipeline_build_row, pipeline_definition_row, pull_request_row, repository_names_and_ids,
-    unix_timestamp, work_item_batch_candidates, work_item_cached_row, work_item_candidates,
+    unix_timestamp, unix_to_wiql_datetime, work_item_batch_candidates, work_item_cached_row,
+    work_item_candidates,
 };
 
 pub(crate) const API_VERSION: &str = "7.1";
@@ -23,7 +24,7 @@ const PR_PAGE_SIZE: usize = 500;
 const PR_HISTORY_MAX_AGE: Duration = Duration::from_secs(60 * 60 * 24 * 90);
 /// 上の日付条件に加えた保険。1 プロジェクトが Completed/Abandoned だけで
 /// 何千件もページングし続けないよう件数でも打ち切る。
-const PR_HISTORY_MAX_COUNT: usize = 1_000;
+const PR_HISTORY_MAX_COUNT: usize = 2_000;
 /// `az pr` 等がキャッシュ検索で 0 件だったとき、ユーザーが明示的に選んで
 /// 叫ぶライブ検索の打ち切り。定期同期の 3 ヶ月より広く 1 年まで遡るが、
 /// それでも無制限にはしない (これも実行のたびに数千リクエストしないため)。
@@ -32,12 +33,11 @@ const PR_LIVE_SEARCH_MAX_COUNT: usize = 2_000;
 const PIPELINE_BUILD_LIMIT: usize = 100;
 /// `az wit <query>` のライブ全文検索 (ユーザーがキャッシュ検索で見つからず
 /// 明示的に追加取得を選んだときだけ呼ぶ) 1 回あたりの上限。
-const WORK_ITEM_RESULT_LIMIT: usize = 50;
+const WORK_ITEM_RESULT_LIMIT: usize = 300;
 /// バックグラウンド同期で事前キャッシュする「最近更新された Work Item」数
 /// (プロジェクトごと)。`az wit` の空クエリ・通常検索はこのキャッシュだけを
-/// ローカルで引く。PR の Completed/Abandoned 履歴 (`PR_HISTORY_MAX_COUNT`)
-/// ほど広い母集団は要らないので、控えめな値に留める。
-const RECENT_WORK_ITEM_LIMIT: usize = 100;
+/// ローカルで引く。
+const RECENT_WORK_ITEM_LIMIT: usize = 800;
 const REQUEST_RETRIES: usize = 2;
 const RETRY_DELAY: Duration = Duration::from_millis(350);
 
@@ -439,24 +439,52 @@ fn wiql_escape(value: &str) -> String {
     value.replace('\'', "''")
 }
 
-/// 空の `az wit` 用に、最近更新された Work Item を WIQL で絞って取得する。
-/// まず ID だけを取得し、詳細は batch API で一度に読むため、プロジェクトごとの
-/// 往復は二回で収まる。
-pub(crate) fn fetch_recent_work_items(
+/// `since` (unix 秒) より後に更新された Work Item だけを対象にする WIQL。
+/// `interest_areas` が設定されていれば `UNDER` 条件も合成する。
+/// フル同期 (`recent_work_items_wiql`) と違い ORDER BY を付けない —
+/// 差分は通常わずかな件数で、更新順に並べる意味が薄いため。
+fn changed_work_items_wiql(project: &AzureDevOpsProject, since: i64) -> String {
+    let mut conditions = vec![format!(
+        "[System.ChangedDate] > '{}'",
+        unix_to_wiql_datetime(since)
+    )];
+    if !project.interest_areas.is_empty() {
+        let area_conditions = project
+            .interest_areas
+            .iter()
+            .map(|area| format!("[System.AreaPath] UNDER '{}'", wiql_escape(area)))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        conditions.push(format!("({area_conditions})"));
+    }
+    format!(
+        "SELECT [System.Id] FROM WorkItems WHERE {}",
+        conditions.join(" AND ")
+    )
+}
+
+/// WIQL で ID だけを取得し、詳細は batch API で一度に読む。プロジェクトごとの
+/// 往復は WIQL の `$top` を指定するかどうかに関わらず二回で収まる。
+/// `fetch_recent_work_items` (フル) と `fetch_changed_work_items` (差分) の
+/// 共通部分。
+fn fetch_work_items_by_wiql(
     client: &reqwest::blocking::Client,
     project: &AzureDevOpsProject,
     pat: &str,
+    wiql: &str,
+    top: Option<usize>,
 ) -> Result<Vec<Candidate>, String> {
     let base = format!(
         "https://dev.azure.com/{}/{}",
         encode_segment(&project.organization),
         encode_segment(&project.project)
     );
+    let top_param = top.map_or(String::new(), |top| format!("&$top={top}"));
     let query = post_json(
         client,
-        &format!("{base}/_apis/wit/wiql?$top={RECENT_WORK_ITEM_LIMIT}&api-version={API_VERSION}"),
+        &format!("{base}/_apis/wit/wiql?api-version={API_VERSION}{top_param}"),
         pat,
-        &json!({ "query": recent_work_items_wiql(project) }),
+        &json!({ "query": wiql }),
     )?;
     let ids: Vec<i64> = query["workItems"]
         .as_array()
@@ -478,6 +506,40 @@ pub(crate) fn fetch_recent_work_items(
         }),
     )?;
     Ok(work_item_batch_candidates(project, &items))
+}
+
+/// 空の `az wit` 用に、最近更新された Work Item を WIQL で絞って取得する。
+pub(crate) fn fetch_recent_work_items(
+    client: &reqwest::blocking::Client,
+    project: &AzureDevOpsProject,
+    pat: &str,
+) -> Result<Vec<Candidate>, String> {
+    fetch_work_items_by_wiql(
+        client,
+        project,
+        pat,
+        &recent_work_items_wiql(project),
+        Some(RECENT_WORK_ITEM_LIMIT),
+    )
+}
+
+/// Quick Launch 起動時のキックで使う差分同期用。`since` (unix 秒) より後に
+/// `ChangedDate` が進んだ Work Item だけを取得する。通常は少数件しか
+/// 該当しないため `$top` は付けない (フル同期の `RECENT_WORK_ITEM_LIMIT` は
+/// 「直近何件を事前キャッシュするか」の上限であって、差分の性質とは無関係)。
+pub(crate) fn fetch_changed_work_items(
+    client: &reqwest::blocking::Client,
+    project: &AzureDevOpsProject,
+    pat: &str,
+    since: i64,
+) -> Result<Vec<Candidate>, String> {
+    fetch_work_items_by_wiql(
+        client,
+        project,
+        pat,
+        &changed_work_items_wiql(project, since),
+        None,
+    )
 }
 
 /// プロジェクトの Area Path 階層をすべて取得する。設定画面のツリーピッカー用。
@@ -751,6 +813,24 @@ mod tests {
     #[test]
     fn wiql_escape_doubles_single_quotes() {
         assert_eq!(wiql_escape("O'Brien\\Team"), "O''Brien\\Team");
+    }
+
+    #[test]
+    fn changed_work_items_wiql_filters_by_changed_date_without_interest_areas() {
+        let wiql = changed_work_items_wiql(&project(Vec::new()), 1_705_314_600);
+        assert!(wiql.contains("[System.ChangedDate] > '2024-01-15 10:30:00'"));
+        assert!(!wiql.contains("AreaPath"));
+    }
+
+    #[test]
+    fn changed_work_items_wiql_combines_changed_date_and_interest_areas() {
+        let wiql = changed_work_items_wiql(
+            &project(vec!["Waypoint\\Launcher".to_string()]),
+            1_705_314_600,
+        );
+        assert!(wiql.contains("[System.ChangedDate] > '2024-01-15 10:30:00'"));
+        assert!(wiql.contains("[System.AreaPath] UNDER 'Waypoint\\Launcher'"));
+        assert!(wiql.contains(" AND "));
     }
 
     #[test]

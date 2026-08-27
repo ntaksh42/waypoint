@@ -70,10 +70,15 @@ pub(super) fn update_results(state: &RefCell<State>) {
         start_everything_query(state, rest);
         return;
     }
-    if let Some((crate::quick_launch::AzureCommand::WorkItems, rest)) =
+    if let Some((crate::quick_launch::AzureCommand::WorkItems { live }, rest)) =
         crate::quick_launch::azure_command(&query)
     {
-        start_azure_work_item_query(state, rest);
+        let trimmed = rest.trim();
+        if live && !trimmed.is_empty() {
+            start_azure_work_item_live_search(state, trimmed);
+        } else {
+            start_azure_work_item_query(state, rest);
+        }
         return;
     }
     if let Some((crate::quick_launch::AzureCommand::Suggest, _)) =
@@ -81,6 +86,15 @@ pub(super) fn update_results(state: &RefCell<State>) {
     {
         show_azure_suggest_entry(state);
         return;
+    }
+    if let Some((crate::quick_launch::AzureCommand::PullRequests(filter), rest)) =
+        crate::quick_launch::azure_command(&query)
+    {
+        let trimmed = rest.trim();
+        if filter.live && !trimmed.is_empty() {
+            start_azure_pull_request_live_search(state, filter, trimmed);
+            return;
+        }
     }
 
     let (list, labels, rows, copy_feedback_cleared, window, dpi) = {

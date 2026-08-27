@@ -20,7 +20,7 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, FindWindowW, IDI_APPLICATION, LoadIconW, PostMessageW, RegisterClassW,
-    WNDCLASSW, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
+    SetTimer, WNDCLASSW, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
 };
 use windows::core::{PCWSTR, Result, w};
 
@@ -39,6 +39,11 @@ pub const WM_AZURE_DEVOPS_REFRESHED: u32 = windows::Win32::UI::WindowsAndMessagi
 /// `dynamic::refresh_async` の完了通知 (Recent/Frequent/Windows の再列挙)。
 pub const WM_DYNAMIC_REFRESHED: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 10;
 const TRAY_UID: u32 = 1;
+
+/// Azure DevOps のフル同期タイマー (`SetTimer` の `nIDEvent`)。差分同期は
+/// 削除・対象外化を検知できないため、これで定期的に取りこぼしを補正する。
+pub(crate) const AZURE_FULL_REFRESH_TIMER_ID: usize = 1;
+const AZURE_FULL_REFRESH_INTERVAL_MS: u32 = 12 * 60 * 60 * 1000;
 
 // トレイの右クリックメニューの項目 ID
 pub(crate) const ID_SETTINGS: usize = 9001;
@@ -137,6 +142,36 @@ pub fn refresh_azure_devops(hwnd: HWND) {
         let _ = crate::azure_devops::prune_cache(&state.config.settings.quick_launch.azure_devops);
         let _ = crate::azure_devops::refresh_async(
             state.config.settings.quick_launch.azure_devops.clone(),
+            hwnd,
+            WM_AZURE_DEVOPS_REFRESHED,
+        );
+    });
+}
+
+/// Quick Launch ウィンドウを開くたびに呼ぶ。前回の Work Item 差分同期から
+/// `DELTA_SYNC_COOLDOWN` 経っていなければ何もしない — 開閉を繰り返すたびに
+/// API を叩かないためのクールダウン。同期自体はバックグラウンドスレッドで
+/// 行われ、完了通知はフル同期と同じ `WM_AZURE_DEVOPS_REFRESHED` に乗る。
+const DELTA_SYNC_COOLDOWN_SECS: i64 = 5 * 60;
+
+pub fn kick_azure_work_item_delta_sync(hwnd: HWND) {
+    STATE.with(|state| {
+        let state = state.borrow();
+        let Some(state) = state.as_ref() else {
+            return;
+        };
+        let settings = &state.config.settings.quick_launch.azure_devops;
+        if let Some(last_synced) = crate::azure_devops::work_items_delta_synced_at(settings) {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_secs() as i64)
+                .unwrap_or(0);
+            if now - last_synced < DELTA_SYNC_COOLDOWN_SECS {
+                return;
+            }
+        }
+        let _ = crate::azure_devops::refresh_work_items_delta_async(
+            settings.clone(),
             hwnd,
             WM_AZURE_DEVOPS_REFRESHED,
         );
@@ -257,6 +292,20 @@ pub fn create_window() -> Result<HWND> {
         )?;
 
         Ok(hwnd)
+    }
+}
+
+/// Azure DevOps のフル同期を 12 時間おきに走らせるタイマーを開始する。
+/// 差分同期 (`kick_azure_work_item_delta_sync`) は削除・対象外化を検知
+/// できないので、これで定期的に補正する。
+pub fn start_azure_full_refresh_timer(hwnd: HWND) {
+    unsafe {
+        let _ = SetTimer(
+            Some(hwnd),
+            AZURE_FULL_REFRESH_TIMER_ID,
+            AZURE_FULL_REFRESH_INTERVAL_MS,
+            None,
+        );
     }
 }
 

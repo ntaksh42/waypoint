@@ -13,11 +13,11 @@ use crate::config::AzureDevOpsSettings;
 
 use super::Candidate;
 use super::api::{
-    fetch_pull_requests_live, fetch_recent_activity_areas, fetch_work_items, http_client,
-    refresh_project,
+    fetch_changed_work_items, fetch_pull_requests_live, fetch_recent_activity_areas,
+    fetch_work_items, http_client, refresh_project,
 };
 use super::cache;
-use super::convert::{pull_request_cached_row_to_candidate, valid_project};
+use super::convert::{pull_request_cached_row_to_candidate, valid_project, work_item_cached_row};
 use super::credential::load_pat;
 
 /// poisoned でも中身を取り出してロックする。
@@ -97,6 +97,86 @@ pub fn refresh_async(settings: AzureDevOpsSettings, notify: HWND, message: u32) 
             }
             Err(error) => crate::panic_log::record(&format!(
                 "azure devops: could not initialize refresh client: {error}"
+            )),
+        }
+        REFRESHING.store(false, Ordering::Release);
+        unsafe {
+            let _ = PostMessageW(Some(HWND(notify as *mut _)), message, WPARAM(0), LPARAM(0));
+        }
+    });
+    true
+}
+
+/// Quick Launch ウィンドウを開いた直後に呼ぶ差分同期。フルの
+/// `refresh_async` (DELETE→INSERT の全置換) と違い、プロジェクトごとに
+/// 前回同期以降の `ChangedDate` で絞った Work Item だけを取得して UPSERT
+/// する — 「使おうとした瞬間にキャッシュを新しくする」ための軽量版。
+///
+/// 削除・対象外になった Work Item の検知はできない (差分クエリは変更が
+/// あったものしか返さないため)。そこは 12 時間おきのフル同期
+/// (`start_periodic_full_refresh`) に任せる。
+///
+/// `REFRESHING` を共有してフル同期と排他する — 差分の UPSERT とフルの
+/// 全置換が同時に走ると、フルの DELETE が差分で入れたばかりの行を
+/// 消しうる。
+pub fn refresh_work_items_delta_async(
+    settings: AzureDevOpsSettings,
+    notify: HWND,
+    message: u32,
+) -> bool {
+    if !settings.enabled || settings.projects.is_empty() {
+        return false;
+    }
+    if REFRESHING.swap(true, Ordering::AcqRel) {
+        return false;
+    }
+    let notify = notify.0 as isize;
+    thread::spawn(move || {
+        match http_client() {
+            Ok(client) => {
+                let targets: Vec<_> = settings
+                    .projects
+                    .iter()
+                    .filter(|project| valid_project(project) && project.include_work_items)
+                    .collect();
+                thread::scope(|scope| {
+                    for project in &targets {
+                        let client = &client;
+                        scope.spawn(move || {
+                            let Ok(pat) = load_pat(&project.organization) else {
+                                return;
+                            };
+                            // 一度もフル/差分同期していなければ差分の起点が
+                            // 無いので、この呼び出しでは何もしない
+                            // (フル同期が起点を作るまで待つ)。
+                            let Some(since) = cache::work_items_delta_synced_at(project) else {
+                                return;
+                            };
+                            match fetch_changed_work_items(client, project, &pat, since) {
+                                Ok(candidates) => {
+                                    let rows: Vec<_> = candidates
+                                        .iter()
+                                        .filter_map(work_item_cached_row)
+                                        .collect();
+                                    if let Err(error) = cache::upsert_work_item_rows(&rows) {
+                                        crate::panic_log::record(&format!(
+                                            "azure devops: work item delta upsert {}/{} failed: {error}",
+                                            project.organization, project.project
+                                        ));
+                                    }
+                                    let _ = cache::record_work_items_delta_success(project);
+                                }
+                                Err(error) => crate::panic_log::record(&format!(
+                                    "azure devops: work item delta sync {}/{} failed: {error}",
+                                    project.organization, project.project
+                                )),
+                            }
+                        });
+                    }
+                });
+            }
+            Err(error) => crate::panic_log::record(&format!(
+                "azure devops: could not initialize delta sync client: {error}"
             )),
         }
         REFRESHING.store(false, Ordering::Release);

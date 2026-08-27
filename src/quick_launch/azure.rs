@@ -21,7 +21,9 @@ pub enum AzureCommand {
     PullRequests(PullRequestFilter),
     Pipelines(PipelineFilter),
     Projects,
-    WorkItems,
+    WorkItems {
+        live: bool,
+    },
     /// `az optimize`（`suggest` / `rank` でも入れる）— 直近のアサイン・
     /// メンションから優先 Project / Area を提案する専用画面を開く。
     /// 検索対象を持たず確定候補を 1 件だけ返す。
@@ -32,6 +34,9 @@ pub enum AzureCommand {
 pub struct PullRequestFilter {
     pub(crate) status: crate::azure_devops::PullRequestStatus,
     pub(crate) mine: bool,
+    /// `live` トークンが付いていた場合、キャッシュのヒット件数に関わらず
+    /// 即座にライブ検索へ入る (`az pr live <query>`)。
+    pub(crate) live: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,7 +65,7 @@ pub fn azure_command(query: &str) -> Option<(AzureCommand, &str)> {
             Some(parse_pipeline_command(remaining))
         }
         "project" | "projects" => Some((AzureCommand::Projects, remaining)),
-        "wit" | "wi" | "workitem" | "workitems" => Some((AzureCommand::WorkItems, remaining)),
+        "wit" | "wi" | "workitem" | "workitems" => Some(parse_work_item_command(remaining)),
         "optimize" | "suggest" | "rank" => Some((AzureCommand::Suggest, remaining)),
         _ => Some((AzureCommand::All, rest)),
     }
@@ -85,11 +90,12 @@ fn strip_attribute_tokens(text: &str, mut apply: impl FnMut(&str) -> bool) -> &s
     rest
 }
 
-/// `pr` に続く属性トークン (`active` / `completed` / `abandoned` / `mine`)
-/// を剥がしていき、未知のトークンからを検索語として返す。
+/// `pr` に続く属性トークン (`active` / `completed` / `abandoned` / `mine` /
+/// `live`) を剥がしていき、未知のトークンからを検索語として返す。
 fn parse_pull_request_command(text: &str) -> (AzureCommand, &str) {
     let mut status = crate::azure_devops::PullRequestStatus::All;
     let mut mine = false;
+    let mut live = false;
     let rest = strip_attribute_tokens(text, |token| {
         match token {
             "active" => status = crate::azure_devops::PullRequestStatus::Active,
@@ -97,14 +103,29 @@ fn parse_pull_request_command(text: &str) -> (AzureCommand, &str) {
             "abandoned" | "abandon" => status = crate::azure_devops::PullRequestStatus::Abandoned,
             "all" => status = crate::azure_devops::PullRequestStatus::All,
             "mine" | "me" => mine = true,
+            "live" => live = true,
             _ => return false,
         }
         true
     });
     (
-        AzureCommand::PullRequests(PullRequestFilter { status, mine }),
+        AzureCommand::PullRequests(PullRequestFilter { status, mine, live }),
         rest,
     )
+}
+
+/// `wit` に続く属性トークン (`live`) を剥がしていき、未知のトークンから
+/// を検索語として返す。
+fn parse_work_item_command(text: &str) -> (AzureCommand, &str) {
+    let mut live = false;
+    let rest = strip_attribute_tokens(text, |token| {
+        match token {
+            "live" => live = true,
+            _ => return false,
+        }
+        true
+    });
+    (AzureCommand::WorkItems { live }, rest)
 }
 
 /// `pipeline` に続く属性トークン (`failed` / `definition`) を剥がしていき、
@@ -194,6 +215,25 @@ pub(crate) fn azure_candidate_entry(candidate: crate::azure_devops::Candidate) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn live_token_forces_immediate_live_search_for_work_items_and_pull_requests() {
+        assert_eq!(
+            azure_command("az wit live foo"),
+            Some((AzureCommand::WorkItems { live: true }, "foo"))
+        );
+        assert_eq!(
+            azure_command("az pr live mine foo"),
+            Some((
+                AzureCommand::PullRequests(PullRequestFilter {
+                    status: crate::azure_devops::PullRequestStatus::All,
+                    mine: true,
+                    live: true,
+                }),
+                "foo"
+            ))
+        );
+    }
 
     #[test]
     fn optimize_subcommand_and_its_aliases_have_no_search_term() {

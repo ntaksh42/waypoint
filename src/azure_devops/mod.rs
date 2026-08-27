@@ -31,8 +31,8 @@ pub use convert::AreaNode;
 pub use credential::{delete_pat, save_pat};
 pub use sync::{
     ProjectActivity, PullRequestReply, WorkItemReply, refresh_async,
-    search_pull_requests_live_async, search_work_items_async, suggest_priorities_async,
-    take_pull_request_results, take_work_item_results,
+    refresh_work_items_delta_async, search_pull_requests_live_async, search_work_items_async,
+    suggest_priorities_async, take_pull_request_results, take_work_item_results,
 };
 
 const PROJECT_PAGE_SIZE: usize = 1_000;
@@ -303,6 +303,31 @@ pub fn cache_status(settings: &AzureDevOpsSettings) -> CacheStatus {
         last_error,
         refresh_in_progress: REFRESHING.load(Ordering::Relaxed),
     }
+}
+
+/// Work Item 差分同期の直近実行時刻 (全監視プロジェクトのうち最も古いもの)。
+/// Quick Launch ウィンドウを開いた瞬間のキックにクールダウンをかける判定に使う。
+/// DB が無い・どのプロジェクトも一度も同期していなければ `None`
+/// (呼び出し側はクールダウンなしでキックしてよい —
+/// フル同期がまだ起点を作っていなければ差分同期自体が何もしないので無害)。
+pub fn work_items_delta_synced_at(settings: &AzureDevOpsSettings) -> Option<i64> {
+    let connection = open_cache().ok()?;
+    settings
+        .projects
+        .iter()
+        .filter(|project| valid_project(project))
+        .filter_map(|project| {
+            connection
+                .query_row(
+                    "SELECT work_items_delta_synced_at FROM project_state
+                     WHERE organization = ?1 AND project = ?2",
+                    params![project.organization.trim(), project.project.trim()],
+                    |row| row.get::<_, Option<i64>>(0),
+                )
+                .ok()
+                .flatten()
+        })
+        .min()
 }
 
 /// UI 用の短い鮮度表示。時刻がまだ無ければ、初回同期前であることを示す。
