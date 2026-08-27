@@ -71,13 +71,14 @@ impl PullRequestStatus {
     }
 
     /// ライブ検索 (`search_pull_requests_live_async`) で API に渡す
-    /// `searchCriteria.status` の値。Active はキャッシュに全件あるはず
-    /// なのでライブ検索の対象外。`All` は Completed/Abandoned の両方を
-    /// 順に叩く (呼び出し側が結果をまとめる)。
+    /// `searchCriteria.status` の値。`All` は Active/Completed/Abandoned の
+    /// 全ステータスを順に叩く (呼び出し側が結果をまとめる)。Active も含める
+    /// のは、監視対象外プロジェクトや未同期などでキャッシュに無いことが
+    /// あり、ライブ検索まで来た時点では「確実に見つける」を優先するため。
     pub fn live_search_statuses(self) -> &'static [&'static str] {
         match self {
-            Self::All => &["completed", "abandoned"],
-            Self::Active => &[],
+            Self::All => &["active", "completed", "abandoned"],
+            Self::Active => &["active"],
             Self::Completed => &["completed"],
             Self::Abandoned => &["abandoned"],
         }
@@ -442,6 +443,22 @@ mod tests {
         assert!(PullRequestStatus::Completed.matches("completed"));
         assert!(!PullRequestStatus::Completed.matches("abandoned"));
         assert!(PullRequestStatus::All.matches("anything"));
+    }
+
+    /// `az pr live 45` のように未同期・監視対象外プロジェクトの Active な
+    /// PR を検索したとき、live 検索が active を叩かないと絶対にヒットし
+    /// ない (キャッシュに全件あるはずという前提はライブ検索の存在意義と
+    /// 矛盾する)。回帰防止。
+    #[test]
+    fn live_search_statuses_include_active_so_live_search_can_actually_find_it() {
+        assert_eq!(
+            PullRequestStatus::All.live_search_statuses(),
+            &["active", "completed", "abandoned"]
+        );
+        assert_eq!(
+            PullRequestStatus::Active.live_search_statuses(),
+            &["active"]
+        );
     }
 
     #[test]

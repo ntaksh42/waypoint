@@ -408,10 +408,10 @@ pub(crate) fn fetch_work_items(
         encode_segment(&project.organization),
         encode_segment(&project.project)
     );
-    let mut body = json!({ "searchText": query, "$skip": 0, "$top": WORK_ITEM_RESULT_LIMIT, "includeFacets": false });
-    if !project.interest_areas.is_empty() {
-        body["filters"] = json!({ "System.AreaPath": project.interest_areas });
-    }
+    // ユーザーが明示的に選ぶライブ検索なので、`interest_areas` では絞らず
+    // プロジェクト全体を対象にする (`fetch_pull_requests_live` が
+    // `interest_repositories` を無視するのと同じ理由)。
+    let body = json!({ "searchText": query, "$skip": 0, "$top": WORK_ITEM_RESULT_LIMIT, "includeFacets": false });
     let value = post_json(client, &url, pat, &body)?;
     Ok(work_item_candidates(project, &value))
 }
