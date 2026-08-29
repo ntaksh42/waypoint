@@ -85,11 +85,34 @@ impl SettingsApp {
                 self.show_menu_tree(ui);
             });
         egui::CentralPanel::default().show(root, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Search:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.search)
+                        .id(super::search_box_id())
+                        .hint_text("name or path, across all menus (Ctrl+F)")
+                        .desired_width(320.0),
+                );
+                if !self.search.is_empty() && ui.small_button("Clear (Esc)").clicked() {
+                    self.search.clear();
+                }
+            });
+            if self.search.trim().is_empty() {
+                ui.weak(self.current_menu_breadcrumb());
+            }
+            ui.add_space(2.0);
+
             // `horizontal` は中身の自然な高さに縮む。パネルの残り高さを
             // 明示しないと、一覧が数行ぶんで打ち切られ、下に使われない
             // 余白が残ったまま項目が見切れる (ScrollArea の
             // `auto_shrink` では直らない。制約はこの外側で決まるため)。
+            // 検索ボックス・パンくずを描いた後に測ることで、それらの分は
+            // 自動的に差し引かれる。
             let body_height = ui.available_height();
+            if !self.search.trim().is_empty() {
+                self.show_search_results(ui, body_height);
+                return;
+            }
             ui.horizontal(|ui| {
                 ui.set_height(body_height);
                 let selected = !self.selected_items.is_empty();
