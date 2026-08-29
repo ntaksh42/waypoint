@@ -8,6 +8,7 @@ mod api;
 mod cache;
 mod convert;
 mod credential;
+mod shared_cache;
 mod sync;
 
 use std::collections::HashMap;
