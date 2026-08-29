@@ -1,13 +1,20 @@
 //! Azure DevOps の Quick Launch 連携。
 //!
-//! PR とパイプラインは SQLite キャッシュだけを検索し、Work Item だけは
-//! `az wit ` 中にバックグラウンドで API 検索する。PAT は設定ファイルへ
-//! 書かず、Windows Credential Manager (`keyring`) から必要時だけ読む。
+//! Active PR と Work Item は DevDeck (別リポジトリの Azure DevOps
+//! ダッシュボード) の SQLite キャッシュを読み取り専用で直接参照する
+//! (`devdeck_cache`)。同じ組織を waypoint と DevDeck が独立にポーリング
+//! すると API 呼び出しが重複するため、waypoint 側はこの 2 種類の定期同期を
+//! 行わない。PR の Completed/Abandoned 履歴は DevDeck の対象外なので
+//! waypoint 自身の SQLite キャッシュ (`cache`) のまま。Pipeline は永続
+//! キャッシュを持たず、`az pipeline ` の明示的な選択でだけ Live 検索する。
+//! PAT は設定ファイルへ書かず、Windows Credential Manager (`keyring`) から
+//! 必要時だけ読む。
 
 mod api;
 mod cache;
 mod convert;
 mod credential;
+mod devdeck_cache;
 mod sync;
 
 use std::collections::HashMap;
@@ -30,9 +37,9 @@ pub use api::{fetch_area_nodes, fetch_my_area_suggestions, list_repository_names
 pub use convert::AreaNode;
 pub use credential::{delete_pat, save_pat};
 pub use sync::{
-    ProjectActivity, PullRequestReply, WorkItemReply, refresh_async,
-    refresh_work_items_delta_async, search_pull_requests_live_async, search_work_items_async,
-    suggest_priorities_async, take_pull_request_results, take_work_item_results,
+    ProjectActivity, PullRequestReply, WorkItemReply, refresh_async, search_pipelines_live_async,
+    search_pull_requests_live_async, search_work_items_async, suggest_priorities_async,
+    take_pipeline_results, take_pull_request_results, take_work_item_results,
 };
 
 const PROJECT_PAGE_SIZE: usize = 1_000;
@@ -50,6 +57,26 @@ pub enum Kind {
     PullRequest,
     Pipeline,
     WorkItem,
+}
+
+/// `az pipeline ` の絞り込み。Pipeline は永続キャッシュを持たないので
+/// (`search_pipelines_live_async` 参照)、ここでの分類はライブ検索結果への
+/// ローカルフィルタとして使う。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PipelineFilter {
+    All,
+    Definitions,
+    Failed,
+}
+
+impl PipelineFilter {
+    pub fn matches(self, status: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::Definitions => status.eq_ignore_ascii_case("definition"),
+            Self::Failed => status.eq_ignore_ascii_case("failed"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,17 +156,28 @@ pub fn project_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
         .collect()
 }
 
-/// 永続キャッシュから PR / Pipeline 候補を読む。読めなければ空で続行する。
+/// Active PR 候補。DevDeck の SQLite キャッシュを読み取り専用で直接参照する
+/// (waypoint 自身はもう Active PR を同期しない)。
 pub fn cached_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
     if !settings.enabled {
         return Vec::new();
     }
+    let mut candidates = devdeck_cache::active_pull_request_candidates(settings);
+    candidates.extend(pr_history_candidates(settings));
+    candidates
+}
+
+/// waypoint 自身が保持する PR 履歴 (Completed/Abandoned、過去 90 日ぶん)。
+/// DevDeck は Active PR しか同期しないので、この分だけは重複しておらず
+/// waypoint 側のキャッシュのまま残す (`api.rs::fetch_pull_requests` 参照)。
+/// 読めなければ空で続行する。
+fn pr_history_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
     let Ok(connection) = open_cache() else {
         return Vec::new();
     };
     let Ok(mut statement) = connection.prepare(
         "SELECT organization, project, kind, item_id, status, name, detail, url, is_mine
-         FROM candidates WHERE kind IN ('pr', 'pipeline')",
+         FROM candidates WHERE kind = 'pr'",
     ) else {
         return Vec::new();
     };
@@ -162,35 +200,21 @@ pub fn cached_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
     let configured: HashMap<_, _> = settings
         .projects
         .iter()
-        .filter(|project| valid_project(project))
+        .filter(|project| valid_project(project) && project.include_pull_requests)
         .map(|project| {
             (
                 project_key(&project.organization, &project.project),
-                (
-                    project.aliases.clone(),
-                    project.priority,
-                    project.include_pull_requests,
-                    project.include_pipelines,
-                ),
+                (project.aliases.clone(), project.priority),
             )
         })
         .collect();
     rows.filter_map(Result::ok)
         .filter_map(|row| {
-            let (aliases, priority, include_pull_requests, include_pipelines) = configured
+            let (aliases, priority) = configured
                 .get(&project_key(&row.organization, &row.project))?
                 .clone();
-            if (row.kind == "pr" && !include_pull_requests)
-                || (row.kind != "pr" && !include_pipelines)
-            {
-                return None;
-            }
             Some(Candidate {
-                kind: if row.kind == "pr" {
-                    Kind::PullRequest
-                } else {
-                    Kind::Pipeline
-                },
+                kind: Kind::PullRequest,
                 status: row.status,
                 name: row.name,
                 detail: row.detail,
@@ -205,63 +229,14 @@ pub fn cached_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
         .collect()
 }
 
-/// 永続キャッシュから Work Item 候補を読む。Quick Launch 表示時はメモリ上の
-/// この結果だけを検索し、キャッシュで見つからない場合にだけ API を呼ぶ。
+/// Work Item 候補。DevDeck の SQLite キャッシュを読み取り専用で直接参照する
+/// (waypoint 自身はもう Work Item を同期しない — ライブ検索
+/// `az wit live` は API を直接叩くので対象外)。読めなければ空で続行する。
 pub fn cached_work_item_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
     if !settings.enabled {
         return Vec::new();
     }
-    let Ok(connection) = open_cache() else {
-        return Vec::new();
-    };
-    let Ok(mut statement) = connection.prepare(
-        "SELECT organization, project, status, name, detail, url
-         FROM candidates WHERE kind = 'wit' ORDER BY rowid DESC",
-    ) else {
-        return Vec::new();
-    };
-    let Ok(rows) = statement.query_map([], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, String>(4)?,
-            row.get::<_, String>(5)?,
-        ))
-    }) else {
-        return Vec::new();
-    };
-    let configured: HashMap<_, _> = settings
-        .projects
-        .iter()
-        .filter(|project| valid_project(project) && project.include_work_items)
-        .map(|project| {
-            (
-                project_key(&project.organization, &project.project),
-                (project.aliases.clone(), project.priority),
-            )
-        })
-        .collect();
-    rows.filter_map(Result::ok)
-        .filter_map(|(organization, project, status, name, detail, url)| {
-            let (aliases, priority) = configured
-                .get(&project_key(&organization, &project))?
-                .clone();
-            Some(Candidate {
-                kind: Kind::WorkItem,
-                status,
-                name,
-                detail,
-                url,
-                organization,
-                project,
-                aliases,
-                priority,
-                is_mine: false,
-            })
-        })
-        .collect()
+    devdeck_cache::work_item_candidates(settings)
 }
 
 /// 監視対象の最後の同期状態。DB が無い・壊れている場合も空状態として扱う。
@@ -304,31 +279,6 @@ pub fn cache_status(settings: &AzureDevOpsSettings) -> CacheStatus {
         last_error,
         refresh_in_progress: REFRESHING.load(Ordering::Relaxed),
     }
-}
-
-/// Work Item 差分同期の直近実行時刻 (全監視プロジェクトのうち最も古いもの)。
-/// Quick Launch ウィンドウを開いた瞬間のキックにクールダウンをかける判定に使う。
-/// DB が無い・どのプロジェクトも一度も同期していなければ `None`
-/// (呼び出し側はクールダウンなしでキックしてよい —
-/// フル同期がまだ起点を作っていなければ差分同期自体が何もしないので無害)。
-pub fn work_items_delta_synced_at(settings: &AzureDevOpsSettings) -> Option<i64> {
-    let connection = open_cache().ok()?;
-    settings
-        .projects
-        .iter()
-        .filter(|project| valid_project(project))
-        .filter_map(|project| {
-            connection
-                .query_row(
-                    "SELECT work_items_delta_synced_at FROM project_state
-                     WHERE organization = ?1 AND project = ?2",
-                    params![project.organization.trim(), project.project.trim()],
-                    |row| row.get::<_, Option<i64>>(0),
-                )
-                .ok()
-                .flatten()
-        })
-        .min()
 }
 
 /// UI 用の短い鮮度表示。時刻がまだ無ければ、初回同期前であることを示す。

@@ -27,6 +27,7 @@ pub(super) fn action_color(action: &Action) -> COLORREF {
         | Action::ReplaceQuery(_)
         | Action::AzureLiveWorkItemSearch(_)
         | Action::AzureLivePullRequestSearch { .. }
+        | Action::AzureLivePipelineSearch { .. }
         | Action::AzureSuggestPriorities => ACCENT,
     }
 }

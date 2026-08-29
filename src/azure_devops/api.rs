@@ -13,8 +13,7 @@ use super::cache::{CachedRow, record_project_success, replace_project_cache};
 use super::convert::{
     AreaNode, area_nodes, area_path_counts, encode_segment, json_i64, parse_rfc3339_unix,
     pipeline_build_row, pipeline_definition_row, pull_request_row, repository_names_and_ids,
-    unix_timestamp, unix_to_wiql_datetime, work_item_batch_candidates, work_item_cached_row,
-    work_item_candidates,
+    unix_timestamp, work_item_batch_candidates, work_item_candidates,
 };
 
 pub(crate) const API_VERSION: &str = "7.1";
@@ -34,70 +33,43 @@ const PIPELINE_BUILD_LIMIT: usize = 100;
 /// `az wit <query>` のライブ全文検索 (ユーザーがキャッシュ検索で見つからず
 /// 明示的に追加取得を選んだときだけ呼ぶ) 1 回あたりの上限。
 const WORK_ITEM_RESULT_LIMIT: usize = 300;
-/// バックグラウンド同期で事前キャッシュする「最近更新された Work Item」数
-/// (プロジェクトごと)。`az wit` の空クエリ・通常検索はこのキャッシュだけを
-/// ローカルで引く。
+/// `fetch_work_items` が空クエリで呼ばれた場合に返す「最近更新された
+/// Work Item」の上限 (プロジェクトごと)。通常の Quick Launch 表示は
+/// DevDeck のキャッシュ (`devdeck_cache`) を見るのでここへは来ない。
 const RECENT_WORK_ITEM_LIMIT: usize = 800;
 const REQUEST_RETRIES: usize = 2;
 const RETRY_DELAY: Duration = Duration::from_millis(350);
 
-/// PR / Pipeline / Work Item は同じプロジェクトに対する互いに独立な読み取り
-/// なので、`thread::scope` で並列に取得してから 1 回のトランザクションで
-/// まとめて書き込む (直列だと 1 プロジェクトあたりの同期時間が 3 系統の
-/// 合計になっていた。実測)。
+/// Active PR は DevDeck の SQLite キャッシュを直接読むので waypoint は
+/// もう同期しない (`devdeck_cache` 参照)。Pipeline・Work Item も同様の
+/// 理由でここでは取得しない (Pipeline は Live 検索のみ、Work Item は
+/// DevDeck のキャッシュを読む)。ここで行うのは PR の Completed/Abandoned
+/// 履歴の同期だけで、DevDeck の対象外なので waypoint 自身が保持し続ける。
 pub(crate) fn refresh_project(
     client: &reqwest::blocking::Client,
     project: &AzureDevOpsProject,
     pat: &str,
 ) -> Result<(), String> {
-    let (pull_requests, pipelines, work_items) = thread::scope(|scope| {
-        let pull_requests = scope.spawn(|| {
-            if !project.include_pull_requests {
-                return Ok(Vec::new());
-            }
-            let current_user = current_user_id(client, &project.organization, pat).ok();
-            fetch_pull_requests(client, project, pat, current_user.as_deref())
-        });
-        let pipelines = scope.spawn(|| {
-            if !project.include_pipelines {
-                return Ok(Vec::new());
-            }
-            fetch_pipelines(client, project, pat)
-        });
-        let work_items = scope.spawn(|| -> Result<Vec<CachedRow>, String> {
-            if !project.include_work_items {
-                return Ok(Vec::new());
-            }
-            Ok(fetch_recent_work_items(client, project, pat)?
-                .iter()
-                .filter_map(work_item_cached_row)
-                .collect())
-        });
-        (
-            pull_requests
-                .join()
-                .expect("pull request fetch thread panicked"),
-            pipelines.join().expect("pipeline fetch thread panicked"),
-            work_items.join().expect("work item fetch thread panicked"),
-        )
-    });
-    let mut rows = pull_requests?;
-    rows.extend(pipelines?);
-    rows.extend(work_items?);
+    if !project.include_pull_requests {
+        record_project_success(project)?;
+        return Ok(());
+    }
+    let current_user = current_user_id(client, &project.organization, pat).ok();
+    let rows = fetch_pull_request_history(client, project, pat, current_user.as_deref())?;
     replace_project_cache(project, &rows)?;
     record_project_success(project)
 }
 
-/// Active PR は無条件で全件、Completed / Abandoned は新しい順に読み、
-/// 作成日が `PR_HISTORY_MAX_AGE` を超えるか `PR_HISTORY_MAX_COUNT` に
-/// 達したら打ち切る。プロジェクトの累積 PR 数が数十万件規模でも、
-/// 同期が終わらなくなるのを防ぐ (R-13)。
+/// Completed / Abandoned を新しい順に読み、作成日が `PR_HISTORY_MAX_AGE`
+/// を超えるか `PR_HISTORY_MAX_COUNT` に達したら打ち切る。プロジェクトの
+/// 累積 PR 数が数十万件規模でも、同期が終わらなくなるのを防ぐ (R-13)。
+/// Active は DevDeck 側から読むのでここでは取得しない。
 ///
 /// `interest_repositories` が設定されていれば、まずリポジトリ名を GUID へ
 /// 解決し `searchCriteria.repositoryId` で絞り込む。名前が現存のリポジトリと
 /// 一致しなければそのエントリは無視する (削除・リネームされた場合に同期
 /// 全体を失敗させないため)。
-fn fetch_pull_requests(
+fn fetch_pull_request_history(
     client: &reqwest::blocking::Client,
     project: &AzureDevOpsProject,
     pat: &str,
@@ -122,14 +94,6 @@ fn fetch_pull_requests(
 
     let mut rows = Vec::new();
     for repository_id in &repository_ids {
-        rows.extend(fetch_pull_requests_by_status(
-            client,
-            project,
-            pat,
-            current_user,
-            "active",
-            repository_id.as_deref(),
-        )?);
         let sync_limits = HistoryLimits {
             max_age: PR_HISTORY_MAX_AGE,
             max_count: PR_HISTORY_MAX_COUNT,
@@ -356,7 +320,9 @@ pub(crate) fn current_user_id(
         .ok_or_else(|| "Azure DevOps did not return the authenticated user.".to_string())
 }
 
-fn fetch_pipelines(
+/// Live 検索 (`az pipeline `) からも使う。Pipeline は永続キャッシュを
+/// 持たないので、この結果は呼び出し側でその場だけ表示し保存しない。
+pub(crate) fn fetch_pipelines(
     client: &reqwest::blocking::Client,
     project: &AzureDevOpsProject,
     pat: &str,
@@ -439,34 +405,8 @@ fn wiql_escape(value: &str) -> String {
     value.replace('\'', "''")
 }
 
-/// `since` (unix 秒) より後に更新された Work Item だけを対象にする WIQL。
-/// `interest_areas` が設定されていれば `UNDER` 条件も合成する。
-/// フル同期 (`recent_work_items_wiql`) と違い ORDER BY を付けない —
-/// 差分は通常わずかな件数で、更新順に並べる意味が薄いため。
-fn changed_work_items_wiql(project: &AzureDevOpsProject, since: i64) -> String {
-    let mut conditions = vec![format!(
-        "[System.ChangedDate] > '{}'",
-        unix_to_wiql_datetime(since)
-    )];
-    if !project.interest_areas.is_empty() {
-        let area_conditions = project
-            .interest_areas
-            .iter()
-            .map(|area| format!("[System.AreaPath] UNDER '{}'", wiql_escape(area)))
-            .collect::<Vec<_>>()
-            .join(" OR ");
-        conditions.push(format!("({area_conditions})"));
-    }
-    format!(
-        "SELECT [System.Id] FROM WorkItems WHERE {}",
-        conditions.join(" AND ")
-    )
-}
-
 /// WIQL で ID だけを取得し、詳細は batch API で一度に読む。プロジェクトごとの
 /// 往復は WIQL の `$top` を指定するかどうかに関わらず二回で収まる。
-/// `fetch_recent_work_items` (フル) と `fetch_changed_work_items` (差分) の
-/// 共通部分。
 fn fetch_work_items_by_wiql(
     client: &reqwest::blocking::Client,
     project: &AzureDevOpsProject,
@@ -520,25 +460,6 @@ pub(crate) fn fetch_recent_work_items(
         pat,
         &recent_work_items_wiql(project),
         Some(RECENT_WORK_ITEM_LIMIT),
-    )
-}
-
-/// Quick Launch 起動時のキックで使う差分同期用。`since` (unix 秒) より後に
-/// `ChangedDate` が進んだ Work Item だけを取得する。通常は少数件しか
-/// 該当しないため `$top` は付けない (フル同期の `RECENT_WORK_ITEM_LIMIT` は
-/// 「直近何件を事前キャッシュするか」の上限であって、差分の性質とは無関係)。
-pub(crate) fn fetch_changed_work_items(
-    client: &reqwest::blocking::Client,
-    project: &AzureDevOpsProject,
-    pat: &str,
-    since: i64,
-) -> Result<Vec<Candidate>, String> {
-    fetch_work_items_by_wiql(
-        client,
-        project,
-        pat,
-        &changed_work_items_wiql(project, since),
-        None,
     )
 }
 
@@ -813,24 +734,6 @@ mod tests {
     #[test]
     fn wiql_escape_doubles_single_quotes() {
         assert_eq!(wiql_escape("O'Brien\\Team"), "O''Brien\\Team");
-    }
-
-    #[test]
-    fn changed_work_items_wiql_filters_by_changed_date_without_interest_areas() {
-        let wiql = changed_work_items_wiql(&project(Vec::new()), 1_705_314_600);
-        assert!(wiql.contains("[System.ChangedDate] > '2024-01-15 10:30:00'"));
-        assert!(!wiql.contains("AreaPath"));
-    }
-
-    #[test]
-    fn changed_work_items_wiql_combines_changed_date_and_interest_areas() {
-        let wiql = changed_work_items_wiql(
-            &project(vec!["Waypoint\\Launcher".to_string()]),
-            1_705_314_600,
-        );
-        assert!(wiql.contains("[System.ChangedDate] > '2024-01-15 10:30:00'"));
-        assert!(wiql.contains("[System.AreaPath] UNDER 'Waypoint\\Launcher'"));
-        assert!(wiql.contains(" AND "));
     }
 
     #[test]

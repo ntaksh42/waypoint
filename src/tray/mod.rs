@@ -148,36 +148,6 @@ pub fn refresh_azure_devops(hwnd: HWND) {
     });
 }
 
-/// Quick Launch ウィンドウを開くたびに呼ぶ。前回の Work Item 差分同期から
-/// `DELTA_SYNC_COOLDOWN` 経っていなければ何もしない — 開閉を繰り返すたびに
-/// API を叩かないためのクールダウン。同期自体はバックグラウンドスレッドで
-/// 行われ、完了通知はフル同期と同じ `WM_AZURE_DEVOPS_REFRESHED` に乗る。
-const DELTA_SYNC_COOLDOWN_SECS: i64 = 5 * 60;
-
-pub fn kick_azure_work_item_delta_sync(hwnd: HWND) {
-    STATE.with(|state| {
-        let state = state.borrow();
-        let Some(state) = state.as_ref() else {
-            return;
-        };
-        let settings = &state.config.settings.quick_launch.azure_devops;
-        if let Some(last_synced) = crate::azure_devops::work_items_delta_synced_at(settings) {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|duration| duration.as_secs() as i64)
-                .unwrap_or(0);
-            if now - last_synced < DELTA_SYNC_COOLDOWN_SECS {
-                return;
-            }
-        }
-        let _ = crate::azure_devops::refresh_work_items_delta_async(
-            settings.clone(),
-            hwnd,
-            WM_AZURE_DEVOPS_REFRESHED,
-        );
-    });
-}
-
 /// 読み込み済みの設定でホットキーを登録する。
 /// 他アプリに取られていた場合はフックで横取りする (FR-1.2.1) 。
 pub fn register_hotkey_from_config(hwnd: HWND) -> Registration {
@@ -295,9 +265,10 @@ pub fn create_window() -> Result<HWND> {
     }
 }
 
-/// Azure DevOps のフル同期を 12 時間おきに走らせるタイマーを開始する。
-/// 差分同期 (`kick_azure_work_item_delta_sync`) は削除・対象外化を検知
-/// できないので、これで定期的に補正する。
+/// Azure DevOps の PR 履歴 (Completed/Abandoned) 同期を 12 時間おきに
+/// 走らせるタイマーを開始する。Active PR / Work Item は DevDeck 側の
+/// バックグラウンド同期に任せるので、waypoint 側で定期実行するのはこの
+/// 履歴分だけになる。
 pub fn start_azure_full_refresh_timer(hwnd: HWND) {
     unsafe {
         let _ = SetTimer(

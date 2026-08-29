@@ -94,6 +94,13 @@ pub enum Action {
         filter: PullRequestFilter,
         query: String,
     },
+    /// Pipeline は永続キャッシュを持たないので、`az pipeline ` に入るたびに
+    /// 明示的な選択をトリガーに Live 検索を投げる
+    /// (`AzureLiveWorkItemSearch` / `AzureLivePullRequestSearch` と同じ形)。
+    AzureLivePipelineSearch {
+        filter: PipelineFilter,
+        query: String,
+    },
     /// `az optimize`（`suggest` / `rank` でも入れる）— 直近のアサイン・
     /// メンションから優先 Project / Area を提案する専用画面を開く
     /// (設定エディタープロセスを別引数で起動する)。
@@ -146,6 +153,7 @@ impl Entry {
             | Action::ReplaceQuery(_)
             | Action::AzureLiveWorkItemSearch(_)
             | Action::AzureLivePullRequestSearch { .. }
+            | Action::AzureLivePipelineSearch { .. }
             | Action::AzureSuggestPriorities => None,
         }
     }

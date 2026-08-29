@@ -1,5 +1,5 @@
-//! バックグラウンド同期: プロジェクト全体のキャッシュ更新と、
-//! `az wit ` のライブ Work Item 検索。
+//! バックグラウンド同期: PR 履歴 (Completed/Abandoned) のキャッシュ更新と、
+//! `az wit ` / `az pr` / `az pipeline ` のライブ検索。
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,11 +13,13 @@ use crate::config::AzureDevOpsSettings;
 
 use super::Candidate;
 use super::api::{
-    fetch_changed_work_items, fetch_pull_requests_live, fetch_recent_activity_areas,
-    fetch_work_items, http_client, refresh_project,
+    fetch_pipelines, fetch_pull_requests_live, fetch_recent_activity_areas, fetch_work_items,
+    http_client, refresh_project,
 };
 use super::cache;
-use super::convert::{pull_request_cached_row_to_candidate, valid_project, work_item_cached_row};
+use super::convert::{
+    pipeline_cached_row_to_candidate, pull_request_cached_row_to_candidate, valid_project,
+};
 use super::credential::load_pat;
 
 /// poisoned でも中身を取り出してロックする。
@@ -46,6 +48,9 @@ pub struct WorkItemReply {
 /// PR のライブ検索結果。フィールドは `WorkItemReply` と同じ形だが、
 /// `pending_work_items` と混ざらないよう独立した `reply_id` 空間を使う。
 pub type PullRequestReply = WorkItemReply;
+
+/// Pipeline のライブ検索結果。同じ理由で独立した `reply_id` 空間を使う。
+pub type PipelineReply = WorkItemReply;
 
 /// 同期を一つに直列化する。設定保存と手動更新が重なっても API と DB を競合させない。
 pub(crate) static REFRESHING: AtomicBool = AtomicBool::new(false);
@@ -107,86 +112,6 @@ pub fn refresh_async(settings: AzureDevOpsSettings, notify: HWND, message: u32) 
     true
 }
 
-/// Quick Launch ウィンドウを開いた直後に呼ぶ差分同期。フルの
-/// `refresh_async` (DELETE→INSERT の全置換) と違い、プロジェクトごとに
-/// 前回同期以降の `ChangedDate` で絞った Work Item だけを取得して UPSERT
-/// する — 「使おうとした瞬間にキャッシュを新しくする」ための軽量版。
-///
-/// 削除・対象外になった Work Item の検知はできない (差分クエリは変更が
-/// あったものしか返さないため)。そこは 12 時間おきのフル同期
-/// (`start_periodic_full_refresh`) に任せる。
-///
-/// `REFRESHING` を共有してフル同期と排他する — 差分の UPSERT とフルの
-/// 全置換が同時に走ると、フルの DELETE が差分で入れたばかりの行を
-/// 消しうる。
-pub fn refresh_work_items_delta_async(
-    settings: AzureDevOpsSettings,
-    notify: HWND,
-    message: u32,
-) -> bool {
-    if !settings.enabled || settings.projects.is_empty() {
-        return false;
-    }
-    if REFRESHING.swap(true, Ordering::AcqRel) {
-        return false;
-    }
-    let notify = notify.0 as isize;
-    thread::spawn(move || {
-        match http_client() {
-            Ok(client) => {
-                let targets: Vec<_> = settings
-                    .projects
-                    .iter()
-                    .filter(|project| valid_project(project) && project.include_work_items)
-                    .collect();
-                thread::scope(|scope| {
-                    for project in &targets {
-                        let client = &client;
-                        scope.spawn(move || {
-                            let Ok(pat) = load_pat(&project.organization) else {
-                                return;
-                            };
-                            // 一度もフル/差分同期していなければ差分の起点が
-                            // 無いので、この呼び出しでは何もしない
-                            // (フル同期が起点を作るまで待つ)。
-                            let Some(since) = cache::work_items_delta_synced_at(project) else {
-                                return;
-                            };
-                            match fetch_changed_work_items(client, project, &pat, since) {
-                                Ok(candidates) => {
-                                    let rows: Vec<_> = candidates
-                                        .iter()
-                                        .filter_map(work_item_cached_row)
-                                        .collect();
-                                    if let Err(error) = cache::upsert_work_item_rows(&rows) {
-                                        crate::panic_log::record(&format!(
-                                            "azure devops: work item delta upsert {}/{} failed: {error}",
-                                            project.organization, project.project
-                                        ));
-                                    }
-                                    let _ = cache::record_work_items_delta_success(project);
-                                }
-                                Err(error) => crate::panic_log::record(&format!(
-                                    "azure devops: work item delta sync {}/{} failed: {error}",
-                                    project.organization, project.project
-                                )),
-                            }
-                        });
-                    }
-                });
-            }
-            Err(error) => crate::panic_log::record(&format!(
-                "azure devops: could not initialize delta sync client: {error}"
-            )),
-        }
-        REFRESHING.store(false, Ordering::Release);
-        unsafe {
-            let _ = PostMessageW(Some(HWND(notify as *mut _)), message, WPARAM(0), LPARAM(0));
-        }
-    });
-    true
-}
-
 /// `az wit ` の検索をバックグラウンドで実行する。結果は ID ごとに保持し、
 /// 呼び出し側が最新 ID と一致したものだけを表示する。
 ///
@@ -237,14 +162,7 @@ pub fn search_work_items_async(
                 });
                 for (project, outcome) in outcomes {
                     match outcome {
-                        Ok(mut found) => {
-                            if let Err(error) = cache::cache_work_item_candidates(&found) {
-                                crate::panic_log::record(&format!(
-                                    "azure devops: could not cache work items: {error}"
-                                ));
-                            }
-                            results.append(&mut found);
-                        }
+                        Ok(mut found) => results.append(&mut found),
                         Err(error) => {
                             crate::panic_log::record(&format!(
                                 "azure devops: work item search {}/{} failed: {error}",
@@ -443,6 +361,124 @@ pub fn take_pull_request_results(request_id: u32) -> Option<PullRequestReply> {
 
 fn pending_pull_requests() -> &'static Mutex<HashMap<u32, PullRequestReply>> {
     static PENDING: OnceLock<Mutex<HashMap<u32, PullRequestReply>>> = OnceLock::new();
+    PENDING.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// `az pipeline ` の検索をバックグラウンドで実行する。Pipeline は永続
+/// キャッシュを持たないので (`az pr` / `az wit` と違い) 常にこの経路を通り、
+/// 監視プロジェクトごとに並列で叩いてからローカルでステータス・検索語を
+/// フィルタする。
+pub fn search_pipelines_live_async(
+    settings: AzureDevOpsSettings,
+    filter: super::PipelineFilter,
+    query: String,
+    request_id: u32,
+    notify: HWND,
+    message: u32,
+) {
+    let notify = notify.0 as isize;
+    thread::spawn(move || {
+        let mut results = Vec::new();
+        let mut failures = Vec::new();
+        match http_client() {
+            Ok(client) => {
+                let targets: Vec<_> = settings
+                    .projects
+                    .iter()
+                    .filter(|project| valid_project(project) && project.include_pipelines)
+                    .collect();
+                let outcomes: Vec<(
+                    &crate::config::AzureDevOpsProject,
+                    Result<Vec<Candidate>, String>,
+                )> = thread::scope(|scope| {
+                    let handles: Vec<_> = targets
+                        .iter()
+                        .map(|project| {
+                            let client = &client;
+                            scope.spawn(move || {
+                                let outcome = match load_pat(&project.organization) {
+                                    Ok(pat) => fetch_pipelines(client, project, &pat).map(|rows| {
+                                        rows.iter()
+                                            .map(|row| {
+                                                pipeline_cached_row_to_candidate(project, row)
+                                            })
+                                            .collect()
+                                    }),
+                                    Err(_) => Err(format!("{}: no PAT", project.organization)),
+                                };
+                                (*project, outcome)
+                            })
+                        })
+                        .collect();
+                    handles
+                        .into_iter()
+                        .map(|handle| handle.join().expect("pipeline fetch thread panicked"))
+                        .collect()
+                });
+                for (project, outcome) in outcomes {
+                    match outcome {
+                        Ok(found) => results.extend(found),
+                        Err(error) => {
+                            crate::panic_log::record(&format!(
+                                "azure devops: live pipeline search {}/{} failed: {error}",
+                                project.organization, project.project
+                            ));
+                            failures.push(format!("{}/{}", project.organization, project.project));
+                        }
+                    }
+                }
+            }
+            Err(error) => crate::panic_log::record(&format!(
+                "azure devops: could not initialize pipeline client: {error}"
+            )),
+        }
+        results.retain(|candidate: &Candidate| filter.matches(&candidate.status));
+        let terms = query.trim().to_lowercase();
+        if !terms.is_empty() {
+            results.retain(|candidate| candidate.name.to_lowercase().contains(&terms));
+        }
+        results.sort_by_key(|candidate| (candidate.priority, candidate.name.to_lowercase()));
+        failures.sort();
+        failures.dedup();
+        let empty_message = if results.is_empty() {
+            if failures.is_empty() {
+                Some("No matching pipelines.".to_string())
+            } else {
+                Some(format!(
+                    "Azure DevOps search unavailable ({})",
+                    failures.join(", ")
+                ))
+            }
+        } else {
+            None
+        };
+        let mut pending = lock_recovering(pending_pipelines());
+        pending.insert(
+            request_id,
+            PipelineReply {
+                candidates: results,
+                message: empty_message,
+            },
+        );
+        pending.retain(|id, _| *id >= request_id.saturating_sub(3));
+        drop(pending);
+        unsafe {
+            let _ = PostMessageW(
+                Some(HWND(notify as *mut _)),
+                message,
+                WPARAM(request_id as usize),
+                LPARAM(0),
+            );
+        }
+    });
+}
+
+pub fn take_pipeline_results(request_id: u32) -> Option<PipelineReply> {
+    lock_recovering(pending_pipelines()).remove(&request_id)
+}
+
+fn pending_pipelines() -> &'static Mutex<HashMap<u32, PipelineReply>> {
+    static PENDING: OnceLock<Mutex<HashMap<u32, PipelineReply>>> = OnceLock::new();
     PENDING.get_or_init(|| Mutex::new(HashMap::new()))
 }
 

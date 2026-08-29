@@ -159,6 +159,7 @@ pub(super) fn queue_selected() {
         Execute(Option<HWND>, Option<HWND>),
         LiveWorkItemSearch(String),
         LivePullRequestSearch(crate::quick_launch::PullRequestFilter, String),
+        LivePipelineSearch(crate::quick_launch::PipelineFilter, String),
     }
 
     let selected = STATE.with(|state| {
@@ -174,6 +175,9 @@ pub(super) fn queue_selected() {
         }
         if let Action::AzureLivePullRequestSearch { filter, query } = &entry.action {
             return Some(Selected::LivePullRequestSearch(*filter, query.clone()));
+        }
+        if let Action::AzureLivePipelineSearch { filter, query } = &entry.action {
+            return Some(Selected::LivePipelineSearch(*filter, query.clone()));
         }
         if let Action::OpenFolder(mode) = &mut entry.action {
             let shift = unsafe { GetKeyState(VK_SHIFT.0 as i32) } < 0;
@@ -214,6 +218,11 @@ pub(super) fn queue_selected() {
         Some(Selected::LivePullRequestSearch(filter, query)) => {
             STATE.with(|state| {
                 super::search::start_azure_pull_request_live_search(state, filter, &query)
+            });
+        }
+        Some(Selected::LivePipelineSearch(filter, query)) => {
+            STATE.with(|state| {
+                super::search::start_azure_pipeline_live_search(state, filter, &query)
             });
         }
         None => {}

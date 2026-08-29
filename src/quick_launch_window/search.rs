@@ -154,6 +154,16 @@ pub(super) fn update_results(state: &RefCell<State>) {
                     .results
                     .push(live_pull_request_search_entry(filter, rest));
             }
+            // Pipeline は永続キャッシュを持たないので、`Index::search` は
+            // 常に 0 件を返す (`quick_launch/search.rs` 参照)。ここで毎回
+            // ライブ検索への入口を足す — PR/Work Item と違い「キャッシュに
+            // 無かった」ではなく最初から Live 検索専用のため無条件。
+            if state.results.is_empty()
+                && let Some((crate::quick_launch::AzureCommand::Pipelines(filter), rest)) =
+                    crate::quick_launch::azure_command(&query)
+            {
+                state.results.push(live_pipeline_search_entry(filter, rest));
+            }
             Vec::new()
         };
         state.previous_query = Some(query);
@@ -468,6 +478,118 @@ pub(super) fn handle_azure_pull_request_results(reply_id: u32) {
         if !accepts_azure_pull_request_reply(
             state.azure_pull_requests_live_active,
             state.azure_pull_request_reply_id,
+            reply_id,
+        ) {
+            return None;
+        }
+        state.results = reply
+            .candidates
+            .into_iter()
+            .take(MAX_LIST_RESULTS)
+            .map(|candidate| Entry {
+                name: candidate.name,
+                breadcrumb: candidate.detail,
+                path: candidate.url.clone(),
+                action: crate::quick_launch::Action::OpenUrl(candidate.url),
+                branch: None,
+            })
+            .collect();
+        state.empty_message = reply.message;
+        let (labels, rows) = build_rows(&state.results, &[]);
+        state.rows = if rows.is_empty() {
+            vec![RowKind::Message]
+        } else {
+            rows.clone()
+        };
+        Some((state.list, labels, rows, state.empty_message.clone()))
+    });
+    let Some((list, labels, rows, empty_message)) = outcome else {
+        return;
+    };
+    if let Some(list) = list {
+        if !rows.is_empty() {
+            populate_list(list, &labels, &rows);
+        } else {
+            populate_empty_message(list, empty_message.as_deref());
+        }
+    }
+}
+
+/// Pipeline は永続キャッシュを持たないので、`az pipeline ` に入ると常に
+/// このライブ検索への入口を出す (PR/Work Item の「キャッシュ 0 件」とは
+/// 条件が異なるが、表示・選択の形は同じ)。
+fn live_pipeline_search_entry(filter: crate::quick_launch::PipelineFilter, query: &str) -> Entry {
+    let label = if query.is_empty() {
+        "Search Azure DevOps pipelines".to_string()
+    } else {
+        format!("Search Azure DevOps pipelines matching \"{query}\"")
+    };
+    Entry {
+        name: label,
+        breadcrumb: "Press Enter to search live".to_string(),
+        path: String::new(),
+        action: crate::quick_launch::Action::AzureLivePipelineSearch {
+            filter,
+            query: query.to_string(),
+        },
+        branch: None,
+    }
+}
+
+/// `AzureLivePipelineSearch` が選ばれた。ウィンドウは閉じずにその場で
+/// API 検索を投げ、結果が届いたらリストだけ差し替える。
+pub(super) fn start_azure_pipeline_live_search(
+    state: &RefCell<State>,
+    filter: crate::quick_launch::PipelineFilter,
+    query: &str,
+) {
+    let (window, reply_id, settings) = {
+        let mut state = state.borrow_mut();
+        state.azure_pipelines_live_active = true;
+        state.azure_pipeline_reply_id = next_azure_reply_id(state.azure_pipeline_reply_id);
+        state.empty_message = Some("Searching Azure DevOps pipelines…".to_string());
+        state.results.clear();
+        state.rows = vec![RowKind::Message];
+        (
+            state.window,
+            state.azure_pipeline_reply_id,
+            state.azure_devops.clone(),
+        )
+    };
+    let Some(list) = STATE.with(|state| state.borrow().list) else {
+        return;
+    };
+    populate_empty_message(list, Some("Searching Azure DevOps pipelines…"));
+    let Some(window) = window else {
+        return;
+    };
+    if !settings.enabled {
+        set_azure_empty_message("Azure DevOps search is disabled in Settings.");
+        return;
+    }
+    crate::azure_devops::search_pipelines_live_async(
+        settings,
+        filter,
+        query.to_string(),
+        reply_id,
+        window,
+        WM_QUICK_LAUNCH_AZURE_RESULTS,
+    );
+}
+
+pub(super) fn accepts_azure_pipeline_reply(active: bool, expected: u32, received: u32) -> bool {
+    active && expected == received
+}
+
+pub(super) fn handle_azure_pipeline_results(reply_id: u32) {
+    let Some(reply) = crate::azure_devops::take_pipeline_results(reply_id) else {
+        return;
+    };
+    let outcome = STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        if !accepts_azure_pipeline_reply(
+            state.azure_pipelines_live_active,
+            state.azure_pipeline_reply_id,
             reply_id,
         ) {
             return None;

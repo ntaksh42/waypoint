@@ -165,6 +165,11 @@ struct State {
     /// reply_id の名前空間を分けるために独立させている。
     azure_pull_requests_live_active: bool,
     azure_pull_request_reply_id: u32,
+    /// Pipeline のライブ検索 (`AzureLivePipelineSearch`) 中だけ立てる。
+    /// Pipeline は永続キャッシュを持たないので、`az pipeline ` に入る
+    /// たびにこの経路を通る (PR/Work Item と違いキャッシュ検索を挟まない)。
+    azure_pipelines_live_active: bool,
+    azure_pipeline_reply_id: u32,
     /// 非同期検索中・0 件時に結果一覧へ出す説明。実行対象にはしない。
     empty_message: Option<String>,
     /// 現在の入力が `b `/`w `/`a `/`f ` のいずれかに入っていれば
