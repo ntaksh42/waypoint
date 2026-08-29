@@ -19,7 +19,6 @@ mod ui_confirm;
 mod ui_editors;
 mod ui_import;
 mod ui_items;
-mod ui_search;
 mod ui_toolbar;
 mod ui_tree;
 mod ui_trigger;
@@ -93,17 +92,10 @@ fn configure_fonts(ctx: &egui::Context) {
 const COL_NAME: f32 = 170.0;
 const COL_KIND: f32 = 96.0;
 const COL_OPEN: f32 = 82.0;
-/// 検索結果一覧の「Menu」列の幅。
-const COL_MENU: f32 = 160.0;
 /// 見出し行のグリップ分の字下げ。
 const ROW_INDENT: f32 = 20.0;
 /// 一覧末尾に置く受け口の高さ。ここへ落とすと最後尾へ移る。
 const TAIL_DROP_HEIGHT: f32 = 24.0;
-
-/// 全メニュー横断の検索ボックスの `egui::Id`。`Ctrl+F` でここへフォーカスを移す。
-fn search_box_id() -> egui::Id {
-    egui::Id::new("waypoint_settings_search_box")
-}
 
 fn app_icon() -> egui::IconData {
     let image = image::load_from_memory(include_bytes!("../../assets/waypoint.png"))

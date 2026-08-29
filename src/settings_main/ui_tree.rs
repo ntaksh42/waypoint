@@ -7,37 +7,28 @@
 use eframe::egui;
 
 use super::app::SettingsApp;
-use super::helpers::{filter_menu_choices, items_at, menu_choices};
+use super::helpers::{items_at, menu_choices};
 
 impl SettingsApp {
     /// 左ペイン: メニュー階層をツリーとして表示し、選ぶと右の一覧を切り替える。
-    /// メニュー数が多い環境向けに、絞り込みボックスで一致するメニューと
-    /// その祖先だけを残せる (FR-6.15)。
     pub(super) fn show_menu_tree(&mut self, ui: &mut egui::Ui) {
         ui.label("Menus");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.menu_filter)
-                .hint_text("Filter")
-                .desired_width(f32::INFINITY),
-        );
         ui.separator();
-        let choices = menu_choices(&self.config);
-        let visible = filter_menu_choices(&choices, &self.menu_filter);
         egui::ScrollArea::vertical()
             .id_salt("menu_tree")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                for (path, name) in visible {
+                for (path, name) in menu_choices(&self.config) {
                     // "Parent > Child" の最後の区間だけを表示名にし、深さはインデントで示す。
                     let depth = path.len();
-                    let label = name.rsplit(" > ").next().unwrap_or(name);
+                    let label = name.rsplit(" > ").next().unwrap_or(&name);
                     ui.horizontal(|ui| {
                         ui.add_space(depth as f32 * 14.0);
                         if ui
-                            .selectable_label(*path == self.selected_menu, label)
+                            .selectable_label(path == self.selected_menu, label)
                             .clicked()
                         {
-                            self.switch_menu(path.clone());
+                            self.switch_menu(path);
                         }
                     });
                 }

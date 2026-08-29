@@ -9,7 +9,7 @@ impl SettingsApp {
     /// Shift+矢印での範囲選択伸縮。egui の標準フォーカス移動 (Tab 系) が
     /// 矢印キーを Shift 修飾ごと横取りする前に、一覧の描画より先に消費する。
     pub(super) fn handle_range_selection_keys(&mut self, ctx: &egui::Context) {
-        if self.any_dialog_open() || !self.search.trim().is_empty() {
+        if self.any_dialog_open() {
             return;
         }
         let item_count = self.current_items().map_or(0, Vec::len);
@@ -37,18 +37,6 @@ impl SettingsApp {
     /// 押せなくなっていた。
     pub(super) fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         if self.any_dialog_open() {
-            return;
-        }
-        if consume_key_exact(ctx, egui::Modifiers::CTRL, egui::Key::F) {
-            ctx.memory_mut(|memory| memory.request_focus(super::search_box_id()));
-        }
-        // 検索結果表示中は一覧が全メニュー横断のものに差し替わっており、
-        // 選択・並べ替え系のショートカットは検索開始前の selected_items/
-        // focused_row を古いまま参照してしまう。Esc でのクリア以外は塞ぐ。
-        if !self.search.trim().is_empty() {
-            if consume_key_exact(ctx, egui::Modifiers::NONE, egui::Key::Escape) {
-                self.search.clear();
-            }
             return;
         }
         if consume_key_exact(ctx, egui::Modifiers::CTRL, egui::Key::S) {

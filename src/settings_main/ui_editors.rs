@@ -5,7 +5,7 @@ use waypoint::config::OpenMode;
 
 use super::app::SettingsApp;
 use super::drafts::DraftKind;
-use super::helpers::{filter_menu_choices, menu_choices, show_open_mode};
+use super::helpers::{menu_choices, show_open_mode};
 use super::keys::{dialog_keys, lock_modal_focus};
 
 impl SettingsApp {
@@ -275,13 +275,7 @@ impl SettingsApp {
                 egui::ComboBox::from_id_salt("move_to_menu_target")
                     .selected_text(selected_name)
                     .show_ui(ui, |ui| {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut draft.filter)
-                                .hint_text("Filter menus")
-                                .desired_width(f32::INFINITY),
-                        );
-                        ui.separator();
-                        for (path, name) in filter_menu_choices(&choices, &draft.filter) {
+                        for (path, name) in &choices {
                             ui.selectable_value(&mut draft.target, path.clone(), name);
                         }
                     });

@@ -14,14 +14,8 @@ impl SettingsApp {
         // 編集ダイアログを開いたまま別項目を Remove した後に OK を押すと
         // 削除で詰まった index が別の項目を上書きする。ダイアログが
         // 何か開いている間はツールバー全体を無効化して塞ぐ。
-        //
-        // 検索中も同様に塞ぐ: 一覧が検索結果 (全メニュー横断) に
-        // 差し替わっており、selected_items/selected_menu は検索を始める前の
-        // ままなので、ここで Edit 等を押すと画面に見えている項目とは
-        // 無関係な項目を操作してしまう。
         let dialog_open = self.any_dialog_open();
-        let searching = !self.search.trim().is_empty();
-        ui.add_enabled_ui(!dialog_open && !searching, |ui| {
+        ui.add_enabled_ui(!dialog_open, |ui| {
             ui.horizontal_wrapped(|ui| {
                 egui::ComboBox::from_id_salt("add_item_menu")
                     .selected_text("Add")

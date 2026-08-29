@@ -4,17 +4,13 @@ use eframe::egui;
 use waypoint::config::{Config, Item, LoadOutcome};
 
 use super::drafts::{BatchDraft, ItemDraft};
-use super::helpers::{items_at, items_at_mut, menu_choices};
+use super::helpers::{items_at, items_at_mut};
 use super::trigger_draft::TriggerDraft;
 use super::{AzureProjectPicker, ImportDraft, MoveToMenuDraft, VariablesDraft};
 
 pub(super) struct SettingsApp {
     pub(super) config: Config,
     pub(super) selected_menu: Vec<usize>,
-    /// 全メニュー横断の項目検索クエリ (FR-6.14)。空なら通常表示。
-    pub(super) search: String,
-    /// 左のメニューツリーの絞り込みクエリ (FR-6.15)。
-    pub(super) menu_filter: String,
     /// 選択中の行の添字集合。複数選択に対応する (FR-6)。
     pub(super) selected_items: std::collections::BTreeSet<usize>,
     /// 直近でフォーカス/クリックした行。Shift 範囲選択の基準にし、
@@ -69,8 +65,6 @@ impl SettingsApp {
         Self {
             config,
             selected_menu: Vec::new(),
-            search: String::new(),
-            menu_filter: String::new(),
             selected_items,
             active_item,
             selection_anchor: active_item,
@@ -161,24 +155,6 @@ impl SettingsApp {
 
     pub(super) fn current_items(&self) -> Option<&Vec<Item>> {
         items_at(&self.config, &self.selected_menu)
-    }
-
-    /// 選択中メニューの表示名 ("Main" または "Parent > Child")。
-    pub(super) fn current_menu_breadcrumb(&self) -> String {
-        menu_choices(&self.config)
-            .into_iter()
-            .find(|(path, _)| *path == self.selected_menu)
-            .map(|(_, name)| name)
-            .unwrap_or_else(|| "Main".to_string())
-    }
-
-    /// 検索結果から項目へジャンプする: 対象メニューへ切り替えて選択し、
-    /// 検索を閉じて通常表示へ戻す。
-    pub(super) fn jump_to_item(&mut self, menu_path: Vec<usize>, index: usize) {
-        self.selected_menu = menu_path;
-        self.select_single(index);
-        self.search.clear();
-        self.focus_selected_row = true;
     }
 
     pub(super) fn current_items_mut(&mut self) -> Option<&mut Vec<Item>> {
