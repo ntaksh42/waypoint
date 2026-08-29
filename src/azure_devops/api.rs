@@ -16,7 +16,6 @@ use super::convert::{
     unix_timestamp, unix_to_wiql_datetime, work_item_batch_candidates, work_item_cached_row,
     work_item_candidates,
 };
-use super::shared_cache;
 
 pub(crate) const API_VERSION: &str = "7.1";
 const PR_PAGE_SIZE: usize = 500;
@@ -51,13 +50,6 @@ pub(crate) fn refresh_project(
     project: &AzureDevOpsProject,
     pat: &str,
 ) -> Result<(), String> {
-    // DevDeck (別リポジトリの Azure DevOps ダッシュボード) が直近に同じ
-    // プロジェクトを自分に必要な範囲まで同期済みなら、それを採用して
-    // 自分の API 呼び出しを省略する (共有キャッシュによる重複同期回避)。
-    if let Some(rows) = shared_cache::peer_fresh_candidates(project) {
-        replace_project_cache(project, &rows)?;
-        return record_project_success(project);
-    }
     let (pull_requests, pipelines, work_items) = thread::scope(|scope| {
         let pull_requests = scope.spawn(|| {
             if !project.include_pull_requests {
@@ -93,14 +85,7 @@ pub(crate) fn refresh_project(
     rows.extend(pipelines?);
     rows.extend(work_items?);
     replace_project_cache(project, &rows)?;
-    record_project_success(project)?;
-    if let Err(error) = shared_cache::publish_project(project, &rows) {
-        crate::panic_log::record(&format!(
-            "azure devops: could not publish shared cache for {}/{}: {error}",
-            project.organization, project.project
-        ));
-    }
-    Ok(())
+    record_project_success(project)
 }
 
 /// Active PR は無条件で全件、Completed / Abandoned は新しい順に読み、
