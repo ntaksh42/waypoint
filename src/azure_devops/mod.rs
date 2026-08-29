@@ -1,21 +1,23 @@
 //! Azure DevOps の Quick Launch 連携。
 //!
-//! Active PR と Work Item は DevDeck (別リポジトリの Azure DevOps
-//! ダッシュボード) の SQLite キャッシュを読み取り専用で直接参照する
-//! (`devdeck_cache`)。同じ組織を waypoint と DevDeck が独立にポーリング
-//! すると API 呼び出しが重複するため、waypoint 側はこの 2 種類の定期同期を
-//! 行わない。PR の Completed/Abandoned 履歴は DevDeck の対象外なので
-//! waypoint 自身の SQLite キャッシュ (`cache`) のまま。Pipeline は永続
-//! キャッシュを持たず、`az pipeline ` の明示的な選択でだけ Live 検索する。
-//! PAT は設定ファイルへ書かず、Windows Credential Manager (`keyring`) から
-//! 必要時だけ読む。
+//! Active PR と Work Item は waypoint と DevDeck (別リポジトリの Azure
+//! DevOps ダッシュボード) が共有する中立な SQLite キャッシュ
+//! (`shared_cache`、`%APPDATA%\AzDoSharedCache\cache.db`) に対して読み書き
+//! する。どちらのアプリの内部スキーマにも依存しない — 同じ組織を独立に
+//! ポーリングして API 呼び出しが重複するのを避けるための共有先で、直近
+//! (自分でも相手でも) 更新済みなら自分の取得をスキップする
+//! (`api.rs::refresh_project` 参照)。PR の Completed/Abandoned 履歴は
+//! DevDeck の対象外なので waypoint 自身の SQLite キャッシュ (`cache`) の
+//! まま。Pipeline は永続キャッシュを持たず、`az pipeline ` の明示的な
+//! 選択でだけ Live 検索する。PAT は設定ファイルへ書かず、Windows
+//! Credential Manager (`keyring`) から必要時だけ読む。
 
 mod api;
 mod auth_cache;
 mod cache;
 mod convert;
 mod credential;
-mod devdeck_cache;
+mod shared_cache;
 mod sync;
 
 use std::collections::HashMap;
@@ -26,7 +28,7 @@ use rusqlite::params;
 use crate::config::AzureDevOpsSettings;
 
 use api::{API_VERSION, http_client};
-use cache::{CachedRow, open_cache, open_cache_read_only};
+use cache::{CachedRow, open_cache, open_cache_read_only, read_identity};
 use convert::{
     encode_segment, project_key, project_names, project_url, sort_and_deduplicate_project_names,
     unix_timestamp, valid_project,
@@ -157,8 +159,9 @@ pub fn project_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
         .collect()
 }
 
-/// Active PR 候補。DevDeck の SQLite キャッシュを読み取り専用で直接参照する
-/// (waypoint 自身はもう Active PR を同期しない)。
+/// Active PR 候補。共有キャッシュ (`shared_cache`) を読む。フレッシュで
+/// なければ waypoint 自身がバックグラウンドで更新する
+/// (`api.rs::refresh_project`) ので、ここは常に「今ある内容」を返すだけ。
 pub fn cached_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
     cached_candidate_groups(settings).0
 }
@@ -166,7 +169,8 @@ pub fn cached_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
 /// waypoint 自身が保持する PR 履歴 (Completed/Abandoned、過去 90 日ぶん)。
 /// DevDeck は Active PR しか同期しないので、この分だけは重複しておらず
 /// waypoint 側のキャッシュのまま残す (`api.rs::fetch_pull_requests` 参照)。
-/// 読めなければ空で続行する。
+/// 読めなければ空で続行する。読み取り専用接続を使い、waypoint 自身の
+/// バックグラウンド同期の書き込みと競合しない。
 fn pr_history_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
     let Ok(connection) = open_cache_read_only() else {
         return Vec::new();
@@ -225,23 +229,126 @@ fn pr_history_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
         .collect()
 }
 
-/// Work Item 候補。DevDeck の SQLite キャッシュを読み取り専用で直接参照する
-/// (waypoint 自身はもう Work Item を同期しない — ライブ検索
-/// `az wit live` は API を直接叩くので対象外)。読めなければ空で続行する。
+/// Work Item 候補。共有キャッシュ (`shared_cache`) を読む
+/// (`az wit live` はライブ検索で API を直接叩くので対象外)。
+/// 読めなければ空で続行する。
 pub fn cached_work_item_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
     cached_candidate_groups(settings).1
 }
 
-/// Active PR と Work Item を DevDeck の同じ読み取り専用接続からまとめて読む。
+/// Active PR と Work Item を共有キャッシュ (`shared_cache`) の同じ接続から
+/// まとめて読む (接続を開き直すコストを 1 回で済ませる)。is_mine は共有
+/// キャッシュに持たない (どちらのアプリの都合でもない生の事実だけを置く
+/// 設計) ので、`created_by_id` / レビュアー一覧を自分の
+/// `authenticated_user_id` (`cache::read_identity`、ネットワークなしで
+/// 同期的に読める) と突き合わせてここで計算する。
 pub(crate) fn cached_candidate_groups(
     settings: &AzureDevOpsSettings,
 ) -> (Vec<Candidate>, Vec<Candidate>) {
     if !settings.enabled {
         return (Vec::new(), Vec::new());
     }
-    let (mut pull_requests, work_items) = devdeck_cache::candidate_groups(settings);
+    // 共有キャッシュが開けなくても、waypoint 自身の PR 履歴は別の DB
+    // (waypoint 自身の `cache.rs`) なので独立して読める。
+    let Ok((mut pull_requests, work_items)) =
+        shared_cache::with_cached_connection(|connection| read_candidate_groups(connection, settings))
+    else {
+        return (pr_history_candidates(settings), Vec::new());
+    };
     pull_requests.extend(pr_history_candidates(settings));
     (pull_requests, work_items)
+}
+
+/// `cached_candidate_groups` の本体。`healthy` は呼び出し元のキャッシュ
+/// 接続を使い回してよいかの判定に使う — スキーマ不一致等でクエリ自体が
+/// 失敗した場合だけ `false` にし、次回呼び出しで接続を開き直させる
+/// (プロジェクトが未設定/該当行なしはクエリ自体は成功しているので健全)。
+fn read_candidate_groups(
+    connection: &rusqlite::Connection,
+    settings: &AzureDevOpsSettings,
+) -> ((Vec<Candidate>, Vec<Candidate>), bool) {
+    let mut pull_requests = Vec::new();
+    let mut work_items = Vec::new();
+    let mut healthy = true;
+    for project in &settings.projects {
+        if !valid_project(project) {
+            continue;
+        }
+        let organization = project.organization.trim();
+        let project_name = project.project.trim();
+
+        if project.include_pull_requests {
+            match shared_cache::read_pull_requests(connection, organization, project_name) {
+                Ok(rows) => {
+                    let reviewers =
+                        shared_cache::read_reviewers(connection, organization, project_name)
+                            .unwrap_or_default();
+                    let my_id = read_identity(organization);
+                    for row in rows {
+                        let Some(url) = row.web_url else { continue };
+                        let is_mine = my_id.as_deref().is_some_and(|my_id| {
+                            row.created_by_id.as_deref() == Some(my_id)
+                                || reviewers.iter().any(|reviewer| {
+                                    reviewer.repository_id == row.repository_id
+                                        && reviewer.pull_request_id == row.pull_request_id
+                                        && reviewer.reviewer_id == my_id
+                                })
+                        });
+                        pull_requests.push(Candidate {
+                            kind: Kind::PullRequest,
+                            name: format!("PR {}: {}", row.pull_request_id, row.title),
+                            detail: match &row.created_by {
+                                Some(author) if !author.is_empty() => format!(
+                                    "Azure DevOps — {organization}/{project_name} — {} — by {author}",
+                                    row.status
+                                ),
+                                _ => format!(
+                                    "Azure DevOps — {organization}/{project_name} — {}",
+                                    row.status
+                                ),
+                            },
+                            status: row.status,
+                            url,
+                            organization: organization.to_string(),
+                            project: project_name.to_string(),
+                            aliases: project.aliases.clone(),
+                            priority: project.priority,
+                            is_mine,
+                        });
+                    }
+                }
+                Err(_) => healthy = false,
+            }
+        }
+
+        if project.include_work_items {
+            match shared_cache::read_work_items(connection, organization, project_name) {
+                Ok(rows) => {
+                    for row in rows {
+                        let Some(url) = row.web_url else { continue };
+                        let kind = row.work_item_type.as_deref().unwrap_or("Work Item");
+                        let state = row.state.as_deref().unwrap_or("");
+                        work_items.push(Candidate {
+                            kind: Kind::WorkItem,
+                            status: state.to_string(),
+                            name: format!("{}: {}", row.id, row.title),
+                            detail: format!(
+                                "Azure DevOps — {organization}/{project_name} — {kind} {state}"
+                            ),
+                            url,
+                            organization: organization.to_string(),
+                            project: project_name.to_string(),
+                            aliases: project.aliases.clone(),
+                            priority: project.priority,
+                            is_mine: false,
+                        });
+                    }
+                }
+                Err(_) => healthy = false,
+            }
+        }
+    }
+    ((pull_requests, work_items), healthy)
 }
 
 /// 監視対象の最後の同期状態。DB が無い・壊れている場合も空状態として扱う。

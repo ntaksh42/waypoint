@@ -62,6 +62,10 @@ pub(crate) fn open_cache() -> Result<Connection, String> {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS identity (
+                organization TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL
+            );
             INSERT OR REPLACE INTO cache_meta (key, value) VALUES ('schema_version', '2');",
         )
         .map_err(|error| error.to_string())?;
@@ -170,6 +174,33 @@ pub(crate) fn record_project_error(
              VALUES (?1, ?2, NULL, ?3)
              ON CONFLICT(organization, project) DO UPDATE SET last_error = excluded.last_error",
             params![project.organization.trim(), project.project.trim(), error],
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// The authenticated user's identity GUID for `organization`, resolved by
+/// `current_user_id` on some earlier sync and cached here so the synchronous
+/// read path (`cached_candidates`, no network access allowed) can compute
+/// "is this mine" against the shared cache without an API call.
+pub(crate) fn read_identity(organization: &str) -> Option<String> {
+    let connection = open_cache().ok()?;
+    connection
+        .query_row(
+            "SELECT user_id FROM identity WHERE organization = ?1",
+            params![organization.trim()],
+            |row| row.get(0),
+        )
+        .ok()
+}
+
+pub(crate) fn write_identity(organization: &str, user_id: &str) -> Result<(), String> {
+    let connection = open_cache()?;
+    connection
+        .execute(
+            "INSERT INTO identity (organization, user_id) VALUES (?1, ?2)
+             ON CONFLICT(organization) DO UPDATE SET user_id = excluded.user_id",
+            params![organization.trim(), user_id],
         )
         .map_err(|error| error.to_string())?;
     Ok(())

@@ -9,12 +9,13 @@ use serde_json::{Value, json};
 use crate::config::AzureDevOpsProject;
 
 use super::Candidate;
-use super::cache::{CachedRow, record_project_success, replace_project_cache};
+use super::cache::{CachedRow, record_project_success, replace_project_cache, write_identity};
 use super::convert::{
     AreaNode, area_nodes, area_path_counts, encode_segment, json_i64, parse_rfc3339_unix,
-    pipeline_build_row, pipeline_definition_row, pull_request_row, repository_names_and_ids,
-    unix_timestamp, work_item_batch_candidates, work_item_candidates,
+    pipeline_build_row, pipeline_definition_row, project_url, pull_request_row,
+    repository_names_and_ids, unix_timestamp, work_item_batch_candidates, work_item_candidates,
 };
+use super::shared_cache::{self, SharedPullRequest, SharedReviewer, SharedWorkItem};
 
 pub(crate) const API_VERSION: &str = "7.1";
 const PR_PAGE_SIZE: usize = 500;
@@ -35,29 +36,280 @@ const PIPELINE_BUILD_LIMIT: usize = 100;
 const WORK_ITEM_RESULT_LIMIT: usize = 300;
 /// `fetch_work_items` が空クエリで呼ばれた場合に返す「最近更新された
 /// Work Item」の上限 (プロジェクトごと)。通常の Quick Launch 表示は
-/// DevDeck のキャッシュ (`devdeck_cache`) を見るのでここへは来ない。
+/// 共有キャッシュ (`shared_cache`) を見るのでここへは来ない。
 const RECENT_WORK_ITEM_LIMIT: usize = 800;
 const REQUEST_RETRIES: usize = 2;
 const RETRY_DELAY: Duration = Duration::from_millis(350);
 
-/// Active PR は DevDeck の SQLite キャッシュを直接読むので waypoint は
-/// もう同期しない (`devdeck_cache` 参照)。Pipeline・Work Item も同様の
-/// 理由でここでは取得しない (Pipeline は Live 検索のみ、Work Item は
-/// DevDeck のキャッシュを読む)。ここで行うのは PR の Completed/Abandoned
-/// 履歴の同期だけで、DevDeck の対象外なので waypoint 自身が保持し続ける。
+/// 共有キャッシュ (`shared_cache`) が直近これだけ新しければ、waypoint は
+/// Active PR / Work Item を自分で取得しない。DevDeck 側の同期間隔 (5分) を
+/// 確実に拾えるだけの余裕を持たせてある。
+const SHARED_CACHE_FRESHNESS: Duration = Duration::from_secs(10 * 60);
+
+/// Active PR と Work Item は共有キャッシュ (`shared_cache`) にだけ書き、
+/// waypoint 自身の DB には複製を持たない。共有キャッシュが新しければ
+/// (自分でも DevDeck でも直近更新していれば) API を叩かずスキップする。
+/// PR の Completed/Abandoned 履歴は共有キャッシュの対象外 (DevDeck は
+/// Active しか同期しない) なので、引き続き waypoint 自身の DB に保存する。
 pub(crate) fn refresh_project(
     client: &reqwest::blocking::Client,
     project: &AzureDevOpsProject,
     pat: &str,
 ) -> Result<(), String> {
-    if !project.include_pull_requests {
-        record_project_success(project)?;
+    // 共有キャッシュを読んでスキップする場合でも is_mine の判定に自分の
+    // ID が要るので、フェッチの成否とは独立に毎回解決しておく。
+    let current_user = current_user_id(client, &project.organization, pat).ok();
+    if let Some(user_id) = &current_user {
+        let _ = write_identity(project.organization.trim(), user_id);
+    }
+
+    let history_rows = if project.include_pull_requests {
+        fetch_pull_request_history(client, project, pat, current_user.as_deref())?
+    } else {
+        Vec::new()
+    };
+    replace_project_cache(project, &history_rows)?;
+
+    if project.include_pull_requests {
+        sync_active_prs_to_shared_cache(client, project, pat)?;
+    }
+    if project.include_work_items {
+        sync_work_items_to_shared_cache(client, project, pat)?;
+    }
+
+    record_project_success(project)
+}
+
+/// `az` のライブ検索と同じ生 JSON から、共有キャッシュ向けの事実 (PR 本体
+/// とレビュアー一覧) を取り出す。`pull_request_row` (waypoint 自身の表示用
+/// `name`/`detail` を組み立てる) とは別に、共有キャッシュはどちらのアプリ
+/// の表示都合にも寄らない生のフィールドだけを持つ。
+fn shared_pull_request_row(
+    project: &AzureDevOpsProject,
+    item: &Value,
+) -> Option<(SharedPullRequest, Vec<SharedReviewer>)> {
+    let pull_request_id = item["pullRequestId"].as_i64()?;
+    let title = item["title"].as_str()?.to_string();
+    let status = item["status"].as_str().unwrap_or("unknown").to_string();
+    let repository_id = item["repository"]["id"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let repository_name = item["repository"]["name"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let created_by = item["createdBy"]["displayName"]
+        .as_str()
+        .map(str::to_string);
+    let created_by_id = item["createdBy"]["id"].as_str().map(str::to_string);
+    let creation_date = item["creationDate"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let source_ref_name = short_ref(item["sourceRefName"].as_str().unwrap_or_default());
+    let target_ref_name = short_ref(item["targetRefName"].as_str().unwrap_or_default());
+    let is_draft = item["isDraft"].as_bool().unwrap_or(false);
+    let web_url = item["_links"]["web"]["href"]
+        .as_str()
+        .map(str::to_string)
+        .or_else(|| {
+            Some(format!(
+                "{}/_git/{}/pullrequest/{pull_request_id}",
+                project_url(project),
+                encode_segment(&repository_name)
+            ))
+        });
+    let reviewers = item["reviewers"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|reviewer| {
+            Some(SharedReviewer {
+                repository_id: repository_id.clone(),
+                pull_request_id,
+                reviewer_id: reviewer["id"].as_str()?.to_string(),
+                vote: reviewer["vote"].as_i64().unwrap_or(0) as i32,
+                is_required: reviewer["isRequired"].as_bool().unwrap_or(false),
+            })
+        })
+        .collect();
+    Some((
+        SharedPullRequest {
+            repository_id,
+            repository_name,
+            pull_request_id,
+            title,
+            status,
+            created_by,
+            created_by_id,
+            creation_date,
+            source_ref_name,
+            target_ref_name,
+            is_draft,
+            web_url,
+        },
+        reviewers,
+    ))
+}
+
+/// `refs/heads/main` のような完全参照名から先頭の `refs/heads/` を落とす。
+/// DevDeck 側が書く行と同じ短縮形にして、どちらが書いても表示が揃うようにする。
+fn short_ref(ref_name: &str) -> String {
+    ref_name
+        .strip_prefix("refs/heads/")
+        .unwrap_or(ref_name)
+        .to_string()
+}
+
+fn sync_active_prs_to_shared_cache(
+    client: &reqwest::blocking::Client,
+    project: &AzureDevOpsProject,
+    pat: &str,
+) -> Result<(), String> {
+    let organization = project.organization.trim().to_string();
+    let project_name = project.project.trim().to_string();
+    if let Ok(conn) = shared_cache::open()
+        && shared_cache::is_fresh(
+            &conn,
+            &organization,
+            &project_name,
+            shared_cache::KIND_PULL_REQUESTS,
+            SHARED_CACHE_FRESHNESS,
+        )
+    {
         return Ok(());
     }
-    let current_user = current_user_id(client, &project.organization, pat).ok();
-    let rows = fetch_pull_request_history(client, project, pat, current_user.as_deref())?;
-    replace_project_cache(project, &rows)?;
-    record_project_success(project)
+
+    let mut rows = Vec::new();
+    let mut reviewers = Vec::new();
+    let mut skip = 0;
+    loop {
+        let url = pull_requests_url(project, "active", skip, None);
+        let value = get_json(client, &url, pat)?;
+        let page = value["value"].as_array().cloned().unwrap_or_default();
+        let count = page.len();
+        for item in &page {
+            if let Some((row, item_reviewers)) = shared_pull_request_row(project, item) {
+                rows.push(row);
+                reviewers.extend(item_reviewers);
+            }
+        }
+        if count < PR_PAGE_SIZE {
+            break;
+        }
+        skip += PR_PAGE_SIZE;
+    }
+
+    let mut conn = shared_cache::open()?;
+    shared_cache::write_pull_requests(&mut conn, &organization, &project_name, &rows, &reviewers)?;
+    shared_cache::mark_synced(
+        &conn,
+        &organization,
+        &project_name,
+        shared_cache::KIND_PULL_REQUESTS,
+        shared_cache::SYNCED_BY,
+    )
+}
+
+fn sync_work_items_to_shared_cache(
+    client: &reqwest::blocking::Client,
+    project: &AzureDevOpsProject,
+    pat: &str,
+) -> Result<(), String> {
+    let organization = project.organization.trim().to_string();
+    let project_name = project.project.trim().to_string();
+    if let Ok(conn) = shared_cache::open()
+        && shared_cache::is_fresh(
+            &conn,
+            &organization,
+            &project_name,
+            shared_cache::KIND_WORK_ITEMS,
+            SHARED_CACHE_FRESHNESS,
+        )
+    {
+        return Ok(());
+    }
+
+    let rows = fetch_work_items_for_shared_cache(client, project, pat)?;
+    let mut conn = shared_cache::open()?;
+    shared_cache::write_work_items(&mut conn, &organization, &project_name, &rows)?;
+    shared_cache::mark_synced(
+        &conn,
+        &organization,
+        &project_name,
+        shared_cache::KIND_WORK_ITEMS,
+        shared_cache::SYNCED_BY,
+    )
+}
+
+/// 共有キャッシュ向けの Work Item 取得。`fetch_recent_work_items`
+/// (waypoint 自身のライブ検索用、`Candidate` を返す) とは別に、共有先の
+/// 他アプリ (DevDeck) が使う `assigned_to` / `tags` などの生フィールドも
+/// 合わせて取得する。
+fn fetch_work_items_for_shared_cache(
+    client: &reqwest::blocking::Client,
+    project: &AzureDevOpsProject,
+    pat: &str,
+) -> Result<Vec<SharedWorkItem>, String> {
+    let base = format!(
+        "https://dev.azure.com/{}/{}",
+        encode_segment(&project.organization),
+        encode_segment(&project.project)
+    );
+    let query = post_json(
+        client,
+        &format!("{base}/_apis/wit/wiql?api-version={API_VERSION}&$top={RECENT_WORK_ITEM_LIMIT}"),
+        pat,
+        &json!({ "query": recent_work_items_wiql(project) }),
+    )?;
+    let ids: Vec<i64> = query["workItems"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| json_i64(&item["id"]))
+        .collect();
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let items = post_json(
+        client,
+        &format!("{base}/_apis/wit/workitemsbatch?api-version={API_VERSION}"),
+        pat,
+        &json!({
+            "ids": ids,
+            "fields": [
+                "System.Id", "System.Title", "System.State", "System.WorkItemType",
+                "System.AssignedTo", "System.ChangedDate", "System.Tags"
+            ],
+            "errorPolicy": "omit"
+        }),
+    )?;
+    Ok(items["value"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let fields = &item["fields"];
+            let id = json_i64(&fields["System.Id"]).or_else(|| json_i64(&item["id"]))?;
+            let title = fields["System.Title"].as_str()?.to_string();
+            Some(SharedWorkItem {
+                id,
+                title,
+                work_item_type: fields["System.WorkItemType"].as_str().map(str::to_string),
+                state: fields["System.State"].as_str().map(str::to_string),
+                assigned_to: fields["System.AssignedTo"]["displayName"]
+                    .as_str()
+                    .map(str::to_string),
+                assigned_to_unique_name: fields["System.AssignedTo"]["uniqueName"]
+                    .as_str()
+                    .map(str::to_string),
+                changed_date: fields["System.ChangedDate"].as_str().map(str::to_string),
+                web_url: Some(format!("{}/_workitems/edit/{id}", project_url(project))),
+                tags: fields["System.Tags"].as_str().map(str::to_string),
+            })
+        })
+        .collect())
 }
 
 /// Completed / Abandoned を新しい順に読み、作成日が `PR_HISTORY_MAX_AGE`
