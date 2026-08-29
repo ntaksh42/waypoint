@@ -13,9 +13,10 @@ use crate::config::AzureDevOpsSettings;
 
 use super::Candidate;
 use super::api::{
-    fetch_pipelines, fetch_pull_requests_live, fetch_recent_activity_areas, fetch_work_items,
-    http_client, refresh_project,
+    current_user_id, fetch_pipelines, fetch_pull_requests_live, fetch_recent_activity_areas,
+    fetch_work_items, http_client, refresh_project,
 };
+use super::auth_cache::OrganizationValues;
 use super::cache;
 use super::convert::{
     pipeline_cached_row_to_candidate, pull_request_cached_row_to_candidate, valid_project,
@@ -78,18 +79,24 @@ pub fn refresh_async(settings: AzureDevOpsSettings, notify: HWND, message: u32) 
                     .iter()
                     .filter(|project| valid_project(project))
                     .collect();
+                let pats = OrganizationValues::new(
+                    targets.iter().map(|project| project.organization.as_str()),
+                );
                 thread::scope(|scope| {
                     for project in &targets {
                         let client = &client;
+                        let pats = &pats;
                         scope.spawn(move || {
-                            let Ok(pat) = load_pat(&project.organization) else {
+                            let Some(Ok(pat)) = pats.get_or_init(&project.organization, || {
+                                load_pat(&project.organization)
+                            }) else {
                                 let _ = cache::record_project_error(
                                     project,
                                     "No PAT is saved for this organization.",
                                 );
                                 return;
                             };
-                            if let Err(error) = refresh_project(client, project, &pat) {
+                            if let Err(error) = refresh_project(client, project, pat) {
                                 crate::panic_log::record(&format!(
                                     "azure devops: refresh {}/{} failed: {error}",
                                     project.organization, project.project
@@ -137,6 +144,9 @@ pub fn search_work_items_async(
                     .iter()
                     .filter(|project| valid_project(project) && project.include_work_items)
                     .collect();
+                let pats = OrganizationValues::new(
+                    targets.iter().map(|project| project.organization.as_str()),
+                );
                 let outcomes: Vec<(
                     &crate::config::AzureDevOpsProject,
                     Result<Vec<Candidate>, String>,
@@ -145,11 +155,16 @@ pub fn search_work_items_async(
                         .iter()
                         .map(|project| {
                             let client = &client;
+                            let pats = &pats;
                             let query = &query;
                             scope.spawn(move || {
-                                let outcome = match load_pat(&project.organization) {
-                                    Ok(pat) => fetch_work_items(client, project, &pat, query),
-                                    Err(_) => Err(format!("{}: no PAT", project.organization)),
+                                let outcome = match pats.get_or_init(&project.organization, || {
+                                    load_pat(&project.organization)
+                                }) {
+                                    Some(Ok(pat)) => fetch_work_items(client, project, pat, query),
+                                    Some(Err(_)) | None => {
+                                        Err(format!("{}: no PAT", project.organization))
+                                    }
                                 };
                                 (*project, outcome)
                             })
@@ -263,6 +278,9 @@ pub fn search_pull_requests_live_async(
                     .iter()
                     .filter(|project| valid_project(project) && project.include_pull_requests)
                     .collect();
+                let auth = OrganizationValues::new(
+                    targets.iter().map(|project| project.organization.as_str()),
+                );
                 let jobs: Vec<(&crate::config::AzureDevOpsProject, &'static str)> = targets
                     .iter()
                     .flat_map(|project| statuses.iter().map(move |status| (*project, *status)))
@@ -272,10 +290,22 @@ pub fn search_pull_requests_live_async(
                         .iter()
                         .map(|&(project, status)| {
                             let client = &client;
+                            let auth = &auth;
                             scope.spawn(move || {
-                                let outcome = match load_pat(&project.organization) {
-                                    Ok(pat) => fetch_pull_requests_live(
-                                        client, project, &pat, status,
+                                let outcome = match auth.get_or_init(&project.organization, || {
+                                    load_pat(&project.organization).map(|pat| {
+                                        let user =
+                                            current_user_id(client, &project.organization, &pat)
+                                                .ok();
+                                        (pat, user)
+                                    })
+                                }) {
+                                    Some(Ok((pat, user))) => fetch_pull_requests_live(
+                                        client,
+                                        project,
+                                        pat,
+                                        user.as_deref(),
+                                        status,
                                     )
                                     .map(|rows| {
                                         rows.iter()
@@ -284,7 +314,9 @@ pub fn search_pull_requests_live_async(
                                             })
                                             .collect()
                                     }),
-                                    Err(_) => Err(format!("{}: no PAT", project.organization)),
+                                    Some(Err(_)) | None => {
+                                        Err(format!("{}: no PAT", project.organization))
+                                    }
                                 };
                                 (project, status, outcome)
                             })
@@ -387,6 +419,9 @@ pub fn search_pipelines_live_async(
                     .iter()
                     .filter(|project| valid_project(project) && project.include_pipelines)
                     .collect();
+                let pats = OrganizationValues::new(
+                    targets.iter().map(|project| project.organization.as_str()),
+                );
                 let outcomes: Vec<(
                     &crate::config::AzureDevOpsProject,
                     Result<Vec<Candidate>, String>,
@@ -395,16 +430,23 @@ pub fn search_pipelines_live_async(
                         .iter()
                         .map(|project| {
                             let client = &client;
+                            let pats = &pats;
                             scope.spawn(move || {
-                                let outcome = match load_pat(&project.organization) {
-                                    Ok(pat) => fetch_pipelines(client, project, &pat).map(|rows| {
-                                        rows.iter()
-                                            .map(|row| {
-                                                pipeline_cached_row_to_candidate(project, row)
-                                            })
-                                            .collect()
-                                    }),
-                                    Err(_) => Err(format!("{}: no PAT", project.organization)),
+                                let outcome = match pats.get_or_init(&project.organization, || {
+                                    load_pat(&project.organization)
+                                }) {
+                                    Some(Ok(pat)) => {
+                                        fetch_pipelines(client, project, pat).map(|rows| {
+                                            rows.iter()
+                                                .map(|row| {
+                                                    pipeline_cached_row_to_candidate(project, row)
+                                                })
+                                                .collect()
+                                        })
+                                    }
+                                    Some(Err(_)) | None => {
+                                        Err(format!("{}: no PAT", project.organization))
+                                    }
                                 };
                                 (*project, outcome)
                             })
@@ -510,6 +552,9 @@ pub fn suggest_priorities_async(
                 .iter()
                 .filter(|project| valid_project(project))
                 .collect();
+            let pats = OrganizationValues::new(
+                targets.iter().map(|project| project.organization.as_str()),
+            );
             let outcomes: Vec<(
                 &crate::config::AzureDevOpsProject,
                 Result<Vec<String>, String>,
@@ -518,10 +563,15 @@ pub fn suggest_priorities_async(
                     .iter()
                     .map(|project| {
                         let client = &client;
+                        let pats = &pats;
                         scope.spawn(move || {
-                            let outcome = match load_pat(&project.organization) {
-                                Ok(pat) => fetch_recent_activity_areas(client, project, &pat),
-                                Err(_) => Err(format!("{}: no PAT", project.organization)),
+                            let outcome = match pats.get_or_init(&project.organization, || {
+                                load_pat(&project.organization)
+                            }) {
+                                Some(Ok(pat)) => fetch_recent_activity_areas(client, project, pat),
+                                Some(Err(_)) | None => {
+                                    Err(format!("{}: no PAT", project.organization))
+                                }
                             };
                             (*project, outcome)
                         })

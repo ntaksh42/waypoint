@@ -103,8 +103,7 @@ pub fn activate_window(hwnd: HWND) {
 
         let mut attached = Vec::new();
         for thread in [foreground_thread, target_thread] {
-            if thread != current_thread
-                && AttachThreadInput(current_thread, thread, true).as_bool()
+            if thread != current_thread && AttachThreadInput(current_thread, thread, true).as_bool()
             {
                 attached.push(thread);
             }

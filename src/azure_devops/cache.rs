@@ -1,9 +1,9 @@
 //! SQLite キャッシュの読み書き。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OpenFlags, params};
 
 use crate::config::AzureDevOpsProject;
 
@@ -74,6 +74,23 @@ pub(crate) fn open_cache() -> Result<Connection, String> {
         "ALTER TABLE project_state ADD COLUMN work_items_delta_synced_at INTEGER",
         [],
     );
+    Ok(connection)
+}
+
+pub(crate) fn open_cache_read_only() -> Result<Connection, String> {
+    let path = cache_path().ok_or_else(|| "AppData path is unavailable.".to_string())?;
+    open_read_only_at(&path)
+}
+
+fn open_read_only_at(path: &Path) -> Result<Connection, String> {
+    let connection = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|error| error.to_string())?;
+    connection
+        .busy_timeout(Duration::from_secs(5))
+        .map_err(|error| error.to_string())?;
     Ok(connection)
 }
 
@@ -160,4 +177,41 @@ pub(crate) fn record_project_error(
 
 pub(crate) fn cache_path() -> Option<PathBuf> {
     dirs::config_dir().map(|path| path.join("waypoint").join(CACHE_FILE))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_only_connection_reads_existing_data_and_rejects_writes() {
+        let path = std::env::temp_dir().join(format!(
+            "waypoint-cache-readonly-{}-{}.db",
+            std::process::id(),
+            unix_timestamp()
+        ));
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute("CREATE TABLE sample(value INTEGER NOT NULL)", [])
+            .unwrap();
+        connection
+            .execute("INSERT INTO sample VALUES(42)", [])
+            .unwrap();
+        drop(connection);
+
+        let connection = open_read_only_at(&path).unwrap();
+        assert_eq!(
+            connection
+                .query_row("SELECT value FROM sample", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            42
+        );
+        assert!(
+            connection
+                .execute("INSERT INTO sample VALUES(7)", [])
+                .is_err()
+        );
+        drop(connection);
+        std::fs::remove_file(path).unwrap();
+    }
 }

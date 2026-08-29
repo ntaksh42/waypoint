@@ -128,24 +128,17 @@ pub(crate) fn fetch_pull_requests_live(
     client: &reqwest::blocking::Client,
     project: &AzureDevOpsProject,
     pat: &str,
+    current_user: Option<&str>,
     status: &str,
 ) -> Result<Vec<CachedRow>, String> {
-    let current_user = current_user_id(client, &project.organization, pat).ok();
     if status.eq_ignore_ascii_case("active") {
-        return fetch_pull_requests_by_status(
-            client,
-            project,
-            pat,
-            current_user.as_deref(),
-            status,
-            None,
-        );
+        return fetch_pull_requests_by_status(client, project, pat, current_user, status, None);
     }
     fetch_pull_requests_history(
         client,
         project,
         pat,
-        current_user.as_deref(),
+        current_user,
         status,
         None,
         HistoryLimits {

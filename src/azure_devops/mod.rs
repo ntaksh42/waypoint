@@ -11,6 +11,7 @@
 //! 必要時だけ読む。
 
 mod api;
+mod auth_cache;
 mod cache;
 mod convert;
 mod credential;
@@ -25,7 +26,7 @@ use rusqlite::params;
 use crate::config::AzureDevOpsSettings;
 
 use api::{API_VERSION, http_client};
-use cache::{CachedRow, open_cache};
+use cache::{CachedRow, open_cache, open_cache_read_only};
 use convert::{
     encode_segment, project_key, project_names, project_url, sort_and_deduplicate_project_names,
     unix_timestamp, valid_project,
@@ -159,12 +160,7 @@ pub fn project_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
 /// Active PR 候補。DevDeck の SQLite キャッシュを読み取り専用で直接参照する
 /// (waypoint 自身はもう Active PR を同期しない)。
 pub fn cached_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
-    if !settings.enabled {
-        return Vec::new();
-    }
-    let mut candidates = devdeck_cache::active_pull_request_candidates(settings);
-    candidates.extend(pr_history_candidates(settings));
-    candidates
+    cached_candidate_groups(settings).0
 }
 
 /// waypoint 自身が保持する PR 履歴 (Completed/Abandoned、過去 90 日ぶん)。
@@ -172,7 +168,7 @@ pub fn cached_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
 /// waypoint 側のキャッシュのまま残す (`api.rs::fetch_pull_requests` 参照)。
 /// 読めなければ空で続行する。
 fn pr_history_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
-    let Ok(connection) = open_cache() else {
+    let Ok(connection) = open_cache_read_only() else {
         return Vec::new();
     };
     let Ok(mut statement) = connection.prepare(
@@ -233,10 +229,19 @@ fn pr_history_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
 /// (waypoint 自身はもう Work Item を同期しない — ライブ検索
 /// `az wit live` は API を直接叩くので対象外)。読めなければ空で続行する。
 pub fn cached_work_item_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
+    cached_candidate_groups(settings).1
+}
+
+/// Active PR と Work Item を DevDeck の同じ読み取り専用接続からまとめて読む。
+pub(crate) fn cached_candidate_groups(
+    settings: &AzureDevOpsSettings,
+) -> (Vec<Candidate>, Vec<Candidate>) {
     if !settings.enabled {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
-    devdeck_cache::work_item_candidates(settings)
+    let (mut pull_requests, work_items) = devdeck_cache::candidate_groups(settings);
+    pull_requests.extend(pr_history_candidates(settings));
+    (pull_requests, work_items)
 }
 
 /// 監視対象の最後の同期状態。DB が無い・壊れている場合も空状態として扱う。

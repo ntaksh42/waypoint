@@ -13,6 +13,7 @@
 //! PR の Completed/Abandoned 履歴は DevDeck の対象外 (Active のみ同期) な
 //! ので waypoint 自身の `cache.rs` 側キャッシュのまま変えない。
 
+use std::cell::RefCell;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -26,6 +27,33 @@ use super::convert::{project_key, valid_project};
 
 const DEVDECK_DIR: &str = "com.azdodeck.app";
 const DEVDECK_DB_FILE: &str = "azdodeck.sqlite3";
+
+thread_local! {
+    static DEVDECK_CONNECTION: RefCell<Option<Connection>> = const { RefCell::new(None) };
+}
+
+struct CachedOutput<T> {
+    value: T,
+    healthy: bool,
+}
+
+fn with_cached_value<T, R, E>(
+    cache: &RefCell<Option<T>>,
+    init: impl FnOnce() -> Result<T, E>,
+    operation: impl FnOnce(&T) -> CachedOutput<R>,
+) -> Result<R, E> {
+    if cache.borrow().is_none() {
+        *cache.borrow_mut() = Some(init()?);
+    }
+    let output = {
+        let cached = cache.borrow();
+        operation(cached.as_ref().expect("cached value was initialized"))
+    };
+    if !output.healthy {
+        cache.borrow_mut().take();
+    }
+    Ok(output.value)
+}
 
 fn devdeck_cache_path() -> Option<PathBuf> {
     dirs::config_dir().map(|path| path.join(DEVDECK_DIR).join(DEVDECK_DB_FILE))
@@ -112,19 +140,13 @@ fn map_pr_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DevDeckPrRow> {
     })
 }
 
-/// DevDeck の `pull_requests` (Active のみ) から Quick Launch 用の候補を
-/// 読む。waypoint 自身は Active PR をもう同期しない。
-pub(crate) fn active_pull_request_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
+fn active_pull_request_candidates_from_rows(
+    settings: &AzureDevOpsSettings,
+    rows: Vec<DevDeckPrRow>,
+) -> Vec<Candidate> {
     if !settings.enabled {
         return Vec::new();
     }
-    let Ok(connection) = open_devdeck_cache() else {
-        return Vec::new();
-    };
-    let rows = query_active_pull_requests(&connection)
-        .or_else(|_| query_active_pull_requests_without_author_id(&connection))
-        .unwrap_or_default();
-
     let configured: std::collections::HashMap<_, _> = settings
         .projects
         .iter()
@@ -197,20 +219,29 @@ fn query_work_items(connection: &Connection) -> rusqlite::Result<Vec<DevDeckWork
     rows.collect()
 }
 
-/// DevDeck の `work_items` (直近更新順、バックグラウンド同期対象) から
-/// Quick Launch 用の候補を読む。waypoint 自身は Work Item をもう同期しない
-/// (ライブ検索 `az wit live` は API を直接叩くので対象外)。
-pub(crate) fn work_item_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
+fn query_candidate_rows(
+    connection: &Connection,
+) -> CachedOutput<(Vec<DevDeckPrRow>, Vec<DevDeckWorkItemRow>)> {
+    let pull_requests = query_active_pull_requests(connection)
+        .or_else(|_| query_active_pull_requests_without_author_id(connection));
+    let work_items = query_work_items(connection);
+    let healthy = pull_requests.is_ok() && work_items.is_ok();
+    CachedOutput {
+        value: (
+            pull_requests.unwrap_or_default(),
+            work_items.unwrap_or_default(),
+        ),
+        healthy,
+    }
+}
+
+fn work_item_candidates_from_rows(
+    settings: &AzureDevOpsSettings,
+    rows: Vec<DevDeckWorkItemRow>,
+) -> Vec<Candidate> {
     if !settings.enabled {
         return Vec::new();
     }
-    let Ok(connection) = open_devdeck_cache() else {
-        return Vec::new();
-    };
-    let Ok(rows) = query_work_items(&connection) else {
-        return Vec::new();
-    };
-
     let configured: std::collections::HashMap<_, _> = settings
         .projects
         .iter()
@@ -248,9 +279,26 @@ pub(crate) fn work_item_candidates(settings: &AzureDevOpsSettings) -> Vec<Candid
         .collect()
 }
 
+/// Active PR と Work Item を同じ読み取り専用接続からまとめて読む。
+pub(crate) fn candidate_groups(settings: &AzureDevOpsSettings) -> (Vec<Candidate>, Vec<Candidate>) {
+    if !settings.enabled {
+        return (Vec::new(), Vec::new());
+    }
+    let Ok((pull_requests, work_items)) = DEVDECK_CONNECTION
+        .with(|connection| with_cached_value(connection, open_devdeck_cache, query_candidate_rows))
+    else {
+        return (Vec::new(), Vec::new());
+    };
+    (
+        active_pull_request_candidates_from_rows(settings, pull_requests),
+        work_item_candidates_from_rows(settings, work_items),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
 
     fn devdeck_schema(connection: &Connection, with_created_by_id: bool) {
         connection
@@ -381,5 +429,107 @@ mod tests {
         assert_eq!(rows[0].title, "Fix bug");
         assert_eq!(rows[0].work_item_type.as_deref(), Some("Bug"));
         assert_eq!(rows[0].state.as_deref(), Some("Active"));
+    }
+
+    #[test]
+    fn combined_query_reads_pull_requests_and_work_items_from_one_connection() {
+        let connection = Connection::open_in_memory().unwrap();
+        devdeck_schema(&connection, true);
+        connection
+            .execute_batch(
+                "INSERT INTO organizations VALUES('org1', 'contoso', 'user-guid-1');
+                 INSERT INTO pull_requests VALUES(
+                    'org1', 'Proj', 'repo1', 42, 'Add feature', 'active',
+                    'Alice', 'user-guid-1', 'https://dev.azure.com/contoso/_git/repo1/pullrequest/42');
+                 INSERT INTO work_items VALUES(
+                    'org1', 'Proj', 7, 'Fix bug', 'Bug', 'Active', '2024-01-01T00:00:00Z',
+                    'https://dev.azure.com/contoso/Proj/_workitems/edit/7');",
+            )
+            .unwrap();
+
+        let (pull_requests, work_items) = query_candidate_rows(&connection).value;
+
+        assert_eq!(pull_requests.len(), 1);
+        assert_eq!(work_items.len(), 1);
+    }
+
+    #[test]
+    fn combined_query_keeps_pull_requests_when_work_items_fail() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE organizations(
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL, authenticated_user_id TEXT
+                 );
+                 CREATE TABLE review_pull_requests(
+                    org_id TEXT NOT NULL, repository_id TEXT NOT NULL, pull_request_id INTEGER NOT NULL
+                 );
+                 CREATE TABLE pull_requests(
+                    org_id TEXT NOT NULL, project_name TEXT NOT NULL, repository_id TEXT NOT NULL,
+                    pull_request_id INTEGER NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL,
+                    created_by TEXT, created_by_id TEXT, web_url TEXT
+                 );
+                 INSERT INTO organizations VALUES('org1', 'contoso', 'user-guid-1');
+                 INSERT INTO pull_requests VALUES(
+                    'org1', 'Proj', 'repo1', 42, 'Add feature', 'active',
+                    'Alice', 'user-guid-1', 'https://dev.azure.com/contoso/_git/repo1/pullrequest/42');",
+            )
+            .unwrap();
+
+        let rows = query_candidate_rows(&connection);
+
+        assert_eq!(rows.value.0.len(), 1);
+        assert!(rows.value.1.is_empty());
+        assert!(!rows.healthy);
+    }
+
+    #[test]
+    fn cached_value_is_initialized_once_and_discarded_after_an_error() {
+        let cache = RefCell::new(None);
+        let mut initializations = 0;
+
+        assert_eq!(
+            with_cached_value(
+                &cache,
+                || {
+                    initializations += 1;
+                    Ok::<_, ()>(41)
+                },
+                |value| CachedOutput {
+                    value: *value + 1,
+                    healthy: true,
+                }
+            ),
+            Ok(42)
+        );
+        assert_eq!(
+            with_cached_value(
+                &cache,
+                || {
+                    initializations += 1;
+                    Ok::<_, ()>(99)
+                },
+                |_| CachedOutput {
+                    value: (),
+                    healthy: false,
+                }
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            with_cached_value(
+                &cache,
+                || {
+                    initializations += 1;
+                    Ok::<_, ()>(7)
+                },
+                |value| CachedOutput {
+                    value: *value,
+                    healthy: true,
+                }
+            ),
+            Ok(7)
+        );
+        assert_eq!(initializations, 2);
     }
 }
