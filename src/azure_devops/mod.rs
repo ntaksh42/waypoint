@@ -250,9 +250,9 @@ pub(crate) fn cached_candidate_groups(
     }
     // 共有キャッシュが開けなくても、waypoint 自身の PR 履歴は別の DB
     // (waypoint 自身の `cache.rs`) なので独立して読める。
-    let Ok((mut pull_requests, work_items)) =
-        shared_cache::with_cached_connection(|connection| read_candidate_groups(connection, settings))
-    else {
+    let Ok((mut pull_requests, work_items)) = shared_cache::with_cached_connection(|connection| {
+        read_candidate_groups(connection, settings)
+    }) else {
         return (pr_history_candidates(settings), Vec::new());
     };
     pull_requests.extend(pr_history_candidates(settings));

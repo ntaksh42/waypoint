@@ -151,7 +151,11 @@ pub(crate) fn with_cached_connection<R>(
         }
         let (value, healthy) = {
             let connection = cell.borrow();
-            operation(connection.as_ref().expect("connection was just initialized"))
+            operation(
+                connection
+                    .as_ref()
+                    .expect("connection was just initialized"),
+            )
         };
         if !healthy {
             cell.borrow_mut().take();
