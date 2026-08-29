@@ -1,0 +1,106 @@
+# 毎朝 6:30 (JST) に main が前回のリリースタグより進んでいれば、
+# patch バージョンを自動採番してタグを打ち、MSI を Release に公開する。
+# バージョン番号のタグ運用は installer.yml (vX.Y.Z) を踏襲する。
+# GITHUB_TOKEN での push はダウンストリームの ci.yml / installer.yml を
+# 再トリガーしないため、ビルドと Release 作成はこのワークフロー内で完結させる。
+name: release
+
+on:
+  schedule:
+    - cron: '30 21 * * *' # UTC 21:30 = JST 6:30
+  workflow_dispatch:
+
+concurrency:
+  group: release
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      next_version: ${{ steps.check.outputs.next_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compare main HEAD with last release tag
+        id: check
+        run: |
+          LAST_TAG=$(git tag -l 'v*' | sort -V | tail -1)
+          COMMITS=$(git rev-list "${LAST_TAG}..origin/main" --count)
+          echo "last_tag=$LAST_TAG commits=$COMMITS"
+
+          VERSION=${LAST_TAG#v}
+          MAJOR=$(echo "$VERSION" | cut -d. -f1)
+          MINOR=$(echo "$VERSION" | cut -d. -f2)
+          PATCH=$(echo "$VERSION" | cut -d. -f3)
+          NEXT_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
+          echo "next_version=$NEXT_VERSION"
+
+          if [ "$COMMITS" -gt 0 ]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "next_version=$NEXT_VERSION" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: check
+    if: needs.check.outputs.should_release == 'true'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install WiX
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add --global WixToolset.Util.wixext/5.0.2
+
+      - name: Bump version in Cargo.toml
+        env:
+          VERSION: ${{ needs.check.outputs.next_version }}
+        run: |
+          $content = (Get-Content Cargo.toml -Raw) -replace '(?m)^version = "[^"]+"', "version = `"$env:VERSION`""
+          Set-Content Cargo.toml -Value $content -NoNewline
+        shell: pwsh
+
+      # Cargo.lock 側の waypoint パッケージ version は、build.ps1 内の
+      # cargo build が Cargo.toml との不一致を検知して自動的に同期する。
+      - name: Build MSI
+        run: .\installer\build.ps1
+        shell: pwsh
+
+      - name: Commit, tag and push
+        env:
+          VERSION: ${{ needs.check.outputs.next_version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock
+          git commit -m "chore(release): v$env:VERSION"
+          git tag "v$env:VERSION"
+          git push origin main
+          git push origin "v$env:VERSION"
+        shell: pwsh
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.next_version }}
+        run: |
+          gh release create "v$env:VERSION" (Get-Item dist/*.msi).FullName `
+            --title "v$env:VERSION" `
+            --generate-notes `
+            --target main
+        shell: pwsh

@@ -95,6 +95,10 @@ Get-Content "$env:TEMP\waypoint_selftest.txt"
 
 ## リリース手順
 
+`release.yml` が毎日 6:30 (JST) に、前回リリースタグから `main` が進んで
+いれば patch バージョンを自動採番してリリースする。手動で行う場合や
+minor/major を上げる場合は以下の手順を使う。
+
 1. `Cargo.toml` の `version` を上げる。**バージョンの出どころはここだけ**
    （`installer/build.ps1` が読んで `-d Version=` で wxs へ渡す）
 2. `.\installer\build.ps1` で `dist\waypoint-<version>-x64.msi` を作る
