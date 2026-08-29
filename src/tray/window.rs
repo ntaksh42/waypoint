@@ -74,6 +74,18 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
             if wparam.0 as i32 == trigger::QUICK_LAUNCH_HOTKEY_ID {
                 let origin =
                     unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
+                // config 由来の候補 (showBranch の Git ブランチ名を含む) を
+                // 表示のたびに読み直す。COM/SQLite を伴わず軽量なので
+                // トリガー経路で呼んでも 50ms 予算を圧迫しない
+                // (`Index::refresh_config_items` 参照)。ここで呼ばないと、
+                // 直前のフル構築 (起動時・設定保存時・お気に入り昇格時) 時点の
+                // ブランチ名のまま古くなる。
+                with_state(|state| {
+                    let state = state.borrow();
+                    if let Some(state) = state.as_ref() {
+                        quick_launch_window::configure_config_items(&state.config, &state.dynamic);
+                    }
+                });
                 let _ = quick_launch_window::show(hwnd, Some(origin));
                 kick_azure_work_item_delta_sync(hwnd);
             } else {
