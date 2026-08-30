@@ -143,14 +143,19 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
             LRESULT(0)
         }
         WM_AZURE_DEVOPS_REFRESHED => {
-            with_state(|state| {
-                let state = state.borrow();
-                if let Some(state) = state.as_ref() {
-                    // Azure の候補だけ差し替える。フル `configure` にすると
-                    // 同期のたびにスタートメニューの再スキャンが道連れになる
-                    quick_launch_window::configure_azure(&state.config);
+            if let Some(reply) = crate::azure_devops::take_refresh_reply() {
+                match reply.candidates {
+                    Ok(groups) => with_state(|state| {
+                        let state = state.borrow();
+                        if let Some(state) = state.as_ref() {
+                            quick_launch_window::configure_azure(&state.config, groups);
+                        }
+                    }),
+                    Err(error) => crate::panic_log::record(&format!(
+                        "azure devops: candidate refresh failed: {error}"
+                    )),
                 }
-            });
+            }
             LRESULT(0)
         }
         WM_DYNAMIC_REFRESHED => {

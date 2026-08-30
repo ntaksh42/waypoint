@@ -67,7 +67,7 @@ fn bench_index_rebuild() {
 /// リンク扱いで落ちるので使えない (実測: 87 件 → 45 件)。
 ///
 /// したがってここは「速くする」より「UI スレッドで何度も走らせない」
-/// 方向で抑える (`Index::refresh_azure` / `refresh_dynamic` 参照)。
+/// 方向で抑える (`Index::refresh_azure_candidates` / `refresh_dynamic` 参照)。
 #[test]
 #[ignore = "手動計測用"]
 fn bench_apps_scan() {
@@ -96,7 +96,7 @@ fn bench_apps_scan() {
 /// 読むので、起動時と設定リロード時のコストがそのまま出る。
 ///
 /// この経路をユーザー操作のたびに通さないことが重要で、そのために
-/// `refresh_dynamic` / `refresh_azure` / `refresh_config_items` がある。
+/// `refresh_dynamic` / `refresh_azure_candidates` / `refresh_config_items` がある。
 #[test]
 #[ignore = "手動計測用"]
 fn bench_index_build_full() {
@@ -138,8 +138,7 @@ fn bench_index_build_full() {
     println!("refresh_dynamic {dynamic_ms:>8.3} ms  refresh_config_items {config_ms:>8.3} ms");
 }
 
-/// Azure 同期完了通知から UI スレッドで走る再索引の実測。
-/// DevDeck の Active PR / Work Item と waypoint の PR 履歴を読み直す。
+/// Azure 同期完了通知のバックグラウンド読取と UI スレッド上の適用を分けて実測する。
 #[test]
 #[ignore = "手動計測用"]
 fn bench_azure_refresh() {
@@ -158,24 +157,26 @@ fn bench_azure_refresh() {
     let azure_settings = &config.settings.quick_launch.azure_devops;
 
     let start = Instant::now();
-    for _ in 0..100 {
-        std::hint::black_box(crate::azure_devops::cached_candidate_groups(azure_settings));
-    }
-    let cache_read = start.elapsed().as_secs_f64() * 1000.0 / 100.0;
-
-    let start = Instant::now();
-    index.refresh_azure(&config);
-    let cold = start.elapsed().as_secs_f64() * 1000.0;
+    let groups = crate::azure_devops::try_cached_candidate_groups(azure_settings)
+        .expect("Azure candidate cache must be readable for this machine benchmark");
+    let cache_read = start.elapsed().as_secs_f64() * 1000.0;
     let start = Instant::now();
     for _ in 0..100 {
-        index.refresh_azure(&config);
+        index.refresh_azure_candidates(
+            &config.settings.quick_launch,
+            std::hint::black_box(groups.clone()),
+        );
     }
-    let warm = start.elapsed().as_secs_f64() * 1000.0 / 100.0;
+    let apply_ms = start.elapsed().as_secs_f64() * 1000.0 / 100.0;
 
     println!(
-        "azure cache read {cache_read:>8.3} ms  refresh_azure cold {cold:>8.3} ms  warm {warm:>8.3} ms  (PR/Project={} work_items={})",
+        "azure background cache read {cache_read:>8.3} ms  UI snapshot apply {apply_ms:>8.3} ms  (PR/Project={} work_items={})",
         index.azure.len(),
         index.azure_work_items.len(),
+    );
+    assert!(
+        apply_ms < 50.0,
+        "UI snapshot apply exceeded 50 ms: {apply_ms:.3} ms"
     );
 }
 

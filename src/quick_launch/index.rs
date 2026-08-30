@@ -142,27 +142,6 @@ impl Index {
         self.refresh_dynamic(config, dynamic);
     }
 
-    /// Azure DevOps の候補だけを組み直す。
-    ///
-    /// バックグラウンド同期の完了通知 (`WM_AZURE_DEVOPS_REFRESHED`) から使う。
-    /// ここでフル `Index::build` をやり直すと、変わっていない apps /
-    /// bookmarks / history まで道連れで再スキャンされる。特に
-    /// `crate::apps::scan` はショートカット 1 件ごとに COM の ShellLink を
-    /// 作るため実測で数十 ms かかり、UI スレッドを塞ぐ
-    /// (`refresh_dynamic` が Recent/Frequent だけを差し替えるのと同じ理由)。
-    pub fn refresh_azure(&mut self, config: &Config) {
-        let settings = &config.settings.quick_launch;
-        let (pull_requests, work_items) =
-            crate::azure_devops::cached_candidate_groups(&settings.azure_devops);
-        self.refresh_azure_candidates(
-            settings,
-            crate::azure_devops::CachedCandidateGroups {
-                pull_requests,
-                work_items,
-            },
-        );
-    }
-
     /// 構築済みの Azure DevOps 候補だけを検索用の索引へ適用する。
     ///
     /// SQLite などの I/O は呼び出し元で済ませ、このメソッドはメモリ上の
@@ -204,8 +183,7 @@ impl Index {
     }
 }
 
-/// Azure DevOps キャッシュを読み、検索用候補へ変換する互換ラッパー。
-/// `Index::build` と `Index::refresh_azure` の起動時経路で使う。
+/// Azure DevOps キャッシュを読み、検索用候補へ変換する起動時経路。
 fn azure_entries(settings: &crate::config::QuickLaunchSettings) -> (Vec<AzureIndexed>, Vec<Entry>) {
     let (pull_requests, work_items) =
         crate::azure_devops::cached_candidate_groups(&settings.azure_devops);
