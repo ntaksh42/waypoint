@@ -120,10 +120,14 @@ pub(super) fn update_results(state: &RefCell<State>) {
             state.results = results;
             section_headers
         } else {
-            state.results = if let Some(search_term) = state
-                .previous_query
-                .as_deref()
-                .and_then(|previous| refined_search_term(previous, &query))
+            // `state.results` が前回の表示上限 (MAX_LIST_RESULTS) で切り詰め
+            // 済みだと、絞り込みで再び上位に来るはずの候補 (切り詰めで
+            // 落ちた 25 件目以降) が母集団に無く拾えない。切り詰めが
+            // 起きていた回だけは安全側に倒し、全候補への再検索にフォールバック
+            // する (実測: 候補 25 件超のとき、絞り込みを続けると本来ヒット
+            // するはずの候補が一覧から消えていた)。
+            state.results = if let Some(search_term) =
+                refinable_search_term(state.previous_query.as_deref(), &query, state.results.len())
             {
                 crate::quick_launch::search_entries(
                     &state.results,
@@ -685,11 +689,29 @@ pub(super) fn accepts_azure_work_item_reply(active: bool, expected: u32, receive
     active && expected == received
 }
 
+/// `refined_search_term` の結果に、前回の結果件数による安全条件を足す。
+///
+/// `state.results` は表示上限 (`MAX_LIST_RESULTS`) で切り詰め済みのことが
+/// ある。切り詰めが起きていた回に前回の結果だけを母集団にすると、切り詰めで
+/// 落ちた候補 (絞り込みで本来上位に来るはずのもの) を拾えない。切り詰めが
+/// 起きていない (`previous_results_len < MAX_LIST_RESULTS`) ときだけ最適化を
+/// 使い、それ以外は全候補への再検索に倒す。
+pub(super) fn refinable_search_term<'a>(
+    previous_query: Option<&str>,
+    current: &'a str,
+    previous_results_len: usize,
+) -> Option<&'a str> {
+    if previous_results_len >= MAX_LIST_RESULTS {
+        return None;
+    }
+    refined_search_term(previous_query?, current)
+}
+
 /// 前回の検索結果だけを対象にしても漏れがない場合の、今回の検索語を返す。
 ///
 /// 通常検索と `b ` / `h ` / `w ` / `a ` の同一モードでは、入力末尾への文字追加で
 /// 一致集合が広がらない。Everything と Azure DevOps は別経路なので対象外にする。
-pub(super) fn refined_search_term<'a>(previous: &str, current: &'a str) -> Option<&'a str> {
+fn refined_search_term<'a>(previous: &str, current: &'a str) -> Option<&'a str> {
     let (previous_scope, previous_term) = local_search_scope(previous)?;
     let (current_scope, current_term) = local_search_scope(current)?;
     (previous_scope == current_scope

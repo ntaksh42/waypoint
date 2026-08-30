@@ -1,7 +1,7 @@
 use super::super::RowKind;
 use super::super::search::{
     accepts_azure_work_item_reply, accepts_everything_reply, build_rows, next_everything_reply_id,
-    refined_search_term,
+    refinable_search_term,
 };
 use crate::config::OpenMode;
 use crate::quick_launch::{Action, Entry};
@@ -35,13 +35,34 @@ fn stale_azure_work_item_request_is_rejected_after_more_typing() {
 
 #[test]
 fn refined_search_only_reuses_candidates_for_a_narrower_local_query() {
-    assert_eq!(refined_search_term("way", "wayp"), Some("wayp"));
-    assert_eq!(refined_search_term("b git", "b gith"), Some("gith"));
-    assert_eq!(refined_search_term("b git", "h git"), None);
-    assert_eq!(refined_search_term("way", "way"), None);
-    assert_eq!(refined_search_term("", "way"), None);
-    assert_eq!(refined_search_term("f read", "f readm"), None);
-    assert_eq!(refined_search_term("az pr", "az pra"), None);
+    assert_eq!(refinable_search_term(Some("way"), "wayp", 1), Some("wayp"));
+    assert_eq!(
+        refinable_search_term(Some("b git"), "b gith", 1),
+        Some("gith")
+    );
+    assert_eq!(refinable_search_term(Some("b git"), "h git", 1), None);
+    assert_eq!(refinable_search_term(Some("way"), "way", 1), None);
+    assert_eq!(refinable_search_term(Some(""), "way", 1), None);
+    assert_eq!(refinable_search_term(None, "way", 1), None);
+    assert_eq!(refinable_search_term(Some("f read"), "f readm", 1), None);
+    assert_eq!(refinable_search_term(Some("az pr"), "az pra", 1), None);
+}
+
+/// 前回の結果が表示上限 (`MAX_LIST_RESULTS`) ちょうどで切り詰められていた
+/// 場合、絞り込みの母集団を前回の結果だけに限定すると、切り詰めで落ちた
+/// 候補 (今回の絞り込みでは本来ヒットするはずのもの) を拾えなくなる。
+/// この回だけは最適化を使わず、全候補への再検索に倒すべき。
+#[test]
+fn refined_search_is_skipped_when_previous_results_were_truncated() {
+    assert_eq!(
+        refinable_search_term(Some("way"), "wayp", super::super::MAX_LIST_RESULTS),
+        None
+    );
+    // 上限未満なら、切り詰めが起きていないので最適化を使ってよい
+    assert_eq!(
+        refinable_search_term(Some("way"), "wayp", super::super::MAX_LIST_RESULTS - 1),
+        Some("wayp")
+    );
 }
 
 /// リストへ流し込む上限は、ウィンドウに実際に映る行数 (`visible_results`
