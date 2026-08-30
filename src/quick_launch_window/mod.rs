@@ -63,8 +63,12 @@ const SURFACE_HOVER: COLORREF = rgb(44, 41, 38);
 const ACCENT: COLORREF = rgb(111, 168, 201);
 const TEXT_PRIMARY: COLORREF = rgb(245, 245, 245);
 const TEXT_SECONDARY: COLORREF = rgb(166, 166, 166);
-/// breadcrumb 用。detail 行の中でもさらに一段控えめにする (FR-9.6 の補助情報)。
-const TEXT_MUTED: COLORREF = rgb(117, 112, 106);
+/// detail 行の path (secondary) やセクション見出しなど、一段控えめにする
+/// 補助テキスト用。旧 rgb(117,112,106) は選択行の背景 (SURFACE_HOVER) に対する
+/// コントラスト比が約2.95:1しかなく視認性が低かった。rgb(148,142,134) まで
+/// 一度上げたが実機描画で確認してもまだ breadcrumb (TEXT_SECONDARY) との差が
+/// 小さく見づらさが残ったため、同じ色相のままさらに明度を上げてある。
+const TEXT_MUTED: COLORREF = rgb(180, 173, 163);
 
 pub const WM_QUICK_LAUNCH_EXECUTE: u32 = WM_APP + 4;
 /// Everything からの検索結果を識別する `WM_COPYDATA` の `dwData` の初期値。
