@@ -3087,7 +3087,7 @@ dependencies = [
 
 [[package]]
 name = "waypoint"
-version = "0.3.9"
+version = "0.3.10"
 dependencies = [
  "base64",
  "dirs",
