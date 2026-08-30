@@ -12,6 +12,9 @@
 .idea/
 *.user
 
+# 実装作業用の分離ワークツリー
+/.worktrees/
+
 # OS
 Thumbs.db
 desktop.ini
