@@ -5,6 +5,25 @@ use super::super::*;
 use super::fixture::config_without_live_scans;
 use crate::dynamic::{Menus, WindowEntry};
 
+fn azure_candidate(kind: crate::azure_devops::Kind, name: &str) -> crate::azure_devops::Candidate {
+    crate::azure_devops::Candidate {
+        kind,
+        status: if kind == crate::azure_devops::Kind::PullRequest {
+            "active".into()
+        } else {
+            "New".into()
+        },
+        name: name.into(),
+        detail: "Azure DevOps — org/project".into(),
+        url: format!("https://dev.azure.com/org/project/{name}"),
+        organization: "org".into(),
+        project: "project".into(),
+        aliases: Vec::new(),
+        priority: 0,
+        is_mine: false,
+    }
+}
+
 #[test]
 fn refresh_dynamic_replaces_windows_but_keeps_apps_bookmarks_and_history() {
     let mut config = config_without_live_scans();
@@ -77,7 +96,7 @@ fn refresh_dynamic_updates_recent_and_frequent_folders() {
     assert_eq!(found[0].path, r"C:\Users\me\Downloads");
 }
 
-/// `Index::refresh_azure` は Azure DevOps の候補だけを組み直し、
+/// `Index::refresh_azure_candidates` は Azure DevOps の候補だけを組み直し、
 /// apps / bookmarks / history / Recent Folders は保持する。
 ///
 /// バックグラウンド同期の完了通知はフル `Index::build` を呼ばない
@@ -89,9 +108,7 @@ fn refresh_azure_keeps_apps_bookmarks_history_and_folders() {
     use crate::dynamic::PathEntry;
 
     let mut config = config_without_live_scans();
-    // Azure は無効のまま (実際の API / SQLite を触らせない)。
-    // refresh_azure が azure* を空へ組み直すこと自体は問題なく、
-    // ここで見たいのは「それ以外が巻き添えで消えないこと」。
+    // Index 構築中は Azure を無効にして実際の API / SQLite を触らせない。
     config.settings.quick_launch.azure_devops.enabled = false;
 
     let dynamic = Menus {
@@ -129,7 +146,18 @@ fn refresh_azure_keeps_apps_bookmarks_history_and_folders() {
     }];
     index.history_lower = search::LowerKeys::build_for(&index.history);
 
-    index.refresh_azure(&config);
+    // Azure を有効化せず、明示的な候補スナップショットだけで更新する。
+    let groups = crate::azure_devops::CachedCandidateGroups {
+        pull_requests: vec![azure_candidate(
+            crate::azure_devops::Kind::PullRequest,
+            "PR 7: Faster refresh",
+        )],
+        work_items: vec![azure_candidate(
+            crate::azure_devops::Kind::WorkItem,
+            "42: Remove UI I/O",
+        )],
+    };
+    index.refresh_azure_candidates(&config.settings.quick_launch, groups);
 
     assert_eq!(index.apps.len(), 1, "apps が再スキャンされて消えている");
     assert_eq!(index.apps[0].name, "Visual Studio Code");
@@ -147,6 +175,8 @@ fn refresh_azure_keeps_apps_bookmarks_history_and_folders() {
     assert_eq!(index.search("a visual").len(), 1);
     assert_eq!(index.search("b github").len(), 1);
     assert_eq!(index.search("h rust").len(), 1);
+    assert_eq!(index.search("az faster refresh").len(), 1);
+    assert_eq!(index.search_cached_work_items("remove ui").len(), 1);
 }
 
 /// `Index::refresh_config_items` は config 由来の候補を組み直しつつ、
@@ -200,7 +230,7 @@ fn refresh_config_items_adds_new_item_and_keeps_apps() {
 /// 軽量版の差し替えはブラウザタブ (`t ` プレフィックスの母集団) を消さない。
 ///
 /// `configure` / `configure_dynamic` は差し替え後に `set_browser_tabs` を
-/// 呼び直しているが、`refresh_azure` / `refresh_config_items` は呼んでいない。
+/// 呼び直しているが、`refresh_azure_candidates` / `refresh_config_items` は呼んでいない。
 /// これらが触るのは azure* / entries だけで tabs は素通しになる、という
 /// 前提が崩れていないことを確かめる (崩れると `t ` 検索が静かに空になる)。
 #[test]
@@ -220,11 +250,14 @@ fn lightweight_refreshes_keep_browser_tabs() {
     )]);
     assert_eq!(index.search("t rust").len(), 1, "前提: タブが検索できる");
 
-    index.refresh_azure(&config);
+    index.refresh_azure_candidates(
+        &config.settings.quick_launch,
+        crate::azure_devops::CachedCandidateGroups::default(),
+    );
     assert_eq!(
         index.search("t rust").len(),
         1,
-        "refresh_azure でタブが消えた"
+        "refresh_azure_candidates でタブが消えた"
     );
 
     index.refresh_config_items(&config, &Menus::default());

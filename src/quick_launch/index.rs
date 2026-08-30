@@ -152,7 +152,27 @@ impl Index {
     /// (`refresh_dynamic` が Recent/Frequent だけを差し替えるのと同じ理由)。
     pub fn refresh_azure(&mut self, config: &Config) {
         let settings = &config.settings.quick_launch;
-        (self.azure, self.azure_work_items) = azure_entries(settings);
+        let (pull_requests, work_items) =
+            crate::azure_devops::cached_candidate_groups(&settings.azure_devops);
+        self.refresh_azure_candidates(
+            settings,
+            crate::azure_devops::CachedCandidateGroups {
+                pull_requests,
+                work_items,
+            },
+        );
+    }
+
+    /// 構築済みの Azure DevOps 候補だけを検索用の索引へ適用する。
+    ///
+    /// SQLite などの I/O は呼び出し元で済ませ、このメソッドはメモリ上の
+    /// 候補を変換・交換するだけにする。
+    pub(crate) fn refresh_azure_candidates(
+        &mut self,
+        settings: &crate::config::QuickLaunchSettings,
+        groups: crate::azure_devops::CachedCandidateGroups,
+    ) {
+        (self.azure, self.azure_work_items) = azure_entries_from_candidates(settings, groups);
         self.azure_work_items_lower = super::search::LowerKeys::build_for(&self.azure_work_items);
     }
 
@@ -184,16 +204,31 @@ impl Index {
     }
 }
 
-/// Azure DevOps の PR / Pipeline / Project 候補を、検索用の索引へ組む。
-/// `Index::build` と `Index::refresh_azure` の共通部分。
+/// Azure DevOps キャッシュを読み、検索用候補へ変換する互換ラッパー。
+/// `Index::build` と `Index::refresh_azure` の起動時経路で使う。
 fn azure_entries(settings: &crate::config::QuickLaunchSettings) -> (Vec<AzureIndexed>, Vec<Entry>) {
+    let (pull_requests, work_items) =
+        crate::azure_devops::cached_candidate_groups(&settings.azure_devops);
+    azure_entries_from_candidates(
+        settings,
+        crate::azure_devops::CachedCandidateGroups {
+            pull_requests,
+            work_items,
+        },
+    )
+}
+
+/// メモリ上の Azure DevOps 候補を検索用の索引へ変換する。
+fn azure_entries_from_candidates(
+    settings: &crate::config::QuickLaunchSettings,
+    groups: crate::azure_devops::CachedCandidateGroups,
+) -> (Vec<AzureIndexed>, Vec<Entry>) {
     let mut candidates = if settings.azure_devops.enabled {
         crate::azure_devops::project_candidates(&settings.azure_devops)
     } else {
         Vec::new()
     };
-    let (cached, work_items) = crate::azure_devops::cached_candidate_groups(&settings.azure_devops);
-    candidates.extend(cached);
+    candidates.extend(groups.pull_requests);
     // 優先度を最優先しつつ、同一プロジェクト内では自分が関与する PR、
     // 日常的に開く Active PR、失敗した Pipeline の順に先頭へ置く。
     // 通常の使用履歴ランキングも後段で効く。
@@ -211,7 +246,11 @@ fn azure_entries(settings: &crate::config::QuickLaunchSettings) -> (Vec<AzureInd
             }
         })
         .collect();
-    let work_items = work_items.into_iter().map(azure_candidate_entry).collect();
+    let work_items = groups
+        .work_items
+        .into_iter()
+        .map(azure_candidate_entry)
+        .collect();
     (indexed, work_items)
 }
 
