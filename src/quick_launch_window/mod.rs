@@ -4,6 +4,7 @@ mod badge;
 mod dispatch;
 mod draw;
 mod draw_icons;
+mod highlight;
 mod input;
 mod layout;
 mod search;
@@ -179,6 +180,10 @@ struct State {
     /// 現在の入力が `b `/`w `/`a `/`f ` のいずれかに入っていれば
     /// そのモード名。検索窓のバッジ表示に使う。
     badge: Option<&'static str>,
+    /// モードプレフィックス除去済みの検索語。空なら一覧の候補名を
+    /// ハイライトしない (絞り込みなし一覧や Everything / Azure の
+    /// 非同期検索など、一致箇所が `name` に対応しない場合)。
+    highlight_term: String,
 }
 
 pub fn configure(config: &Config, dynamic: &Menus) {

@@ -275,7 +275,7 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
     if draw.itemID == u32::MAX {
         return;
     }
-    let Some((row, entry, empty_message, name_font, detail_font, dpi, badge)) =
+    let Some((row, entry, empty_message, name_font, detail_font, dpi, badge, highlight_term)) =
         STATE.with(|state| {
             let state = state.borrow();
             let row = state.rows.get(draw.itemID as usize).copied()?;
@@ -291,6 +291,7 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
                 state.detail_font,
                 state.dpi,
                 state.badge,
+                state.highlight_term.clone(),
             ))
         })
     else {
@@ -406,7 +407,6 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
 
         if let Some(font) = name_font {
             let old = SelectObject(draw.hDC, font.into());
-            SetTextColor(draw.hDC, TEXT_PRIMARY);
             let mut rect = RECT {
                 left: text_left,
                 top: draw.rcItem.top + scale(2, dpi),
@@ -414,7 +414,15 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
                 bottom: draw.rcItem.top + scale(23, dpi),
             };
             let label = crate::git::with_branch(&entry.name, entry.branch.as_deref());
-            draw_text(draw.hDC, &label, &mut rect);
+            let ranges = crate::quick_launch::highlight_ranges(&entry.name, &highlight_term);
+            super::highlight::draw_text_highlighted(
+                draw.hDC,
+                &label,
+                &ranges,
+                &mut rect,
+                TEXT_PRIMARY,
+                ACCENT,
+            );
             SelectObject(draw.hDC, old);
         }
 

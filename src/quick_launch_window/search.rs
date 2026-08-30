@@ -108,6 +108,11 @@ pub(super) fn update_results(state: &RefCell<State>) {
         // 何か別の理由で再描画されるまで古い COPIED 表示が残り続ける。
         let copy_feedback_cleared = state.copy_feedback;
         state.copy_feedback = false;
+        state.highlight_term = if query.is_empty() {
+            String::new()
+        } else {
+            crate::quick_launch::effective_search_term(&query).to_string()
+        };
         let section_headers = if query.is_empty() {
             // 絞り込みなし: Spotlight 風に区分見出し付きで一覧を組み立てる
             let mut results = Vec::new();
@@ -200,6 +205,7 @@ pub(super) fn start_everything_query(state: &RefCell<State>, text: &str) {
         let mut state = state.borrow_mut();
         state.everything_active = true;
         state.previous_query = None;
+        state.highlight_term.clear();
         state.results.clear();
         state.rows.clear();
         state.everything_reply_id = next_everything_reply_id(state.everything_reply_id);
@@ -230,6 +236,7 @@ pub(super) fn start_azure_work_item_query(state: &RefCell<State>, text: &str) {
         let mut state = state.borrow_mut();
         state.everything_active = false;
         state.previous_query = None;
+        state.highlight_term.clear();
         state.azure_work_items_active = true;
         state.results = state
             .index
@@ -281,6 +288,7 @@ fn show_azure_suggest_entry(state: &RefCell<State>) {
         state.everything_active = false;
         state.azure_work_items_active = false;
         state.previous_query = None;
+        state.highlight_term.clear();
         state.empty_message = None;
         state.results = vec![crate::quick_launch::azure_suggest_entry()];
         let (labels, rows) = build_rows(&state.results, &[]);
@@ -312,6 +320,7 @@ pub(super) fn start_azure_work_item_live_search(state: &RefCell<State>, query: &
         state.azure_work_items_active = true;
         state.azure_work_item_reply_id = next_azure_reply_id(state.azure_work_item_reply_id);
         state.azure_work_item_query = query.trim().to_string();
+        state.highlight_term.clear();
         state.empty_message = Some("Searching Azure DevOps work items…".to_string());
         state.results.clear();
         state.rows = vec![RowKind::Message];
@@ -434,6 +443,7 @@ pub(super) fn start_azure_pull_request_live_search(
         let mut state = state.borrow_mut();
         state.azure_pull_requests_live_active = true;
         state.azure_pull_request_reply_id = next_azure_reply_id(state.azure_pull_request_reply_id);
+        state.highlight_term.clear();
         state.empty_message = Some("Searching Azure DevOps pull requests…".to_string());
         state.results.clear();
         state.rows = vec![RowKind::Message];

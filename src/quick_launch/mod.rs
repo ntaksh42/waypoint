@@ -16,6 +16,7 @@ mod tests;
 
 pub(crate) use azure::azure_suggest_entry;
 pub use azure::{AzureCommand, PipelineFilter, PullRequestFilter, azure_command};
+pub(crate) use scoring::highlight_ranges;
 pub(crate) use search::search_entries;
 
 use azure::AzureIndexed;
@@ -63,6 +64,28 @@ pub fn prefix_badge(query: &str) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+/// クエリからモードプレフィックス (`b `/`w `/`az pr ` 等) を除いた、
+/// 実際にスコアリングへ渡る検索語を返す。`Index::search` の分岐と対象を
+/// 揃えるためのもので、ハイライト表示 (`scoring::highlight_ranges`) が
+/// 一致判定と同じ語を見るために使う。
+pub fn effective_search_term(query: &str) -> &str {
+    for prefix in [
+        BOOKMARK_PREFIX,
+        HISTORY_PREFIX,
+        WINDOW_PREFIX,
+        APPS_PREFIX,
+        TABS_PREFIX,
+    ] {
+        if let Some(rest) = query.strip_prefix(prefix) {
+            return rest;
+        }
+    }
+    if let Some((_, rest)) = azure_command(query) {
+        return rest;
+    }
+    query
 }
 
 /// 検索結果を選んだときに行うアクション。
