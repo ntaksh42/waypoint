@@ -1,13 +1,12 @@
 //! SQLite キャッシュの読み書き。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OpenFlags, params};
 
 use crate::config::AzureDevOpsProject;
 
-use super::Candidate;
 use super::convert::unix_timestamp;
 
 const CACHE_FILE: &str = "azure_devops.db";
@@ -63,6 +62,10 @@ pub(crate) fn open_cache() -> Result<Connection, String> {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS identity (
+                organization TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL
+            );
             INSERT OR REPLACE INTO cache_meta (key, value) VALUES ('schema_version', '2');",
         )
         .map_err(|error| error.to_string())?;
@@ -78,6 +81,23 @@ pub(crate) fn open_cache() -> Result<Connection, String> {
     Ok(connection)
 }
 
+pub(crate) fn open_cache_read_only() -> Result<Connection, String> {
+    let path = cache_path().ok_or_else(|| "AppData path is unavailable.".to_string())?;
+    open_read_only_at(&path)
+}
+
+fn open_read_only_at(path: &Path) -> Result<Connection, String> {
+    let connection = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|error| error.to_string())?;
+    connection
+        .busy_timeout(Duration::from_secs(5))
+        .map_err(|error| error.to_string())?;
+    Ok(connection)
+}
+
 pub(crate) fn replace_project_cache(
     project: &AzureDevOpsProject,
     rows: &[CachedRow],
@@ -86,9 +106,9 @@ pub(crate) fn replace_project_cache(
     let transaction = connection
         .transaction()
         .map_err(|error| error.to_string())?;
-    // 'wit' もここで入れ替える。ライブ検索 (cache_work_item_candidates) が
-    // 書いた一時的な行は、次の定期同期で「最近更新された Work Item」の
-    // 一覧に置き換わる想定でよい (まだ更新中なら定期同期にも出てくる)。
+    // 'pipeline' / 'wit' はもう書かない (Pipeline は Live 検索のみ、Work
+    // Item は DevDeck のキャッシュを読む) が、旧バージョンが残した行を
+    // アップグレード後の最初の同期で確実に消すため IN 句には残す。
     transaction
         .execute(
             "DELETE FROM candidates
@@ -126,54 +146,17 @@ pub(crate) fn replace_project_cache(
     transaction.commit().map_err(|error| error.to_string())
 }
 
-/// ライブ全文検索 (`az wit <query>` でキャッシュに無く、ユーザーが明示的に
-/// 追加取得を選んだ場合) で見つけた Work Item を、次回の即時検索用に一時
-/// 保持する。次の定期同期 (`replace_project_cache`) でこの行は消え、
-/// 「最近更新された Work Item」一覧に置き換わる。
-pub(crate) fn cache_work_item_candidates(candidates: &[Candidate]) -> Result<(), String> {
-    let mut connection = open_cache()?;
-    let transaction = connection
-        .transaction()
-        .map_err(|error| error.to_string())?;
-    for candidate in candidates {
-        let Some(item_id) = candidate.url.rsplit('/').next() else {
-            continue;
-        };
-        transaction
-            .execute(
-                "INSERT OR REPLACE INTO candidates
-                 (organization, project, kind, item_id, status, name, detail, url, is_mine)
-                 VALUES (?1, ?2, 'wit', ?3, ?4, ?5, ?6, ?7, 0)",
-                params![
-                    candidate.organization,
-                    candidate.project,
-                    item_id,
-                    candidate.status,
-                    candidate.name,
-                    candidate.detail,
-                    candidate.url,
-                ],
-            )
-            .map_err(|error| error.to_string())?;
-    }
-    transaction.commit().map_err(|error| error.to_string())
-}
-
-/// フル同期の成功を記録する。`work_items_delta_synced_at` も同じ時刻へ
-/// 進める — フル同期は Work Item を含めて取り直しているので、以後の
-/// 差分同期はここを新しい起点にしてよい (フルの直後に古い起点で差分を
-/// 取ると、フルで既に反映済みの変更を二重に取得しにいくだけになる)。
+/// フル同期の成功を記録する。
 pub(crate) fn record_project_success(project: &AzureDevOpsProject) -> Result<(), String> {
     let connection = open_cache()?;
     let now = unix_timestamp();
     connection
         .execute(
-            "INSERT INTO project_state (organization, project, refreshed_at, last_error, work_items_delta_synced_at)
-             VALUES (?1, ?2, ?3, NULL, ?3)
+            "INSERT INTO project_state (organization, project, refreshed_at, last_error)
+             VALUES (?1, ?2, ?3, NULL)
              ON CONFLICT(organization, project) DO UPDATE SET
                 refreshed_at = excluded.refreshed_at,
-                last_error = NULL,
-                work_items_delta_synced_at = excluded.work_items_delta_synced_at",
+                last_error = NULL",
             params![project.organization.trim(), project.project.trim(), now],
         )
         .map_err(|error| error.to_string())?;
@@ -196,83 +179,70 @@ pub(crate) fn record_project_error(
     Ok(())
 }
 
-/// Work Item の差分同期がいつ最後に成功したか。無ければ `None`
-/// (まだ一度もフル/差分同期していないので、呼び出し側はフル同期に倒す)。
-pub(crate) fn work_items_delta_synced_at(project: &AzureDevOpsProject) -> Option<i64> {
+/// The authenticated user's identity GUID for `organization`, resolved by
+/// `current_user_id` on some earlier sync and cached here so the synchronous
+/// read path (`cached_candidates`, no network access allowed) can compute
+/// "is this mine" against the shared cache without an API call.
+pub(crate) fn read_identity(organization: &str) -> Option<String> {
     let connection = open_cache().ok()?;
     connection
         .query_row(
-            "SELECT work_items_delta_synced_at FROM project_state
-             WHERE organization = ?1 AND project = ?2",
-            params![project.organization.trim(), project.project.trim()],
-            |row| row.get::<_, Option<i64>>(0),
+            "SELECT user_id FROM identity WHERE organization = ?1",
+            params![organization.trim()],
+            |row| row.get(0),
         )
         .ok()
-        .flatten()
 }
 
-pub(crate) fn record_work_items_delta_success(project: &AzureDevOpsProject) -> Result<(), String> {
+pub(crate) fn write_identity(organization: &str, user_id: &str) -> Result<(), String> {
     let connection = open_cache()?;
     connection
         .execute(
-            "INSERT INTO project_state (organization, project, work_items_delta_synced_at)
-             VALUES (?1, ?2, ?3)
-             ON CONFLICT(organization, project) DO UPDATE SET work_items_delta_synced_at = excluded.work_items_delta_synced_at",
-            params![
-                project.organization.trim(),
-                project.project.trim(),
-                unix_timestamp()
-            ],
+            "INSERT INTO identity (organization, user_id) VALUES (?1, ?2)
+             ON CONFLICT(organization) DO UPDATE SET user_id = excluded.user_id",
+            params![organization.trim(), user_id],
         )
         .map_err(|error| error.to_string())?;
     Ok(())
 }
 
-/// Work Item の差分同期結果を UPSERT する。全置換 (`replace_project_cache`)
-/// と違い、今回の応答に含まれない既存行は削除しない — 差分クエリは
-/// 「変更があったもの」しか返さないため、含まれない行は「変更が無かった」
-/// のか「削除・対象外になった」のか区別できない。削除検知は定期的な
-/// フル同期 (`replace_project_cache`) に任せる。
-pub(crate) fn upsert_work_item_rows(rows: &[CachedRow]) -> Result<(), String> {
-    if rows.is_empty() {
-        return Ok(());
-    }
-    let mut connection = open_cache()?;
-    let transaction = connection
-        .transaction()
-        .map_err(|error| error.to_string())?;
-    {
-        let mut statement = transaction
-            .prepare(
-                "INSERT INTO candidates
-                 (organization, project, kind, item_id, status, name, detail, url, is_mine)
-                 VALUES (?1, ?2, 'wit', ?3, ?4, ?5, ?6, ?7, ?8)
-                 ON CONFLICT(organization, project, kind, item_id) DO UPDATE SET
-                    status = excluded.status,
-                    name = excluded.name,
-                    detail = excluded.detail,
-                    url = excluded.url,
-                    is_mine = excluded.is_mine",
-            )
-            .map_err(|error| error.to_string())?;
-        for row in rows {
-            statement
-                .execute(params![
-                    row.organization,
-                    row.project,
-                    row.item_id,
-                    row.status,
-                    row.name,
-                    row.detail,
-                    row.url,
-                    row.is_mine as i64,
-                ])
-                .map_err(|error| error.to_string())?;
-        }
-    }
-    transaction.commit().map_err(|error| error.to_string())
-}
-
 pub(crate) fn cache_path() -> Option<PathBuf> {
     dirs::config_dir().map(|path| path.join("waypoint").join(CACHE_FILE))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_only_connection_reads_existing_data_and_rejects_writes() {
+        let path = std::env::temp_dir().join(format!(
+            "waypoint-cache-readonly-{}-{}.db",
+            std::process::id(),
+            unix_timestamp()
+        ));
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute("CREATE TABLE sample(value INTEGER NOT NULL)", [])
+            .unwrap();
+        connection
+            .execute("INSERT INTO sample VALUES(42)", [])
+            .unwrap();
+        drop(connection);
+
+        let connection = open_read_only_at(&path).unwrap();
+        assert_eq!(
+            connection
+                .query_row("SELECT value FROM sample", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            42
+        );
+        assert!(
+            connection
+                .execute("INSERT INTO sample VALUES(7)", [])
+                .is_err()
+        );
+        drop(connection);
+        std::fs::remove_file(path).unwrap();
+    }
 }

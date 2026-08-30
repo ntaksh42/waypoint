@@ -4,6 +4,7 @@ mod badge;
 mod dispatch;
 mod draw;
 mod draw_icons;
+mod highlight;
 mod input;
 mod layout;
 mod search;
@@ -35,7 +36,7 @@ use input::{
     hide_window, last_selectable_row, move_selection, queue_selected, reveal_selected_in_explorer,
     select_at,
 };
-use layout::{apply_dpi, apply_window_chrome, position_window};
+use layout::{apply_dpi, apply_window_chrome};
 use search::update_results;
 
 const EDIT_ID: isize = 1001;
@@ -63,8 +64,12 @@ const SURFACE_HOVER: COLORREF = rgb(44, 41, 38);
 const ACCENT: COLORREF = rgb(111, 168, 201);
 const TEXT_PRIMARY: COLORREF = rgb(245, 245, 245);
 const TEXT_SECONDARY: COLORREF = rgb(166, 166, 166);
-/// breadcrumb 用。detail 行の中でもさらに一段控えめにする (FR-9.6 の補助情報)。
-const TEXT_MUTED: COLORREF = rgb(117, 112, 106);
+/// detail 行の path (secondary) やセクション見出しなど、一段控えめにする
+/// 補助テキスト用。旧 rgb(117,112,106) は選択行の背景 (SURFACE_HOVER) に対する
+/// コントラスト比が約2.95:1しかなく視認性が低かった。rgb(148,142,134) まで
+/// 一度上げたが実機描画で確認してもまだ breadcrumb (TEXT_SECONDARY) との差が
+/// 小さく見づらさが残ったため、同じ色相のままさらに明度を上げてある。
+const TEXT_MUTED: COLORREF = rgb(180, 173, 163);
 
 pub const WM_QUICK_LAUNCH_EXECUTE: u32 = WM_APP + 4;
 /// Everything からの検索結果を識別する `WM_COPYDATA` の `dwData` の初期値。
@@ -165,11 +170,20 @@ struct State {
     /// reply_id の名前空間を分けるために独立させている。
     azure_pull_requests_live_active: bool,
     azure_pull_request_reply_id: u32,
+    /// Pipeline のライブ検索 (`AzureLivePipelineSearch`) 中だけ立てる。
+    /// Pipeline は永続キャッシュを持たないので、`az pipeline ` に入る
+    /// たびにこの経路を通る (PR/Work Item と違いキャッシュ検索を挟まない)。
+    azure_pipelines_live_active: bool,
+    azure_pipeline_reply_id: u32,
     /// 非同期検索中・0 件時に結果一覧へ出す説明。実行対象にはしない。
     empty_message: Option<String>,
     /// 現在の入力が `b `/`w `/`a `/`f ` のいずれかに入っていれば
     /// そのモード名。検索窓のバッジ表示に使う。
     badge: Option<&'static str>,
+    /// モードプレフィックス除去済みの検索語。空なら一覧の候補名を
+    /// ハイライトしない (絞り込みなし一覧や Everything / Azure の
+    /// 非同期検索など、一致箇所が `name` に対応しない場合)。
+    highlight_term: String,
 }
 
 pub fn configure(config: &Config, dynamic: &Menus) {
@@ -301,23 +315,25 @@ pub fn replace_browser_tabs(
 
 pub fn show(owner: HWND, origin: Option<HWND>) -> Result<()> {
     ensure_window(owner)?;
-    let (window, edit, visible_results) = STATE.with(|state| {
+    let (window, edit) = STATE.with(|state| {
         let mut state = state.borrow_mut();
         state.owner = Some(owner);
         state.origin = origin;
-        (state.window, state.edit, state.visible_results)
+        (state.window, state.edit)
     });
     let (Some(window), Some(edit)) = (window, edit) else {
         return Ok(());
     };
-    unsafe {
-        // SetWindowTextW は EN_CHANGE を同期送信するため、STATE の借用外で呼ぶ。
-        let _ = SetWindowTextW(edit, w!(""));
-    }
     let monitor_window = origin.unwrap_or(owner);
     let dpi = unsafe { GetDpiForWindow(monitor_window) }.max(96);
     apply_dpi(window, dpi);
-    position_window(window, monitor_window, visible_results, dpi);
+    unsafe {
+        // SetWindowTextW は前回と同じ空文字列だと EN_CHANGE を送らないことが
+        // あるため、リストの再構築とウィンドウの高さ合わせは update_results
+        // 側で明示的に行う (STATE の借用外で呼ぶ)。
+        let _ = SetWindowTextW(edit, w!(""));
+    }
+    STATE.with(update_results);
     unsafe {
         let _ = windows::Win32::Graphics::Gdi::InvalidateRect(Some(window), None, true);
         let _ = ShowWindow(window, SW_SHOW);

@@ -2,7 +2,7 @@
 
 use std::cmp::Reverse;
 
-use super::azure::{AzureCommand, PipelineFilter, azure_command, azure_command_entries};
+use super::azure::{AzureCommand, azure_command, azure_command_entries};
 use super::scoring::{match_score, match_score_cheap};
 use super::{
     APPS_PREFIX, AZURE_DEVOPS_PREFIX, BOOKMARK_PREFIX, Entry, HISTORY_PREFIX, Index, TABS_PREFIX,
@@ -145,26 +145,6 @@ impl Index {
                     true,
                     &self.ranking,
                 ),
-                AzureCommand::Pipelines(filter) => search_indexed(
-                    self.azure
-                        .iter()
-                        .filter(|entry| {
-                            entry.kind == crate::azure_devops::Kind::Pipeline
-                                && match filter {
-                                    PipelineFilter::All => true,
-                                    PipelineFilter::Definitions => {
-                                        entry.status.eq_ignore_ascii_case("definition")
-                                    }
-                                    PipelineFilter::Failed => {
-                                        entry.status.eq_ignore_ascii_case("failed")
-                                    }
-                                }
-                        })
-                        .map(|entry| (&entry.entry, &entry.lower)),
-                    rest,
-                    true,
-                    &self.ranking,
-                ),
                 AzureCommand::Projects => search_indexed(
                     self.azure
                         .iter()
@@ -174,7 +154,13 @@ impl Index {
                     true,
                     &self.ranking,
                 ),
-                AzureCommand::WorkItems { .. } | AzureCommand::Suggest => Vec::new(),
+                // Pipeline は永続キャッシュを持たない (Live 検索専用) ので、
+                // Work Item のライブ検索と同じく同期検索では何も返さない。
+                // 実際の検索は `quick_launch_window::search` が
+                // `search_pipelines_live_async` を叩いて行う。
+                AzureCommand::Pipelines(_)
+                | AzureCommand::WorkItems { .. }
+                | AzureCommand::Suggest => Vec::new(),
             };
         }
         search_entries_cached_multi(

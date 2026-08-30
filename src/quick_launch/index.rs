@@ -50,8 +50,7 @@ impl Index {
             Vec::new()
         };
 
-        let azure = azure_indexed(settings);
-        let azure_work_items = azure_work_item_entries(settings);
+        let (azure, azure_work_items) = azure_entries(settings);
 
         let apps = if settings.include_apps {
             crate::apps::scan()
@@ -153,8 +152,7 @@ impl Index {
     /// (`refresh_dynamic` が Recent/Frequent だけを差し替えるのと同じ理由)。
     pub fn refresh_azure(&mut self, config: &Config) {
         let settings = &config.settings.quick_launch;
-        self.azure = azure_indexed(settings);
-        self.azure_work_items = azure_work_item_entries(settings);
+        (self.azure, self.azure_work_items) = azure_entries(settings);
         self.azure_work_items_lower = super::search::LowerKeys::build_for(&self.azure_work_items);
     }
 
@@ -188,20 +186,19 @@ impl Index {
 
 /// Azure DevOps の PR / Pipeline / Project 候補を、検索用の索引へ組む。
 /// `Index::build` と `Index::refresh_azure` の共通部分。
-fn azure_indexed(settings: &crate::config::QuickLaunchSettings) -> Vec<AzureIndexed> {
+fn azure_entries(settings: &crate::config::QuickLaunchSettings) -> (Vec<AzureIndexed>, Vec<Entry>) {
     let mut candidates = if settings.azure_devops.enabled {
         crate::azure_devops::project_candidates(&settings.azure_devops)
     } else {
         Vec::new()
     };
-    candidates.extend(crate::azure_devops::cached_candidates(
-        &settings.azure_devops,
-    ));
+    let (cached, work_items) = crate::azure_devops::cached_candidate_groups(&settings.azure_devops);
+    candidates.extend(cached);
     // 優先度を最優先しつつ、同一プロジェクト内では自分が関与する PR、
     // 日常的に開く Active PR、失敗した Pipeline の順に先頭へ置く。
     // 通常の使用履歴ランキングも後段で効く。
     candidates.sort_by_key(|candidate| (candidate.priority, azure_urgency(candidate)));
-    candidates
+    let indexed = candidates
         .into_iter()
         .map(|candidate| {
             let entry = azure_candidate_entry(candidate.clone());
@@ -213,15 +210,9 @@ fn azure_indexed(settings: &crate::config::QuickLaunchSettings) -> Vec<AzureInde
                 is_mine: candidate.is_mine,
             }
         })
-        .collect()
-}
-
-/// Work Item のキャッシュ候補。`azure_indexed` と同じく共通部分。
-fn azure_work_item_entries(settings: &crate::config::QuickLaunchSettings) -> Vec<Entry> {
-    crate::azure_devops::cached_work_item_candidates(&settings.azure_devops)
-        .into_iter()
-        .map(azure_candidate_entry)
-        .collect()
+        .collect();
+    let work_items = work_items.into_iter().map(azure_candidate_entry).collect();
+    (indexed, work_items)
 }
 
 /// config 由来の候補 (`config_entries`) に Recent/Frequent Folders を足して

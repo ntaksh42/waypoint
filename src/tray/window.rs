@@ -19,7 +19,7 @@ use super::actions::{
 };
 use super::{
     AZURE_FULL_REFRESH_TIMER_ID, WM_AZURE_DEVOPS_REFRESHED, WM_DYNAMIC_REFRESHED, WM_RELOAD_CONFIG,
-    WM_TRAY, kick_azure_work_item_delta_sync, refresh_azure_devops, reload, with_state,
+    WM_TRAY, refresh_azure_devops, reload, with_state,
 };
 
 /// Win32 から呼ばれる入口。
@@ -74,8 +74,19 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
             if wparam.0 as i32 == trigger::QUICK_LAUNCH_HOTKEY_ID {
                 let origin =
                     unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
+                // config 由来の候補 (showBranch の Git ブランチ名を含む) を
+                // 表示のたびに読み直す。COM/SQLite を伴わず軽量なので
+                // トリガー経路で呼んでも 50ms 予算を圧迫しない
+                // (`Index::refresh_config_items` 参照)。ここで呼ばないと、
+                // 直前のフル構築 (起動時・設定保存時・お気に入り昇格時) 時点の
+                // ブランチ名のまま古くなる。
+                with_state(|state| {
+                    let state = state.borrow();
+                    if let Some(state) = state.as_ref() {
+                        quick_launch_window::configure_config_items(&state.config, &state.dynamic);
+                    }
+                });
                 let _ = quick_launch_window::show(hwnd, Some(origin));
-                kick_azure_work_item_delta_sync(hwnd);
             } else {
                 show_launcher_at_cursor(hwnd);
             }
@@ -106,12 +117,13 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                     quick_launch::Action::OpenInTerminal => {
                         let _ = shell::open_terminal(&entry.path);
                     }
-                    // ReplaceQuery / AzureLiveWorkItemSearch / AzureLivePullRequestSearch
-                    // はウィンドウを閉じずに Quick Launch 側で完結する
-                    // (queue_selected 参照)。ここへは実行対象として来ない
+                    // ReplaceQuery / AzureLiveWorkItemSearch / AzureLivePullRequestSearch /
+                    // AzureLivePipelineSearch はウィンドウを閉じずに Quick Launch
+                    // 側で完結する (queue_selected 参照)。ここへは実行対象として来ない
                     quick_launch::Action::ReplaceQuery(_)
                     | quick_launch::Action::AzureLiveWorkItemSearch(_)
-                    | quick_launch::Action::AzureLivePullRequestSearch { .. } => {}
+                    | quick_launch::Action::AzureLivePullRequestSearch { .. }
+                    | quick_launch::Action::AzureLivePipelineSearch { .. } => {}
                     quick_launch::Action::AzureSuggestPriorities => {
                         open_settings(Some(crate::azure_devops::AZURE_SUGGEST_ARG));
                     }

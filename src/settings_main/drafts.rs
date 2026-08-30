@@ -43,6 +43,8 @@ pub(super) struct BatchDraft {
 #[derive(Default)]
 pub(super) struct MoveToMenuDraft {
     pub(super) target: Vec<usize>,
+    /// メニュー選択肢を絞り込む文字列 (FR-6.15)。
+    pub(super) filter: String,
 }
 
 pub(super) struct ImportDraft {

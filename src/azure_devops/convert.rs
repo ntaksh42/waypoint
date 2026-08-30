@@ -238,24 +238,6 @@ pub(crate) fn work_item_batch_candidates(
         .collect()
 }
 
-/// バックグラウンド同期でキャッシュへ書くための変換。`url` 末尾の Work
-/// Item ID を `item_id` に使う (`_workitems/edit/{id}` の形式は
-/// `work_item_candidate` が組み立てる URL と ID 抽出の両方で前提にしている)。
-pub(crate) fn work_item_cached_row(candidate: &Candidate) -> Option<CachedRow> {
-    let item_id = candidate.url.rsplit('/').next()?.to_string();
-    Some(CachedRow {
-        organization: candidate.organization.clone(),
-        project: candidate.project.clone(),
-        kind: "wit".to_string(),
-        item_id,
-        status: candidate.status.clone(),
-        name: candidate.name.clone(),
-        detail: candidate.detail.clone(),
-        url: candidate.url.clone(),
-        is_mine: candidate.is_mine,
-    })
-}
-
 /// PR のライブ検索結果 (`CachedRow`、まだキャッシュへ書く前) を候補へ
 /// 変換する。`aliases` / `priority` は SQLite に持たないプロジェクト
 /// 設定側の値なので、呼び出し元の `AzureDevOpsProject` から補う。
@@ -265,6 +247,26 @@ pub(crate) fn pull_request_cached_row_to_candidate(
 ) -> Candidate {
     Candidate {
         kind: Kind::PullRequest,
+        status: row.status.clone(),
+        name: row.name.clone(),
+        detail: row.detail.clone(),
+        url: row.url.clone(),
+        organization: row.organization.clone(),
+        project: row.project.clone(),
+        aliases: project.aliases.clone(),
+        priority: project.priority,
+        is_mine: row.is_mine,
+    }
+}
+
+/// Pipeline のライブ検索結果 (`CachedRow`、永続キャッシュには書かない) を
+/// 候補へ変換する。`pull_request_cached_row_to_candidate` の Pipeline 版。
+pub(crate) fn pipeline_cached_row_to_candidate(
+    project: &AzureDevOpsProject,
+    row: &CachedRow,
+) -> Candidate {
+    Candidate {
+        kind: Kind::Pipeline,
         status: row.status.clone(),
         name: row.name.clone(),
         detail: row.detail.clone(),
@@ -363,33 +365,6 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     let doy = (153 * mp + 2) / 5 + day - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     era * 146_097 + doe - 719_468
-}
-
-/// Howard Hinnant の `civil_from_days` アルゴリズム。`days_from_civil` の逆変換
-/// (1970-01-01 を 0 とする通算日数からグレゴリオ暦の年月日を求める)。
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    (if month <= 2 { y + 1 } else { y }, month, day)
-}
-
-/// unix 秒を WIQL の日時リテラル (`'YYYY-MM-DD HH:MM:SS'`、UTC) へ変換する。
-/// `[System.ChangedDate] > '...'` のような差分クエリの下限に使う。
-pub(crate) fn unix_to_wiql_datetime(unix_seconds: i64) -> String {
-    let days = unix_seconds.div_euclid(86_400);
-    let remainder = unix_seconds.rem_euclid(86_400);
-    let (year, month, day) = civil_from_days(days);
-    let hour = remainder / 3_600;
-    let minute = (remainder % 3_600) / 60;
-    let second = remainder % 60;
-    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}")
 }
 
 pub(crate) fn project_url(project: &AzureDevOpsProject) -> String {
@@ -642,22 +617,5 @@ mod tests {
         assert_eq!(parse_rfc3339_unix(""), None);
         assert_eq!(parse_rfc3339_unix("not-a-date"), None);
         assert_eq!(parse_rfc3339_unix("2024/01/15T10:30:00Z"), None);
-    }
-
-    #[test]
-    fn unix_to_wiql_datetime_matches_known_epoch_values() {
-        assert_eq!(unix_to_wiql_datetime(0), "1970-01-01 00:00:00");
-        assert_eq!(unix_to_wiql_datetime(1_705_314_600), "2024-01-15 10:30:00");
-        // うるう年 (2024) の 2/29 をまたぐ日付も正しく変換できること
-        assert_eq!(unix_to_wiql_datetime(1_709_251_200), "2024-03-01 00:00:00");
-    }
-
-    #[test]
-    fn unix_to_wiql_datetime_round_trips_with_parse_rfc3339_unix() {
-        for seconds in [0, 1_705_314_600, 1_709_251_200, 1_800_000_000] {
-            let wiql = unix_to_wiql_datetime(seconds);
-            let rfc3339 = format!("{}Z", wiql.replacen(' ', "T", 1));
-            assert_eq!(parse_rfc3339_unix(&rfc3339), Some(seconds));
-        }
     }
 }

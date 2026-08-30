@@ -63,6 +63,7 @@ fn key_kind(action: &Action) -> Option<&'static str> {
         | Action::ReplaceQuery(_)
         | Action::AzureLiveWorkItemSearch(_)
         | Action::AzureLivePullRequestSearch { .. }
+        | Action::AzureLivePipelineSearch { .. }
         | Action::AzureSuggestPriorities => None,
     }
 }

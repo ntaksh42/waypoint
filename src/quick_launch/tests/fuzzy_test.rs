@@ -112,3 +112,40 @@ fn subsequence_ascii_and_unicode_paths_agree() {
     // 誤一致しないこと
     assert!(!is_sub("あいう", "a"));
 }
+
+/// 連続部分一致は 1 つの範囲にまとまる (大文字小文字は無視するが、
+/// 返る範囲は元の `name` のバイト位置)。
+#[test]
+fn highlight_ranges_substring_match() {
+    assert_eq!(highlight_ranges("App.rs", "app"), vec![(0, 3)]);
+}
+
+/// 複数語クエリは語ごとの範囲を合算して返す (境界一致 + サブシーケンス)。
+/// VSCode の Quick Open で "r app" が "app.rs" の "app" と末尾の "r" を
+/// 拾うのと同じ形。
+#[test]
+fn highlight_ranges_multi_word_merges_hits() {
+    assert_eq!(highlight_ranges("app.rs", "r app"), vec![(0, 3), (4, 5)]);
+}
+
+/// fuzzy (サブシーケンス) 一致は、実際に一致した文字だけを飛び飛びの
+/// 範囲として返す (間の不一致文字は含めない)。
+#[test]
+fn highlight_ranges_fuzzy_is_scattered() {
+    // "wdc" は Waypoint docs の頭文字を拾う (fuzzy_test.rs 冒頭のケースと同じ入力)
+    let ranges = highlight_ranges("Waypoint docs", "wdc");
+    assert_eq!(ranges, vec![(0, 1), (9, 10), (11, 12)]);
+}
+
+/// breadcrumb/path 経由の一致 (name 自体には一致しない) はハイライト対象外。
+#[test]
+fn highlight_ranges_empty_when_name_does_not_match() {
+    assert!(highlight_ranges("Waypoint docs", "xyz").is_empty());
+}
+
+/// マルチバイト文字混在でもバイト境界を跨がない。
+#[test]
+fn highlight_ranges_respects_multibyte_boundaries() {
+    // "発室" は "開発室" の 2〜3 文字目 (バイト位置は "開" が 3 バイトぶんずれる)
+    assert_eq!(highlight_ranges("開発室", "発室"), vec![(3, 9)]);
+}

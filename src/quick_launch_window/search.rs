@@ -9,6 +9,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::HSTRING;
 
+use super::layout::{position_window, rows_height};
 use super::{
     EDIT_HEIGHT, EVERYTHING_MAX_RESULTS, EVERYTHING_REPLY_ID_START, MAX_LIST_RESULTS, PADDING,
     RowKind, STATE, State, WM_QUICK_LAUNCH_AZURE_RESULTS,
@@ -108,6 +109,11 @@ pub(super) fn update_results(state: &RefCell<State>) {
         // 何か別の理由で再描画されるまで古い COPIED 表示が残り続ける。
         let copy_feedback_cleared = state.copy_feedback;
         state.copy_feedback = false;
+        state.highlight_term = if query.is_empty() {
+            String::new()
+        } else {
+            crate::quick_launch::effective_search_term(&query).to_string()
+        };
         let section_headers = if query.is_empty() {
             // 絞り込みなし: Spotlight 風に区分見出し付きで一覧を組み立てる
             let mut results = Vec::new();
@@ -119,10 +125,14 @@ pub(super) fn update_results(state: &RefCell<State>) {
             state.results = results;
             section_headers
         } else {
-            state.results = if let Some(search_term) = state
-                .previous_query
-                .as_deref()
-                .and_then(|previous| refined_search_term(previous, &query))
+            // `state.results` が前回の表示上限 (MAX_LIST_RESULTS) で切り詰め
+            // 済みだと、絞り込みで再び上位に来るはずの候補 (切り詰めで
+            // 落ちた 25 件目以降) が母集団に無く拾えない。切り詰めが
+            // 起きていた回だけは安全側に倒し、全候補への再検索にフォールバック
+            // する (実測: 候補 25 件超のとき、絞り込みを続けると本来ヒット
+            // するはずの候補が一覧から消えていた)。
+            state.results = if let Some(search_term) =
+                refinable_search_term(state.previous_query.as_deref(), &query, state.results.len())
             {
                 crate::quick_launch::search_entries(
                     &state.results,
@@ -153,6 +163,16 @@ pub(super) fn update_results(state: &RefCell<State>) {
                 state
                     .results
                     .push(live_pull_request_search_entry(filter, rest));
+            }
+            // Pipeline は永続キャッシュを持たないので、`Index::search` は
+            // 常に 0 件を返す (`quick_launch/search.rs` 参照)。ここで毎回
+            // ライブ検索への入口を足す — PR/Work Item と違い「キャッシュに
+            // 無かった」ではなく最初から Live 検索専用のため無条件。
+            if state.results.is_empty()
+                && let Some((crate::quick_launch::AzureCommand::Pipelines(filter), rest)) =
+                    crate::quick_launch::azure_command(&query)
+            {
+                state.results.push(live_pipeline_search_entry(filter, rest));
             }
             Vec::new()
         };
@@ -190,6 +210,7 @@ pub(super) fn start_everything_query(state: &RefCell<State>, text: &str) {
         let mut state = state.borrow_mut();
         state.everything_active = true;
         state.previous_query = None;
+        state.highlight_term.clear();
         state.results.clear();
         state.rows.clear();
         state.everything_reply_id = next_everything_reply_id(state.everything_reply_id);
@@ -220,6 +241,7 @@ pub(super) fn start_azure_work_item_query(state: &RefCell<State>, text: &str) {
         let mut state = state.borrow_mut();
         state.everything_active = false;
         state.previous_query = None;
+        state.highlight_term.clear();
         state.azure_work_items_active = true;
         state.results = state
             .index
@@ -271,6 +293,7 @@ fn show_azure_suggest_entry(state: &RefCell<State>) {
         state.everything_active = false;
         state.azure_work_items_active = false;
         state.previous_query = None;
+        state.highlight_term.clear();
         state.empty_message = None;
         state.results = vec![crate::quick_launch::azure_suggest_entry()];
         let (labels, rows) = build_rows(&state.results, &[]);
@@ -302,6 +325,7 @@ pub(super) fn start_azure_work_item_live_search(state: &RefCell<State>, query: &
         state.azure_work_items_active = true;
         state.azure_work_item_reply_id = next_azure_reply_id(state.azure_work_item_reply_id);
         state.azure_work_item_query = query.trim().to_string();
+        state.highlight_term.clear();
         state.empty_message = Some("Searching Azure DevOps work items…".to_string());
         state.results.clear();
         state.rows = vec![RowKind::Message];
@@ -424,6 +448,7 @@ pub(super) fn start_azure_pull_request_live_search(
         let mut state = state.borrow_mut();
         state.azure_pull_requests_live_active = true;
         state.azure_pull_request_reply_id = next_azure_reply_id(state.azure_pull_request_reply_id);
+        state.highlight_term.clear();
         state.empty_message = Some("Searching Azure DevOps pull requests…".to_string());
         state.results.clear();
         state.rows = vec![RowKind::Message];
@@ -468,6 +493,118 @@ pub(super) fn handle_azure_pull_request_results(reply_id: u32) {
         if !accepts_azure_pull_request_reply(
             state.azure_pull_requests_live_active,
             state.azure_pull_request_reply_id,
+            reply_id,
+        ) {
+            return None;
+        }
+        state.results = reply
+            .candidates
+            .into_iter()
+            .take(MAX_LIST_RESULTS)
+            .map(|candidate| Entry {
+                name: candidate.name,
+                breadcrumb: candidate.detail,
+                path: candidate.url.clone(),
+                action: crate::quick_launch::Action::OpenUrl(candidate.url),
+                branch: None,
+            })
+            .collect();
+        state.empty_message = reply.message;
+        let (labels, rows) = build_rows(&state.results, &[]);
+        state.rows = if rows.is_empty() {
+            vec![RowKind::Message]
+        } else {
+            rows.clone()
+        };
+        Some((state.list, labels, rows, state.empty_message.clone()))
+    });
+    let Some((list, labels, rows, empty_message)) = outcome else {
+        return;
+    };
+    if let Some(list) = list {
+        if !rows.is_empty() {
+            populate_list(list, &labels, &rows);
+        } else {
+            populate_empty_message(list, empty_message.as_deref());
+        }
+    }
+}
+
+/// Pipeline は永続キャッシュを持たないので、`az pipeline ` に入ると常に
+/// このライブ検索への入口を出す (PR/Work Item の「キャッシュ 0 件」とは
+/// 条件が異なるが、表示・選択の形は同じ)。
+fn live_pipeline_search_entry(filter: crate::quick_launch::PipelineFilter, query: &str) -> Entry {
+    let label = if query.is_empty() {
+        "Search Azure DevOps pipelines".to_string()
+    } else {
+        format!("Search Azure DevOps pipelines matching \"{query}\"")
+    };
+    Entry {
+        name: label,
+        breadcrumb: "Press Enter to search live".to_string(),
+        path: String::new(),
+        action: crate::quick_launch::Action::AzureLivePipelineSearch {
+            filter,
+            query: query.to_string(),
+        },
+        branch: None,
+    }
+}
+
+/// `AzureLivePipelineSearch` が選ばれた。ウィンドウは閉じずにその場で
+/// API 検索を投げ、結果が届いたらリストだけ差し替える。
+pub(super) fn start_azure_pipeline_live_search(
+    state: &RefCell<State>,
+    filter: crate::quick_launch::PipelineFilter,
+    query: &str,
+) {
+    let (window, reply_id, settings) = {
+        let mut state = state.borrow_mut();
+        state.azure_pipelines_live_active = true;
+        state.azure_pipeline_reply_id = next_azure_reply_id(state.azure_pipeline_reply_id);
+        state.empty_message = Some("Searching Azure DevOps pipelines…".to_string());
+        state.results.clear();
+        state.rows = vec![RowKind::Message];
+        (
+            state.window,
+            state.azure_pipeline_reply_id,
+            state.azure_devops.clone(),
+        )
+    };
+    let Some(list) = STATE.with(|state| state.borrow().list) else {
+        return;
+    };
+    populate_empty_message(list, Some("Searching Azure DevOps pipelines…"));
+    let Some(window) = window else {
+        return;
+    };
+    if !settings.enabled {
+        set_azure_empty_message("Azure DevOps search is disabled in Settings.");
+        return;
+    }
+    crate::azure_devops::search_pipelines_live_async(
+        settings,
+        filter,
+        query.to_string(),
+        reply_id,
+        window,
+        WM_QUICK_LAUNCH_AZURE_RESULTS,
+    );
+}
+
+pub(super) fn accepts_azure_pipeline_reply(active: bool, expected: u32, received: u32) -> bool {
+    active && expected == received
+}
+
+pub(super) fn handle_azure_pipeline_results(reply_id: u32) {
+    let Some(reply) = crate::azure_devops::take_pipeline_results(reply_id) else {
+        return;
+    };
+    let outcome = STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        if !accepts_azure_pipeline_reply(
+            state.azure_pipelines_live_active,
+            state.azure_pipeline_reply_id,
             reply_id,
         ) {
             return None;
@@ -562,11 +699,29 @@ pub(super) fn accepts_azure_work_item_reply(active: bool, expected: u32, receive
     active && expected == received
 }
 
+/// `refined_search_term` の結果に、前回の結果件数による安全条件を足す。
+///
+/// `state.results` は表示上限 (`MAX_LIST_RESULTS`) で切り詰め済みのことが
+/// ある。切り詰めが起きていた回に前回の結果だけを母集団にすると、切り詰めで
+/// 落ちた候補 (絞り込みで本来上位に来るはずのもの) を拾えない。切り詰めが
+/// 起きていない (`previous_results_len < MAX_LIST_RESULTS`) ときだけ最適化を
+/// 使い、それ以外は全候補への再検索に倒す。
+pub(super) fn refinable_search_term<'a>(
+    previous_query: Option<&str>,
+    current: &'a str,
+    previous_results_len: usize,
+) -> Option<&'a str> {
+    if previous_results_len >= MAX_LIST_RESULTS {
+        return None;
+    }
+    refined_search_term(previous_query?, current)
+}
+
 /// 前回の検索結果だけを対象にしても漏れがない場合の、今回の検索語を返す。
 ///
 /// 通常検索と `b ` / `h ` / `w ` / `a ` の同一モードでは、入力末尾への文字追加で
 /// 一致集合が広がらない。Everything と Azure DevOps は別経路なので対象外にする。
-pub(super) fn refined_search_term<'a>(previous: &str, current: &'a str) -> Option<&'a str> {
+fn refined_search_term<'a>(previous: &str, current: &'a str) -> Option<&'a str> {
     let (previous_scope, previous_term) = local_search_scope(previous)?;
     let (current_scope, current_term) = local_search_scope(current)?;
     (previous_scope == current_scope
@@ -603,6 +758,10 @@ fn local_search_scope(query: &str) -> Option<(&'static str, &str)> {
 /// 非同期結果受信 (`handle_everything_results`) の双方から使う。
 /// `rows` が空でも構わない (見出しも項目もない = 空一覧)。
 /// 初期カーソルは、見出し行を飛ばした最初の項目行に置く。
+///
+/// 合わせてウィンドウの高さを `rows` の実際の行数へ合わせ直す。候補数が
+/// 変わるたびに呼ぶことで、候補が少ないときに下部の空きリストボックス分の
+/// 余白が残るのを防ぐ。
 pub(super) fn populate_list(list: HWND, labels: &[HSTRING], rows: &[RowKind]) {
     unsafe {
         let _ = windows::Win32::UI::WindowsAndMessaging::SendMessageW(
@@ -628,6 +787,21 @@ pub(super) fn populate_list(list: HWND, labels: &[HSTRING], rows: &[RowKind]) {
             );
         }
     }
+    resize_to_rows(rows);
+}
+
+/// `populate_list` から呼ぶ、ウィンドウ再配置の実処理。表示中でなければ何もしない。
+fn resize_to_rows(rows: &[RowKind]) {
+    let (window, monitor_window, dpi, visible_results) = STATE.with(|state| {
+        let state = state.borrow();
+        let monitor_window = state.origin.or(state.owner);
+        (state.window, monitor_window, state.dpi, state.visible_results)
+    });
+    let (Some(window), Some(monitor_window)) = (window, monitor_window) else {
+        return;
+    };
+    let height = rows_height(rows, visible_results);
+    position_window(window, monitor_window, height, dpi);
 }
 
 /// `results` と区分見出し (`results` 側インデックス昇順の `(挿入位置, ラベル)`) から、

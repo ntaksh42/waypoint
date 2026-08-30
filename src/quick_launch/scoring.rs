@@ -129,6 +129,90 @@ fn name_contains_tier(name: &str, term: &str) -> Option<u8> {
     found.then_some(3)
 }
 
+/// `name` 中で検索語がヒットしたバイト範囲 (候補一覧のハイライト表示用)。
+///
+/// `term` はモードプレフィックス (`b `/`az pr ` 等) を除いた実際の検索語
+/// (`super::effective_search_term`)。複数語クエリは語ごとの範囲を合算する。
+/// breadcrumb/path/ローマ字経由の一致 (tier4/5/7/8/9) は `name` 中に対応する
+/// 位置が無いため対象外 (ハイライトなし)。
+pub(crate) fn highlight_ranges(name: &str, term: &str) -> Vec<(usize, usize)> {
+    if term.trim().is_empty() {
+        return Vec::new();
+    }
+    let name_lower = name.to_lowercase();
+    let mut ranges = Vec::new();
+    for word in term.split_whitespace().map(str::to_lowercase) {
+        ranges.extend(term_ranges(name, &name_lower, &word));
+    }
+    merge_ranges(ranges)
+}
+
+/// 1 語ぶんのヒット範囲。連続部分一致 (tier0〜3 相当) を優先し、
+/// 無ければ fuzzy のサブシーケンス一致 (tier6 相当) を試す。
+fn term_ranges(name: &str, name_lower: &str, word: &str) -> Vec<(usize, usize)> {
+    if let Some(start) = name_lower.find(word) {
+        return vec![(start, start + word.len())];
+    }
+    let Some((_, char_indices)) = FUZZY_MATCHER.fuzzy_indices(name_lower, word) else {
+        return Vec::new();
+    };
+    char_indices_to_byte_ranges(name, &char_indices)
+}
+
+/// fuzzy_matcher が返す文字インデックス (昇順) を、連続する run 単位で
+/// `name` のバイト範囲へ変換する。飛び飛びのマッチをセグメントごとに
+/// 分けることで、VSCode 同様「実際に一致した文字だけ」を強調できる。
+fn char_indices_to_byte_ranges(name: &str, char_indices: &[usize]) -> Vec<(usize, usize)> {
+    let mut byte_offsets: Vec<usize> = name.char_indices().map(|(byte, _)| byte).collect();
+    byte_offsets.push(name.len());
+    let mut ranges = Vec::new();
+    let mut iter = char_indices.iter().copied();
+    let Some(mut run_start) = iter.next() else {
+        return ranges;
+    };
+    let mut run_end = run_start + 1;
+    for idx in iter {
+        if idx == run_end {
+            run_end = idx + 1;
+        } else {
+            push_byte_range(&mut ranges, &byte_offsets, run_start, run_end);
+            run_start = idx;
+            run_end = idx + 1;
+        }
+    }
+    push_byte_range(&mut ranges, &byte_offsets, run_start, run_end);
+    ranges
+}
+
+/// `to_lowercase` で文字数が変わる極端なケース (独語 `ß` → `ss` 等) に
+/// 備え、`byte_offsets` の範囲外になる添字は捨てる。
+fn push_byte_range(
+    ranges: &mut Vec<(usize, usize)>,
+    byte_offsets: &[usize],
+    start: usize,
+    end: usize,
+) {
+    if let (Some(&start), Some(&end)) = (byte_offsets.get(start), byte_offsets.get(end)) {
+        ranges.push((start, end));
+    }
+}
+
+/// 範囲を開始位置でソートし、隣接・重複する範囲を 1 つへ統合する。
+fn merge_ranges(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+    ranges.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (start, end) in ranges {
+        if let Some(last) = merged.last_mut()
+            && start <= last.1
+        {
+            last.1 = last.1.max(end);
+            continue;
+        }
+        merged.push((start, end));
+    }
+    merged
+}
+
 #[cfg(test)]
 pub(crate) fn bench_is_subsequence(text: &str, term: &str) -> bool {
     is_subsequence(text, term)

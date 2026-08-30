@@ -1,6 +1,7 @@
 mod azure_test;
 mod edit_test;
 mod layout_test;
+mod search_test;
 mod selection_test;
 
 use waypoint::config::{Config, Item};
@@ -24,6 +25,8 @@ pub(super) fn app_with_folders(n: usize) -> SettingsApp {
             ..Default::default()
         },
         selected_menu: Vec::new(),
+        search: String::new(),
+        menu_filter: String::new(),
         selected_items: std::collections::BTreeSet::new(),
         active_item: None,
         selection_anchor: None,

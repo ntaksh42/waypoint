@@ -138,6 +138,47 @@ fn bench_index_build_full() {
     println!("refresh_dynamic {dynamic_ms:>8.3} ms  refresh_config_items {config_ms:>8.3} ms");
 }
 
+/// Azure 同期完了通知から UI スレッドで走る再索引の実測。
+/// DevDeck の Active PR / Work Item と waypoint の PR 履歴を読み直す。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_azure_refresh() {
+    use std::time::Instant;
+
+    let config = match crate::config::load() {
+        crate::config::LoadOutcome::Loaded(config)
+        | crate::config::LoadOutcome::Created(config) => config,
+        crate::config::LoadOutcome::Failed(error) => {
+            println!("(実機の config を読めないので skip: {error})");
+            return;
+        }
+    };
+    let dynamic = crate::dynamic::Menus::default();
+    let mut index = Index::build(&config, &dynamic);
+    let azure_settings = &config.settings.quick_launch.azure_devops;
+
+    let start = Instant::now();
+    for _ in 0..100 {
+        std::hint::black_box(crate::azure_devops::cached_candidate_groups(azure_settings));
+    }
+    let cache_read = start.elapsed().as_secs_f64() * 1000.0 / 100.0;
+
+    let start = Instant::now();
+    index.refresh_azure(&config);
+    let cold = start.elapsed().as_secs_f64() * 1000.0;
+    let start = Instant::now();
+    for _ in 0..100 {
+        index.refresh_azure(&config);
+    }
+    let warm = start.elapsed().as_secs_f64() * 1000.0 / 100.0;
+
+    println!(
+        "azure cache read {cache_read:>8.3} ms  refresh_azure cold {cold:>8.3} ms  warm {warm:>8.3} ms  (PR/Project={} work_items={})",
+        index.azure.len(),
+        index.azure_work_items.len(),
+    );
+}
+
 /// 1 行描くたびに走る `Entry` の複製。`draw_list_item` は借用を解放してから
 /// 描くために結果を clone しており、再描画のたびに行数ぶん走る
 /// (`LBS_OWNERDRAWVARIABLE` なので打鍵ごとの `LB_RESETCONTENT` で全行再描画)。

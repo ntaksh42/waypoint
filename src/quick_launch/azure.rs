@@ -39,12 +39,10 @@ pub struct PullRequestFilter {
     pub(crate) live: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PipelineFilter {
-    All,
-    Definitions,
-    Failed,
-}
+/// Pipeline は永続キャッシュを持たずライブ検索専用になったため、絞り込み
+/// 分類は `azure_devops` 側 (`search_pipelines_live_async` が直接使う) に
+/// 定義してここから再エクスポートする。
+pub use crate::azure_devops::PipelineFilter;
 
 /// `az` のサブコマンドを分解する。未知の先頭語は検索語として扱うので、
 /// `az waypoint` は横断検索、`az pr waypoint` は PR 検索になる。
