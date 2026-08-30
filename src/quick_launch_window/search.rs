@@ -9,6 +9,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::HSTRING;
 
+use super::layout::{position_window, rows_height};
 use super::{
     EDIT_HEIGHT, EVERYTHING_MAX_RESULTS, EVERYTHING_REPLY_ID_START, MAX_LIST_RESULTS, PADDING,
     RowKind, STATE, State, WM_QUICK_LAUNCH_AZURE_RESULTS,
@@ -723,6 +724,10 @@ fn local_search_scope(query: &str) -> Option<(&'static str, &str)> {
 /// 非同期結果受信 (`handle_everything_results`) の双方から使う。
 /// `rows` が空でも構わない (見出しも項目もない = 空一覧)。
 /// 初期カーソルは、見出し行を飛ばした最初の項目行に置く。
+///
+/// 合わせてウィンドウの高さを `rows` の実際の行数へ合わせ直す。候補数が
+/// 変わるたびに呼ぶことで、候補が少ないときに下部の空きリストボックス分の
+/// 余白が残るのを防ぐ。
 pub(super) fn populate_list(list: HWND, labels: &[HSTRING], rows: &[RowKind]) {
     unsafe {
         let _ = windows::Win32::UI::WindowsAndMessaging::SendMessageW(
@@ -748,6 +753,21 @@ pub(super) fn populate_list(list: HWND, labels: &[HSTRING], rows: &[RowKind]) {
             );
         }
     }
+    resize_to_rows(rows);
+}
+
+/// `populate_list` から呼ぶ、ウィンドウ再配置の実処理。表示中でなければ何もしない。
+fn resize_to_rows(rows: &[RowKind]) {
+    let (window, monitor_window, dpi, visible_results) = STATE.with(|state| {
+        let state = state.borrow();
+        let monitor_window = state.origin.or(state.owner);
+        (state.window, monitor_window, state.dpi, state.visible_results)
+    });
+    let (Some(window), Some(monitor_window)) = (window, monitor_window) else {
+        return;
+    };
+    let height = rows_height(rows, visible_results);
+    position_window(window, monitor_window, height, dpi);
 }
 
 /// `results` と区分見出し (`results` 側インデックス昇順の `(挿入位置, ラベル)`) から、

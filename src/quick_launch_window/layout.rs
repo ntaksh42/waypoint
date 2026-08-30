@@ -14,9 +14,27 @@ use windows::Win32::UI::Controls::EM_SETMARGINS;
 use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, MoveWindow, WM_SETFONT};
 use windows::core::w;
 
-use super::{EDIT_HEIGHT, PADDING, ROW_HEIGHT, STATE, WINDOW_WIDTH};
+use super::{EDIT_HEIGHT, HEADER_HEIGHT, PADDING, ROW_HEIGHT, RowKind, STATE, WINDOW_WIDTH};
 
-pub(super) fn position_window(window: HWND, monitor_window: HWND, rows: usize, dpi: u32) {
+/// `rows` (見出し・項目・メッセージ行の並び) を実際に描画したときの合計高さを
+/// 見積もる (DPI 適用前、論理ピクセル)。見出し行は `HEADER_HEIGHT`、それ以外
+/// (項目・メッセージ) は `ROW_HEIGHT` で `WM_MEASUREITEM` (dispatch.rs) と
+/// 同じ内訳にする。`max_rows` を超える分は表示されず (`MoveWindow` でリスト
+/// ボックスの高さが頭打ちになる) スクロール対象になるので、そこで打ち切る。
+/// 非同期検索の応答待ちなど `rows` が一時的に空になる瞬間もあるため、
+/// 最低でも 1 行分は確保し、結果が届くたびにウィンドウが最小サイズへ
+/// 縮んでからまた伸びるチラつきを避ける。
+pub(super) fn rows_height(rows: &[RowKind], max_rows: usize) -> i32 {
+    let height = rows.iter().take(max_rows.max(1)).fold(0, |acc, row| {
+        acc + match row {
+            RowKind::Header(_) => HEADER_HEIGHT,
+            RowKind::Item(_) | RowKind::Message => ROW_HEIGHT,
+        }
+    });
+    height.max(ROW_HEIGHT)
+}
+
+pub(super) fn position_window(window: HWND, monitor_window: HWND, rows_height: i32, dpi: u32) {
     unsafe {
         let monitor = MonitorFromWindow(monitor_window, MONITOR_DEFAULTTONEAREST);
         let mut info = MONITORINFO {
@@ -30,10 +48,11 @@ pub(super) fn position_window(window: HWND, monitor_window: HWND, rows: usize, d
             let _ = GetClientRect(window, &mut work);
         }
         let width = scale(WINDOW_WIDTH, dpi);
-        let height = scale(
-            PADDING * 3 + EDIT_HEIGHT + 6 + ROW_HEIGHT * rows as i32 + 36,
-            dpi,
-        );
+        // リストボックスの実高さは WM_SIZE (dispatch.rs) で
+        // `height - (PADDING + EDIT_HEIGHT + 6) - PADDING` に決まる。
+        // ここで組み立てる height は逆算で、その式が rows_height と一致する
+        // よう PADDING を 2 回 (検索窓の上下) 差し引いた分だけ足す。
+        let height = scale(PADDING * 2 + EDIT_HEIGHT + 6 + rows_height, dpi);
         let x = work.left + (work.right - work.left - width) / 2;
         let y = work.top + (work.bottom - work.top - height) / 2;
         let _ = MoveWindow(window, x, y, width, height, true);

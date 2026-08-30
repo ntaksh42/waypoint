@@ -35,7 +35,7 @@ use input::{
     hide_window, last_selectable_row, move_selection, queue_selected, reveal_selected_in_explorer,
     select_at,
 };
-use layout::{apply_dpi, apply_window_chrome, position_window};
+use layout::{apply_dpi, apply_window_chrome};
 use search::update_results;
 
 const EDIT_ID: isize = 1001;
@@ -310,23 +310,25 @@ pub fn replace_browser_tabs(
 
 pub fn show(owner: HWND, origin: Option<HWND>) -> Result<()> {
     ensure_window(owner)?;
-    let (window, edit, visible_results) = STATE.with(|state| {
+    let (window, edit) = STATE.with(|state| {
         let mut state = state.borrow_mut();
         state.owner = Some(owner);
         state.origin = origin;
-        (state.window, state.edit, state.visible_results)
+        (state.window, state.edit)
     });
     let (Some(window), Some(edit)) = (window, edit) else {
         return Ok(());
     };
-    unsafe {
-        // SetWindowTextW は EN_CHANGE を同期送信するため、STATE の借用外で呼ぶ。
-        let _ = SetWindowTextW(edit, w!(""));
-    }
     let monitor_window = origin.unwrap_or(owner);
     let dpi = unsafe { GetDpiForWindow(monitor_window) }.max(96);
     apply_dpi(window, dpi);
-    position_window(window, monitor_window, visible_results, dpi);
+    unsafe {
+        // SetWindowTextW は前回と同じ空文字列だと EN_CHANGE を送らないことが
+        // あるため、リストの再構築とウィンドウの高さ合わせは update_results
+        // 側で明示的に行う (STATE の借用外で呼ぶ)。
+        let _ = SetWindowTextW(edit, w!(""));
+    }
+    STATE.with(update_results);
     unsafe {
         let _ = windows::Win32::Graphics::Gdi::InvalidateRect(Some(window), None, true);
         let _ = ShowWindow(window, SW_SHOW);
