@@ -77,7 +77,7 @@ pub(super) fn apply_dpi(window: HWND, dpi: u32) {
         state.dpi = dpi;
         state.edit_font = create_font(scale(14, dpi), FW_NORMAL.0 as i32);
         state.name_font = create_font(scale(14, dpi), FW_SEMIBOLD.0 as i32);
-        state.detail_font = create_font(scale(11, dpi), FW_NORMAL.0 as i32);
+        state.detail_font = create_font(scale(12, dpi), FW_NORMAL.0 as i32);
         (
             state.edit,
             old_fonts,

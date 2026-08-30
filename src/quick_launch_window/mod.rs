@@ -61,15 +61,23 @@ const TEXT_LEFT: i32 = ICON_LEFT + ICON_SIZE + ICON_TEXT_GAP;
 const BACKGROUND: COLORREF = rgb(13, 13, 13);
 const SURFACE: COLORREF = rgb(32, 30, 28);
 const SURFACE_HOVER: COLORREF = rgb(44, 41, 38);
+/// 選択行カード専用の背景色。旧実装は `SURFACE_HOVER` を流用していたが、
+/// 背景 (BACKGROUND) とのコントラスト比が 1.34:1 しかなく、リスト内を
+/// キーボードで移動しても選択位置がほぼ同化して見えなかった (実測)。
+/// ACCENT と同系の寒色へ寄せつつ明度を上げ、2.7:1 まで引き上げてある。
+const SELECTED_BG: COLORREF = rgb(70, 90, 106);
+/// 選択カードの枠線。`SELECTED_BG` 自体が十分明るくなったため、枠は
+/// 主張しすぎない程度にアクセントへ寄せる。
+const SELECTED_BORDER: COLORREF = rgb(140, 186, 214);
 const ACCENT: COLORREF = rgb(111, 168, 201);
 const TEXT_PRIMARY: COLORREF = rgb(245, 245, 245);
-const TEXT_SECONDARY: COLORREF = rgb(166, 166, 166);
+const TEXT_SECONDARY: COLORREF = rgb(190, 190, 190);
 /// detail 行の path (secondary) やセクション見出しなど、一段控えめにする
 /// 補助テキスト用。旧 rgb(117,112,106) は選択行の背景 (SURFACE_HOVER) に対する
-/// コントラスト比が約2.95:1しかなく視認性が低かった。rgb(148,142,134) まで
-/// 一度上げたが実機描画で確認してもまだ breadcrumb (TEXT_SECONDARY) との差が
-/// 小さく見づらさが残ったため、同じ色相のままさらに明度を上げてある。
-const TEXT_MUTED: COLORREF = rgb(180, 173, 163);
+/// コントラスト比が約2.95:1しかなく視認性が低かった。rgb(148,142,134)・
+/// rgb(180,173,163) と段階的に上げてきたが、実機表示でなお他のテキストより
+/// 薄く感じるという指摘が続いたため、さらに明度を上げてある。
+const TEXT_MUTED: COLORREF = rgb(205, 199, 190);
 
 pub const WM_QUICK_LAUNCH_EXECUTE: u32 = WM_APP + 4;
 /// Everything からの検索結果を識別する `WM_COPYDATA` の `dwData` の初期値。

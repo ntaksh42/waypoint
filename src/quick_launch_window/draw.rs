@@ -15,8 +15,8 @@ use super::draw_icons::{
 };
 use super::layout::{scale, weekday_label};
 use super::{
-    ACCENT, BACKGROUND, BADGE_WIDTH, EDIT_HEIGHT, ICON_LEFT, PADDING, STATE, SURFACE,
-    SURFACE_HOVER, TEXT_LEFT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY, rgb,
+    ACCENT, BACKGROUND, BADGE_WIDTH, EDIT_HEIGHT, ICON_LEFT, PADDING, SELECTED_BG,
+    SELECTED_BORDER, STATE, SURFACE_HOVER, TEXT_LEFT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY,
 };
 use crate::quick_launch::{Action, Entry};
 
@@ -56,7 +56,9 @@ pub(super) fn paint_window(window: HWND) {
                 right: client.right - padding,
                 bottom: padding + edit_height,
             };
-            let surface_pen = CreatePen(PS_SOLID, 1, SURFACE);
+            // 枠線を塗りつぶしと同じ SURFACE にすると検索窓の輪郭が消えて
+            // 背景と一体化して見えるため、地よりわずかに明るい色で縁取る。
+            let surface_pen = CreatePen(PS_SOLID, 1, SURFACE_HOVER);
             let old_pen = SelectObject(hdc, surface_pen.into());
             let old_brush = SelectObject(hdc, surface.into());
             let radius = scale(10, dpi);
@@ -322,6 +324,20 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
             return;
         };
 
+        // 項目同士の境界が背景色だけでは判別しづらいため、非選択行の下端に
+        // ごく薄い区切り線を引く。選択行はカードが行全体を覆うので不要。
+        if !selected {
+            let divider = CreateSolidBrush(SURFACE_HOVER);
+            let divider_rect = RECT {
+                left: draw.rcItem.left + scale(ICON_LEFT, dpi),
+                top: draw.rcItem.bottom - scale(1, dpi),
+                right: draw.rcItem.right - scale(8, dpi),
+                bottom: draw.rcItem.bottom,
+            };
+            FillRect(draw.hDC, &divider_rect, divider);
+            let _ = DeleteObject(divider.into());
+        }
+
         // 選択行はカード風に少し内側へ収め、角を丸めて他の行から浮かせる
         if selected {
             let accent_color = badge.map_or(ACCENT, badge_color);
@@ -332,11 +348,11 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
                 right: draw.rcItem.right - inset,
                 bottom: draw.rcItem.bottom - scale(1, dpi),
             };
-            // 枠線を地の SURFACE_HOVER より一段明るくし、選択カードに
-            // 「押せる」輪郭を持たせる (計画: 選択行の演出強化)。
-            let card_pen_color = rgb(58, 90, 110);
-            let card_brush = CreateSolidBrush(SURFACE_HOVER);
-            let card_pen = CreatePen(PS_SOLID, 1, card_pen_color);
+            // 背景 (BACKGROUND) とのコントラスト比 2.7:1 まで引き上げた
+            // SELECTED_BG で塗り、枠線もそれよりさらに明るい SELECTED_BORDER
+            // にして、リスト内移動時に選択位置が即座に分かるようにする。
+            let card_brush = CreateSolidBrush(SELECTED_BG);
+            let card_pen = CreatePen(PS_SOLID, 1, SELECTED_BORDER);
             let old_brush = SelectObject(draw.hDC, card_brush.into());
             let old_pen = SelectObject(draw.hDC, card_pen.into());
             let radius = scale(8, dpi);
@@ -354,11 +370,13 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
             let _ = DeleteObject(card_brush.into());
             let _ = DeleteObject(card_pen.into());
 
+            // アクセントバーは種別色 (badge 由来) のまま、視認性向上のため
+            // 3px→4px へ太くする。
             let accent = CreateSolidBrush(accent_color);
             let accent_rect = RECT {
                 left: card.left,
                 top: card.top + scale(6, dpi),
-                right: card.left + scale(3, dpi),
+                right: card.left + scale(4, dpi),
                 bottom: card.bottom - scale(6, dpi),
             };
             FillRect(draw.hDC, &accent_rect, accent);
