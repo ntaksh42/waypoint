@@ -95,6 +95,25 @@ fn open_windows_are_searched_without_the_window_prefix() {
     assert_eq!(found[0].action, Action::FocusWindow(12345));
 }
 
+/// FR-9.15.1: `ps ` プレフィックスはフォルダ候補だけに絞り込み、
+/// 選択時のアクションを `OpenInTerminal` に差し替える。
+#[test]
+fn terminal_prefix_switches_to_folder_only_search_with_terminal_action() {
+    let index = index();
+    let found = index.search("ps waypoint docs");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].action, Action::OpenInTerminal);
+    assert_eq!(found[0].path, r"E:\waypoint\docs");
+}
+
+/// `ps ` はブックマークやウィンドウなど、フォルダ以外の候補を含まない。
+#[test]
+fn terminal_prefix_excludes_non_folder_candidates() {
+    let index = index();
+    let found = index.search("ps github");
+    assert!(found.is_empty());
+}
+
 /// タイトルにアプリ名が出ないウィンドウも、所有プロセス名で
 /// 見つけられる (`w chrome` のような検索)。
 #[test]
@@ -380,6 +399,7 @@ fn prefix_badge_identifies_each_mode() {
     assert_eq!(prefix_badge("w notepad"), Some("WINDOWS"));
     assert_eq!(prefix_badge("a code"), Some("APPS"));
     assert_eq!(prefix_badge("t waypoint"), Some("TABS"));
+    assert_eq!(prefix_badge("ps waypoint"), Some("TERMINAL"));
     assert_eq!(prefix_badge("f cargo.toml"), Some("FILES"));
     assert_eq!(prefix_badge("plain query"), None);
     assert_eq!(prefix_badge(""), None);

@@ -108,5 +108,16 @@ pub(super) fn index() -> Index {
     index.history_lower = super::super::search::LowerKeys::build_for(&index.history);
     index.windows_lower = super::super::search::LowerKeys::build_for(&index.windows);
     index.apps_lower = super::super::search::LowerKeys::build_for(&index.apps);
+    index.terminal_folders = index
+        .entries
+        .iter()
+        .filter(|entry| matches!(entry.action, Action::OpenFolder(_)))
+        .map(|entry| Entry {
+            action: Action::OpenInTerminal,
+            ..entry.clone()
+        })
+        .collect();
+    index.terminal_folders_lower =
+        super::super::search::LowerKeys::build_for(&index.terminal_folders);
     index
 }

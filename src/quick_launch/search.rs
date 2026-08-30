@@ -6,7 +6,7 @@ use super::azure::{AzureCommand, PipelineFilter, azure_command, azure_command_en
 use super::scoring::{match_score, match_score_cheap};
 use super::{
     APPS_PREFIX, AZURE_DEVOPS_PREFIX, BOOKMARK_PREFIX, Entry, HISTORY_PREFIX, Index, TABS_PREFIX,
-    WINDOW_PREFIX,
+    TERMINAL_PREFIX, WINDOW_PREFIX,
 };
 use crate::quick_launch_history::Ranking;
 
@@ -97,6 +97,15 @@ impl Index {
         }
         if let Some(rest) = query.strip_prefix(TABS_PREFIX) {
             return search_entries_cached(&self.tabs, &self.tabs_lower, rest, true, &self.ranking);
+        }
+        if let Some(rest) = query.strip_prefix(TERMINAL_PREFIX) {
+            return search_entries_cached(
+                &self.terminal_folders,
+                &self.terminal_folders_lower,
+                rest,
+                self.search_paths,
+                &self.ranking,
+            );
         }
         if query == AZURE_DEVOPS_PREFIX {
             return Vec::new();

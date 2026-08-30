@@ -42,6 +42,14 @@ fn refined_search_only_reuses_candidates_for_a_narrower_local_query() {
     assert_eq!(refined_search_term("", "way"), None);
     assert_eq!(refined_search_term("f read", "f readm"), None);
     assert_eq!(refined_search_term("az pr", "az pra"), None);
+    // 通常検索中に `ps ` を打ち足してターミナル検索モードへ入った直後は、
+    // 通常検索の結果 (フォルダ以外を含む) を絞り込むのではなく、
+    // Index::search の `ps ` 専用索引を新たに引き直す必要がある。
+    // `local_search_scope` が "ps " を認識せず両方 "normal" 扱いになると、
+    // ここが誤って Some を返し、フォルダ限定の絞り込みが効かなくなる
+    // (実機で `ps` から `ps waypoint` と打った際に再現)。
+    assert_eq!(refined_search_term("ps", "ps waypoint"), None);
+    assert_eq!(refined_search_term("ps way", "ps wayp"), Some("wayp"));
 }
 
 /// リストへ流し込む上限は、ウィンドウに実際に映る行数 (`visible_results`

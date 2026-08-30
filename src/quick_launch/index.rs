@@ -75,6 +75,7 @@ impl Index {
 
         let (entries, entries_lower, windows, windows_lower) =
             dynamic_entries(&config_entries, settings, dynamic);
+        let (terminal_folders, terminal_folders_lower) = terminal_folder_entries(&entries);
 
         Self {
             config_entries,
@@ -93,6 +94,8 @@ impl Index {
             apps_lower,
             tabs: Vec::new(),
             tabs_lower: Vec::new(),
+            terminal_folders,
+            terminal_folders_lower,
             search_paths: settings.search_paths,
             ranking: Ranking::load(),
         }
@@ -110,10 +113,13 @@ impl Index {
         let settings = &config.settings.quick_launch;
         let (entries, entries_lower, windows, windows_lower) =
             dynamic_entries(&self.config_entries, settings, dynamic);
+        let (terminal_folders, terminal_folders_lower) = terminal_folder_entries(&entries);
         self.entries = entries;
         self.entries_lower = entries_lower;
         self.windows = windows;
         self.windows_lower = windows_lower;
+        self.terminal_folders = terminal_folders;
+        self.terminal_folders_lower = terminal_folders_lower;
     }
 
     /// config 由来の候補 (`config_entries`) と、それを含む `entries` /
@@ -276,6 +282,25 @@ fn dynamic_entries(
     let entries_lower = super::search::LowerKeys::build_for(&entries);
     let windows_lower = super::search::LowerKeys::build_for(&windows);
     (entries, entries_lower, windows, windows_lower)
+}
+
+/// `entries` のうちフォルダだけを `Action::OpenInTerminal` に差し替えた索引を作る
+/// (`ps ` プレフィックス、FR-9.15.1)。newWindow/reuse の区別は持たないため、
+/// 元の `OpenMode` は捨てる。
+fn terminal_folder_entries(entries: &[Entry]) -> (Vec<Entry>, Vec<super::search::LowerKeys>) {
+    let terminal_folders: Vec<Entry> = entries
+        .iter()
+        .filter(|entry| matches!(entry.action, Action::OpenFolder(_)))
+        .map(|entry| Entry {
+            name: entry.name.clone(),
+            breadcrumb: entry.breadcrumb.clone(),
+            path: entry.path.clone(),
+            action: Action::OpenInTerminal,
+            branch: entry.branch.clone(),
+        })
+        .collect();
+    let terminal_folders_lower = super::search::LowerKeys::build_for(&terminal_folders);
+    (terminal_folders, terminal_folders_lower)
 }
 
 /// `inherited_show_branch` は祖先 Submenu の showBranch が真だったか。

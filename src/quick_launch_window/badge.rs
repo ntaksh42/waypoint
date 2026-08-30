@@ -9,7 +9,7 @@ use crate::quick_launch::Action;
 /// 彩度・明度は揃えた寒色2トーンに統一し、原色の乱立を避ける。
 pub(super) fn badge_color(badge: &str) -> COLORREF {
     match badge {
-        "WINDOWS" | "APPS" => rgb(143, 168, 118), // 緑寄りの寒色
+        "WINDOWS" | "APPS" | "TERMINAL" => rgb(143, 168, 118), // 緑寄りの寒色
         "BOOKMARKS" | "HISTORY" | "FILES" | "TABS" | "AZURE DEVOPS" => rgb(95, 157, 176), // 青寄りの寒色
         _ => ACCENT,
     }
@@ -24,6 +24,7 @@ pub(super) fn action_color(action: &Action) -> COLORREF {
         | Action::OpenUrl(_)
         | Action::FocusBrowserTab(_)
         | Action::OpenWithDefaultHandler
+        | Action::OpenInTerminal
         | Action::ReplaceQuery(_)
         | Action::AzureLiveWorkItemSearch(_)
         | Action::AzureLivePullRequestSearch { .. }

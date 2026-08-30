@@ -371,9 +371,10 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
         } else {
             draw_icon_backdrop(draw.hDC, action_color(&entry.action), draw.rcItem, dpi);
             match entry.action {
-                Action::OpenFolder(_) | Action::OpenWithDefaultHandler | Action::LaunchApp => {
-                    draw_path_icon(draw.hDC, &entry.path, draw.rcItem, dpi)
-                }
+                Action::OpenFolder(_)
+                | Action::OpenWithDefaultHandler
+                | Action::LaunchApp
+                | Action::OpenInTerminal => draw_path_icon(draw.hDC, &entry.path, draw.rcItem, dpi),
                 Action::FocusWindow(hwnd) => {
                     draw_window_icon(draw.hDC, HWND(hwnd as *mut _), draw.rcItem, dpi)
                 }

@@ -42,6 +42,8 @@ pub const EVERYTHING_PREFIX: &str = "f ";
 const APPS_PREFIX: &str = "a ";
 /// 現在開いているブラウザタブを検索するプレフィックス (末尾の半角スペース込み)。
 const TABS_PREFIX: &str = "t ";
+/// フォルダをターミナルで開く検索モードに入るプレフィックス (末尾の半角スペース込み)。
+const TERMINAL_PREFIX: &str = "ps ";
 
 /// 入力がいずれかのプレフィックスモードに入っていれば、表示用の短いラベルを返す。
 /// 描画側 (`quick_launch_window.rs`) が検索窓にモードバッジを出すために使う。
@@ -58,6 +60,8 @@ pub fn prefix_badge(query: &str) -> Option<&'static str> {
         Some("APPS")
     } else if query.starts_with(TABS_PREFIX) {
         Some("TABS")
+    } else if query.starts_with(TERMINAL_PREFIX) {
+        Some("TERMINAL")
     } else if query.starts_with(EVERYTHING_PREFIX) {
         Some("FILES")
     } else {
@@ -81,6 +85,9 @@ pub enum Action {
     OpenWithDefaultHandler,
     /// スタートメニューのショートカットを起動する。
     LaunchApp,
+    /// フォルダを Windows Terminal (PowerShell 7) でカレントディレクトリとして開く
+    /// (`ps ` プレフィックス、FR-9.15.1)。newWindow / reuse の区別は持たない。
+    OpenInTerminal,
     /// 検索欄へコマンドを補完する。候補の選択時に外部操作は行わない。
     ReplaceQuery(String),
     /// `az wit` のローカルキャッシュ検索で見つからなかったとき、明示的な
@@ -143,6 +150,7 @@ impl Entry {
             Action::FocusWindow(_)
             | Action::FocusBrowserTab(_)
             | Action::OpenUrl(_)
+            | Action::OpenInTerminal
             | Action::ReplaceQuery(_)
             | Action::AzureLiveWorkItemSearch(_)
             | Action::AzureLivePullRequestSearch { .. }
@@ -171,6 +179,11 @@ pub struct Index {
     pub(crate) apps_lower: Vec<search::LowerKeys>,
     pub(crate) tabs: Vec<Entry>,
     pub(crate) tabs_lower: Vec<search::LowerKeys>,
+    /// `entries` のうちフォルダ (`Action::OpenFolder`) だけを `OpenInTerminal`
+    /// へ差し替えた索引 (`ps ` プレフィックス、FR-9.15.1)。新規データソースは
+    /// 持たず、`entries` の更新のたびに組み直す。
+    pub(crate) terminal_folders: Vec<Entry>,
+    pub(crate) terminal_folders_lower: Vec<search::LowerKeys>,
     pub(crate) search_paths: bool,
     pub(crate) ranking: Ranking,
 }

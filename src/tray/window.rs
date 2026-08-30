@@ -103,6 +103,9 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                     | quick_launch::Action::LaunchApp => {
                         let _ = shell::open_shell_item(&entry.path);
                     }
+                    quick_launch::Action::OpenInTerminal => {
+                        let _ = shell::open_terminal(&entry.path);
+                    }
                     // ReplaceQuery / AzureLiveWorkItemSearch / AzureLivePullRequestSearch
                     // はウィンドウを閉じずに Quick Launch 側で完結する
                     // (queue_selected 参照)。ここへは実行対象として来ない

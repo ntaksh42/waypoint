@@ -187,6 +187,11 @@ fn refresh_config_items_adds_new_item_and_keeps_apps() {
     assert_eq!(found.len(), 1, "追加した項目が検索できない");
     assert_eq!(found[0].path, r"E:\waypoint\src");
 
+    // `ps ` (FR-9.15.1) でも新しいフォルダをすぐ検索できる
+    let terminal_found = index.search("ps waypoint source");
+    assert_eq!(terminal_found.len(), 1, "ps 検索が新しいフォルダを拾えない");
+    assert_eq!(terminal_found[0].action, Action::OpenInTerminal);
+
     // apps は再スキャンされていない
     assert_eq!(index.apps.len(), 1, "apps が再スキャンされて消えている");
     assert_eq!(index.search("a visual").len(), 1);

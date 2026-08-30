@@ -57,6 +57,7 @@ fn key_kind(action: &Action) -> Option<&'static str> {
         Action::OpenUrl(_) => Some("url"),
         Action::OpenWithDefaultHandler => Some("default"),
         Action::LaunchApp => Some("app"),
+        Action::OpenInTerminal => Some("terminal"),
         Action::FocusWindow(_)
         | Action::FocusBrowserTab(_)
         | Action::ReplaceQuery(_)

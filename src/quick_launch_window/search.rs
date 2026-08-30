@@ -592,6 +592,8 @@ fn local_search_scope(query: &str) -> Option<(&'static str, &str)> {
         Some(("apps", term))
     } else if let Some(term) = query.strip_prefix("t ") {
         Some(("tabs", term))
+    } else if let Some(term) = query.strip_prefix("ps ") {
+        Some(("terminal", term))
     } else {
         Some(("normal", query))
     }

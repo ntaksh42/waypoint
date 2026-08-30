@@ -1,6 +1,6 @@
 //! フォルダを開く。新規ウィンドウと、既存ウィンドウのフォルダ変更の 2 通り。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{
@@ -103,8 +103,7 @@ pub fn activate_window(hwnd: HWND) {
 
         let mut attached = Vec::new();
         for thread in [foreground_thread, target_thread] {
-            if thread != current_thread
-                && AttachThreadInput(current_thread, thread, true).as_bool()
+            if thread != current_thread && AttachThreadInput(current_thread, thread, true).as_bool()
             {
                 attached.push(thread);
             }
@@ -117,6 +116,54 @@ pub fn activate_window(hwnd: HWND) {
             let _ = AttachThreadInput(current_thread, thread, false);
         }
     }
+}
+
+/// フォルダを Windows Terminal + PowerShell 7 でカレントディレクトリとして開く
+/// (`ps ` プレフィックス、FR-9.15.1)。
+///
+/// `wt.exe` (パッケージ化アプリの App Execution Alias) に渡すコマンドラインは
+/// 通常のプロセスと PATH 解決の文脈が異なり、裸の `pwsh` では
+/// `ERROR_FILE_NOT_FOUND` になることを実機で確認済み。`pwsh.exe` のフルパスを
+/// 自前で解決してから渡す。`wt.exe` または `pwsh.exe` が見つからない場合は
+/// Windows 標準の `powershell.exe` (5.1) にフォールバックする。
+pub fn open_terminal(path: &str) -> std::io::Result<()> {
+    if !Path::new(path).exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("path not found: {path}"),
+        ));
+    }
+
+    if let Some(pwsh) = find_pwsh()
+        && std::process::Command::new("wt.exe")
+            .args(["-d", path])
+            .arg(&pwsh)
+            .spawn()
+            .is_ok()
+    {
+        return Ok(());
+    }
+
+    std::process::Command::new("powershell.exe")
+        .args(["-NoExit", "-WorkingDirectory", path])
+        .spawn()
+        .map(|_| ())
+}
+
+/// PowerShell 7 (`pwsh.exe`) のフルパスを探す。既定のインストール先を先に見て、
+/// 無ければ `PATH` から探す (winget/MSI どちらでインストールしても既定は前者)。
+fn find_pwsh() -> Option<PathBuf> {
+    let program_files = std::env::var_os("ProgramFiles")?;
+    let default_path = Path::new(&program_files).join(r"PowerShell\7\pwsh.exe");
+    if default_path.is_file() {
+        return Some(default_path);
+    }
+
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|dir| dir.join("pwsh.exe"))
+            .find(|candidate| candidate.is_file())
+    })
 }
 
 /// エクスプローラーでパスを開き、対象自体を選択状態にする
