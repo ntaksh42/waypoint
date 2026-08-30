@@ -1,7 +1,10 @@
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::azure_devops::{Candidate, Kind};
+    use crate::azure_devops::{
+        CachedCandidateGroups, Candidate, Kind, try_cached_candidate_groups,
+    };
+    use crate::config::AzureDevOpsSettings;
 
     fn candidate(kind: Kind, name: &str) -> Candidate {
         Candidate {
@@ -33,6 +36,12 @@ mod tests {
     fn candidate_group_result_reports_shared_cache_failure() {
         let result = finish_candidate_groups(Err("shared cache unavailable".into()), vec![]);
         assert_eq!(result.unwrap_err(), "shared cache unavailable");
+    }
+
+    #[test]
+    fn checked_candidate_groups_are_reexported_by_azure_devops() {
+        let _: fn(&AzureDevOpsSettings) -> Result<CachedCandidateGroups, String> =
+            try_cached_candidate_groups;
     }
 }
 use std::collections::HashMap;

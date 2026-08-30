@@ -40,6 +40,9 @@ pub(crate) use title_search::match_quality as title_match_quality;
 
 pub use api::{fetch_area_nodes, fetch_my_area_suggestions, list_repository_names};
 pub(crate) use candidate_cache::cached_candidate_groups;
+// 後続の Azure 更新処理が親モジュール経由で使う crate 内 API。
+#[allow(unused_imports)]
+pub(crate) use candidate_cache::{CachedCandidateGroups, try_cached_candidate_groups};
 pub use candidate_cache::{cached_candidates, cached_work_item_candidates};
 pub use convert::AreaNode;
 pub use credential::{delete_pat, save_pat};
