@@ -63,9 +63,9 @@ pub struct QuickLaunchSettings {
     pub include_apps: bool,
     #[serde(default)]
     pub azure_devops: AzureDevOpsSettings,
-    /// Everything 連携 (FR-9.16)。PC 全体のファイル名検索という重い操作
-    /// のため、他のプレフィックス機能と違って既定はオフ
-    #[serde(default)]
+    /// Everything 連携 (FR-9.16)。Everything 未起動時は 0 件扱いで
+    /// エラーにならないため、他のプレフィックス機能と同様に既定はオン
+    #[serde(default = "default_true")]
     pub include_everything: bool,
     #[serde(default)]
     pub search_paths: bool,
@@ -84,7 +84,7 @@ impl Default for QuickLaunchSettings {
             include_browser_history: true,
             include_apps: true,
             azure_devops: AzureDevOpsSettings::default(),
-            include_everything: false,
+            include_everything: true,
             search_paths: false,
             visible_results: default_visible_results(),
         }
