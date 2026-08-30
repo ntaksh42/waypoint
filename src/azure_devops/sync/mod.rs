@@ -7,7 +7,7 @@ mod pipelines;
 mod pull_requests;
 mod work_items;
 
-pub(crate) use common::REFRESHING;
+pub(crate) use common::{REFRESHING, RefreshReply, take_refresh_reply};
 pub use common::refresh_async;
 
 pub use activity::{ProjectActivity, suggest_priorities_async};

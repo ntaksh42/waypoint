@@ -46,6 +46,7 @@ pub use sync::{
     search_pull_requests_live_async, search_work_items_async, suggest_priorities_async,
     take_pipeline_results, take_pull_request_results, take_work_item_results,
 };
+pub(crate) use sync::{RefreshReply, take_refresh_reply};
 
 const PROJECT_PAGE_SIZE: usize = 1_000;
 

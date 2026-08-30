@@ -1,6 +1,6 @@
 //! 同期処理の共通ヘルパーと、監視プロジェクト全体のバックグラウンド更新。
 
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
@@ -14,6 +14,7 @@ use super::super::auth_cache::OrganizationValues;
 use super::super::cache;
 use super::super::convert::valid_project;
 use super::super::credential::load_pat;
+use super::super::{CachedCandidateGroups, try_cached_candidate_groups};
 
 /// poisoned でも中身を取り出してロックする。
 ///
@@ -34,6 +35,25 @@ pub(super) fn lock_recovering<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, 
 
 /// 同期を一つに直列化する。設定保存と手動更新が重なっても API と DB を競合させない。
 pub(crate) static REFRESHING: AtomicBool = AtomicBool::new(false);
+
+/// 定期同期完了時に UI スレッドへ渡す、SQLite から構築済みの Azure 候補。
+pub(crate) struct RefreshReply {
+    pub(crate) candidates: Result<CachedCandidateGroups, String>,
+}
+
+fn refresh_replies() -> &'static Mutex<Option<RefreshReply>> {
+    static REPLIES: OnceLock<Mutex<Option<RefreshReply>>> = OnceLock::new();
+    REPLIES.get_or_init(|| Mutex::new(None))
+}
+
+fn store_refresh_reply(reply: RefreshReply) {
+    *lock_recovering(refresh_replies()) = Some(reply);
+}
+
+/// `refresh_async` が置いた候補返信を一度だけ取り出す。
+pub(crate) fn take_refresh_reply() -> Option<RefreshReply> {
+    lock_recovering(refresh_replies()).take()
+}
 
 /// 起動時・設定再読み込み時に呼ぶ。ネットワークと SQLite 更新は専用スレッドで行う。
 ///
@@ -90,6 +110,8 @@ pub fn refresh_async(settings: AzureDevOpsSettings, notify: HWND, message: u32) 
                 "azure devops: could not initialize refresh client: {error}"
             )),
         }
+        let candidates = try_cached_candidate_groups(&settings);
+        store_refresh_reply(RefreshReply { candidates });
         REFRESHING.store(false, Ordering::Release);
         unsafe {
             let _ = PostMessageW(Some(HWND(notify as *mut _)), message, WPARAM(0), LPARAM(0));
@@ -100,6 +122,13 @@ pub fn refresh_async(settings: AzureDevOpsSettings, notify: HWND, message: u32) 
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
+    use super::*;
+
+    // プロセス全体で 1 つのメールボックスをテストごとに直列化する。
+    static MAILBOX_TEST_LOCK: Mutex<()> = Mutex::new(());
+
     /// poisoned な Mutex でも中身を取り出して続行する。
     ///
     /// ライブ検索の結果置き場はワーカースレッドが書き UI スレッドが読む。
@@ -127,5 +156,30 @@ mod tests {
 
         // 2 回目以降も同じく使える (恒久的な機能停止にならない)
         assert_eq!(*super::lock_recovering(&mutex), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn refresh_reply_mailbox_keeps_only_latest_completion() {
+        let _guard = MAILBOX_TEST_LOCK.lock().unwrap();
+        let _ = take_refresh_reply();
+        store_refresh_reply(RefreshReply {
+            candidates: Ok(CachedCandidateGroups::default()),
+        });
+        store_refresh_reply(RefreshReply {
+            candidates: Err("latest".into()),
+        });
+        let reply = take_refresh_reply().unwrap();
+        assert_eq!(reply.candidates.unwrap_err(), "latest");
+    }
+
+    #[test]
+    fn taking_refresh_reply_consumes_it() {
+        let _guard = MAILBOX_TEST_LOCK.lock().unwrap();
+        let _ = take_refresh_reply();
+        store_refresh_reply(RefreshReply {
+            candidates: Ok(CachedCandidateGroups::default()),
+        });
+        assert!(take_refresh_reply().is_some());
+        assert!(take_refresh_reply().is_none());
     }
 }
