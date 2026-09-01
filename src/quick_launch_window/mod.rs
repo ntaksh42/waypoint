@@ -86,6 +86,10 @@ const EVERYTHING_REPLY_ID_START: u32 = WM_APP + 5;
 pub const WM_QUICK_LAUNCH_ADD_TO_FAVORITES: u32 = WM_APP + 6;
 /// Azure DevOps の Work Item 検索スレッドが結果を返す通知。
 pub const WM_QUICK_LAUNCH_AZURE_RESULTS: u32 = WM_APP + 7;
+/// `az wit live` / `az pr live` のデバウンス用タイマー (`SetTimer` の `nIDEvent`)。
+const LIVE_SEARCH_TIMER_ID: usize = 1;
+/// 入力が止まってからライブ検索を実行するまでの待ち時間。
+const LIVE_SEARCH_DEBOUNCE_MS: u32 = 400;
 /// Quick Launch が一度に Everything へ要求する最大件数。
 /// 全件表示はしない (`visible_results` の上限と同じ枠で足りる)。
 const EVERYTHING_MAX_RESULTS: u32 = 24;
@@ -191,6 +195,20 @@ struct State {
     /// ハイライトしない (絞り込みなし一覧や Everything / Azure の
     /// 非同期検索など、一致箇所が `name` に対応しない場合)。
     highlight_term: String,
+    /// `az wit live` / `az pr live` で保留中のライブ検索。`LIVE_SEARCH_TIMER_ID`
+    /// が発火するまでの間、直近の入力内容をここへ差し替え続ける
+    /// (`SetTimer` の再設定と合わせてデバウンスする — 打鍵のたびに
+    /// Azure DevOps API を叩かないため。`az wit` の通常入口は Enter 確定
+    /// なのでここを経由しない)。
+    pending_live_search: Option<PendingLiveSearch>,
+}
+
+/// `update_results` が `live` トークンを見た瞬間ではなく、入力が
+/// `LIVE_SEARCH_DEBOUNCE_MS` の間止まってから実行するライブ検索。
+#[derive(Debug, Clone)]
+enum PendingLiveSearch {
+    WorkItem(String),
+    PullRequest(crate::quick_launch::PullRequestFilter, String),
 }
 
 pub fn configure(config: &Config, dynamic: &Menus) {

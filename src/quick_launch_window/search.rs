@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::InvalidateRect;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetClientRect, LB_ADDSTRING, LB_RESETCONTENT, LB_SETCURSEL,
+    GetClientRect, KillTimer, LB_ADDSTRING, LB_RESETCONTENT, LB_SETCURSEL, SetTimer,
 };
 use windows::core::HSTRING;
 
@@ -76,7 +76,10 @@ pub(super) fn update_results(state: &RefCell<State>) {
     {
         let trimmed = rest.trim();
         if live && !trimmed.is_empty() {
-            start_azure_work_item_live_search(state, trimmed);
+            schedule_live_search(
+                state,
+                super::PendingLiveSearch::WorkItem(trimmed.to_string()),
+            );
         } else {
             start_azure_work_item_query(state, rest);
         }
@@ -93,7 +96,10 @@ pub(super) fn update_results(state: &RefCell<State>) {
     {
         let trimmed = rest.trim();
         if filter.live && !trimmed.is_empty() {
-            start_azure_pull_request_live_search(state, filter, trimmed);
+            schedule_live_search(
+                state,
+                super::PendingLiveSearch::PullRequest(filter, trimmed.to_string()),
+            );
             return;
         }
     }
@@ -304,6 +310,59 @@ fn show_azure_suggest_entry(state: &RefCell<State>) {
         return;
     };
     populate_list(list, &labels, &rows);
+}
+
+/// `az wit live` / `az pr live` の入力を受けるたびに呼ばれる。即座に API を
+/// 叩く代わりに保留内容を差し替えて `SetTimer` をリセットするだけに留め、
+/// `LIVE_SEARCH_DEBOUNCE_MS` の間だけ入力が止まったら `WM_TIMER` 経由で
+/// 実際の検索を発火する (打鍵のたびに Azure DevOps API を叫ばないため)。
+fn schedule_live_search(state: &RefCell<State>, pending: super::PendingLiveSearch) {
+    let (window, message) = {
+        let mut state = state.borrow_mut();
+        state.pending_live_search = Some(pending);
+        state.empty_message = Some("Waiting for input to settle…".to_string());
+        state.results.clear();
+        state.rows = vec![RowKind::Message];
+        (state.window, state.empty_message.clone())
+    };
+    let Some(list) = STATE.with(|state| state.borrow().list) else {
+        return;
+    };
+    populate_empty_message(list, message.as_deref());
+    let Some(window) = window else {
+        return;
+    };
+    unsafe {
+        SetTimer(
+            Some(window),
+            super::LIVE_SEARCH_TIMER_ID,
+            super::LIVE_SEARCH_DEBOUNCE_MS,
+            None,
+        );
+    }
+}
+
+/// `LIVE_SEARCH_TIMER_ID` の発火 (`WM_TIMER`) を受けて呼ばれる。保留中の
+/// ライブ検索があれば実行し、タイマーは止める。
+pub(super) fn fire_pending_live_search(state: &RefCell<State>) {
+    let (window, pending) = {
+        let mut state = state.borrow_mut();
+        (state.window, state.pending_live_search.take())
+    };
+    if let Some(window) = window {
+        unsafe {
+            let _ = KillTimer(Some(window), super::LIVE_SEARCH_TIMER_ID);
+        }
+    }
+    match pending {
+        Some(super::PendingLiveSearch::WorkItem(query)) => {
+            start_azure_work_item_live_search(state, &query);
+        }
+        Some(super::PendingLiveSearch::PullRequest(filter, query)) => {
+            start_azure_pull_request_live_search(state, filter, &query);
+        }
+        None => {}
+    }
 }
 
 /// キャッシュ検索が 0 件だったときにリストへ足す、ライブ検索への入口。

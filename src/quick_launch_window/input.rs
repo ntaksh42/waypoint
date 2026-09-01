@@ -4,13 +4,13 @@ use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Controls::{EM_GETSEL, EM_REPLACESEL, EM_SETSEL};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_CONTROL, VK_SHIFT};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowTextLengthW, GetWindowTextW, LB_GETCURSEL, LB_SETCURSEL, PostMessageW, SW_HIDE,
-    SetWindowTextW, ShowWindow,
+    GetWindowTextLengthW, GetWindowTextW, KillTimer, LB_GETCURSEL, LB_SETCURSEL, PostMessageW,
+    SW_HIDE, SetWindowTextW, ShowWindow,
 };
 use windows::core::{HSTRING, w};
 
 use super::search::invalidate_search_bar;
-use super::{RowKind, STATE, WM_QUICK_LAUNCH_EXECUTE};
+use super::{LIVE_SEARCH_TIMER_ID, RowKind, STATE, WM_QUICK_LAUNCH_EXECUTE};
 use crate::config::OpenMode;
 use crate::quick_launch::{Action, Entry};
 
@@ -299,7 +299,9 @@ pub(super) fn reveal_selected_in_explorer() {
 pub(super) fn hide_window(window: Option<HWND>) {
     if let Some(window) = window {
         unsafe {
+            let _ = KillTimer(Some(window), LIVE_SEARCH_TIMER_ID);
             let _ = ShowWindow(window, SW_HIDE);
         }
     }
+    STATE.with(|state| state.borrow_mut().pending_live_search = None);
 }

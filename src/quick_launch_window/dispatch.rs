@@ -6,19 +6,19 @@ use windows::Win32::UI::Controls::{DRAWITEMSTRUCT, MEASUREITEMSTRUCT};
 use windows::Win32::UI::WindowsAndMessaging::{
     DefWindowProcW, EN_CHANGE, GetClientRect, LBN_DBLCLK, MoveWindow, WM_ACTIVATE, WM_CLOSE,
     WM_COMMAND, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_DRAWITEM, WM_ERASEBKGND, WM_MEASUREITEM,
-    WM_PAINT, WM_SIZE,
+    WM_PAINT, WM_SIZE, WM_TIMER,
 };
 
 use super::draw::{draw_list_item, paint_window};
 use super::input::{hide_window, queue_selected};
 use super::layout::scale;
 use super::search::{
-    handle_azure_pipeline_results, handle_azure_pull_request_results,
+    fire_pending_live_search, handle_azure_pipeline_results, handle_azure_pull_request_results,
     handle_azure_work_item_results, handle_everything_results, update_results,
 };
 use super::{
-    BACKGROUND, BADGE_WIDTH, EDIT_HEIGHT, HEADER_HEIGHT, PADDING, ROW_HEIGHT, RowKind, STATE,
-    SURFACE, TEXT_PRIMARY, WM_QUICK_LAUNCH_AZURE_RESULTS,
+    BACKGROUND, BADGE_WIDTH, EDIT_HEIGHT, HEADER_HEIGHT, LIVE_SEARCH_TIMER_ID, PADDING, ROW_HEIGHT,
+    RowKind, STATE, SURFACE, TEXT_PRIMARY, WM_QUICK_LAUNCH_AZURE_RESULTS,
 };
 
 pub(super) fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -131,6 +131,10 @@ pub(super) fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM)
         }
         WM_CLOSE => {
             hide_window(Some(hwnd));
+            LRESULT(0)
+        }
+        WM_TIMER if wparam.0 == LIVE_SEARCH_TIMER_ID => {
+            STATE.with(fire_pending_live_search);
             LRESULT(0)
         }
         WM_QUICK_LAUNCH_AZURE_RESULTS => {
