@@ -23,6 +23,8 @@ pub const SNAPSHOT_COPYDATA: usize = 0x5750_5442;
 pub const FOCUS_COPYDATA: usize = 0x5750_5446;
 /// Native Messaging host が作る非表示ウィンドウのクラス名。
 pub const HOST_WINDOW_CLASS: PCWSTR = w!("WaypointTabHostWindow");
+/// Native Messaging と `WM_COPYDATA` の双方で受け入れる最大ペイロードサイズ。
+pub const MAX_SNAPSHOT_BYTES: usize = 1_000_000;
 
 const NATIVE_HOST_NAME: &str = "com.ntaksh42.waypoint.tabs";
 const EXTENSION_ID: &str = "fllmalpfkkdholloicheiplekihkkjeo";
@@ -93,6 +95,9 @@ struct FocusRequest {
 /// 件数と必須 ID を確認する。URL とタイトルはメモリだけに置き、保存しない。
 pub fn parse_snapshot(bytes: &[u8]) -> Option<(Browser, Vec<Tab>)> {
     const MAX_TABS: usize = 5_000;
+    if bytes.len() > MAX_SNAPSHOT_BYTES {
+        return None;
+    }
     let snapshot: Snapshot = serde_json::from_slice(bytes).ok()?;
     if snapshot.kind != "tabs" || snapshot.tabs.len() > MAX_TABS {
         return None;
@@ -265,6 +270,11 @@ mod tests {
             parse_snapshot(br#"{"type":"tabs","browser":"edge","tabs":[{"id":-1,"windowId":1}]}"#)
                 .unwrap();
         assert!(tabs.is_empty());
+    }
+
+    #[test]
+    fn rejects_an_oversized_snapshot_before_json_parsing() {
+        assert!(parse_snapshot(&vec![b' '; MAX_SNAPSHOT_BYTES + 1]).is_none());
     }
 
     #[test]

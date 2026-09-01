@@ -168,6 +168,7 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                 if copy_data.dwData == crate::browser_tabs::SNAPSHOT_COPYDATA
                     && !copy_data.lpData.is_null()
                     && copy_data.cbData > 0
+                    && copy_data.cbData as usize <= crate::browser_tabs::MAX_SNAPSHOT_BYTES
                 {
                     // Native Messaging host はこのハンドラから戻ると送信バッファを解放する。
                     // 先に JSON をコピーし、Quick Launch のキャッシュ更新はそのコピーだけで行う。

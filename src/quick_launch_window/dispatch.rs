@@ -158,7 +158,11 @@ pub(super) fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM)
                             reply_id,
                         )
                     });
-                    if is_current && !copy_data.lpData.is_null() && copy_data.cbData > 0 {
+                    if is_current
+                        && !copy_data.lpData.is_null()
+                        && copy_data.cbData > 0
+                        && copy_data.cbData as usize <= crate::everything::MAX_RESULT_BYTES
+                    {
                         // Everything はこのハンドラから戻ると lpData を解放する。
                         // 保持するならここでコピーする必要がある (SDK の注記通り)
                         let bytes = std::slice::from_raw_parts(

@@ -1,6 +1,6 @@
 //! Everything (voidtools) IPC 応答のパースのテスト (FR-9.16)。
 
-use waypoint::everything::{EverythingResult, IPC_FOLDER, parse_results};
+use waypoint::everything::{EverythingResult, IPC_FOLDER, MAX_RESULT_BYTES, parse_results};
 
 /// テスト用に `EVERYTHING_IPC_LISTW` 相当のバイト列を組み立てる。
 fn build_list(items: &[(u32, &str, &str)]) -> Vec<u8> {
@@ -77,6 +77,11 @@ fn impossible_item_count_does_not_allocate_from_the_untrusted_header() {
     let mut data = vec![0; 28];
     data[20..24].copy_from_slice(&u32::MAX.to_le_bytes());
     assert!(parse_results(&data).is_empty());
+}
+
+#[test]
+fn oversized_payload_is_rejected_before_parsing() {
+    assert!(parse_results(&vec![0; MAX_RESULT_BYTES + 1]).is_empty());
 }
 
 #[test]

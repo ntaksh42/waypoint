@@ -22,6 +22,9 @@ const IPC_COPYDATA_QUERYW: usize = 2;
 
 /// 検索結果全件を返す指定値。
 const IPC_ALLRESULTS: u32 = 0xFFFFFFFF;
+/// Everything から受け入れる結果ペイロードの最大サイズ。
+/// 現在の要求上限は 24 件なので、通常はこの値を大きく下回る。
+pub const MAX_RESULT_BYTES: usize = 1_000_000;
 
 /// アイテムがフォルダであることを示すフラグ (`EVERYTHING_IPC_ITEMW::flags`)。
 pub const IPC_FOLDER: u32 = 0x1;
@@ -121,7 +124,7 @@ pub fn parse_results(data: &[u8]) -> Vec<EverythingResult> {
     const HEADER_LEN: usize = 28;
     const ITEM_LEN: usize = 12;
 
-    if data.len() < HEADER_LEN {
+    if data.len() < HEADER_LEN || data.len() > MAX_RESULT_BYTES {
         return Vec::new();
     }
     let numitems = read_u32(data, 20) as usize;

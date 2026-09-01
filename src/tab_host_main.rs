@@ -17,10 +17,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::w;
 
-use waypoint::browser_tabs::{FOCUS_COPYDATA, HOST_WINDOW_CLASS, SNAPSHOT_COPYDATA};
+use waypoint::browser_tabs::{
+    FOCUS_COPYDATA, HOST_WINDOW_CLASS, MAX_SNAPSHOT_BYTES, SNAPSHOT_COPYDATA,
+};
 use waypoint::tray::CLASS_NAME as TRAY_WINDOW_CLASS;
 
-const MAX_MESSAGE_BYTES: usize = 1_000_000;
 static OUTPUT: OnceLock<Mutex<io::Stdout>> = OnceLock::new();
 
 fn main() {
@@ -90,7 +91,7 @@ fn read_message(input: &mut impl Read) -> io::Result<Option<Vec<u8>>> {
         Err(error) => return Err(error),
     }
     let length = u32::from_le_bytes(length) as usize;
-    if length > MAX_MESSAGE_BYTES {
+    if length > MAX_SNAPSHOT_BYTES {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "native message exceeds limit",
@@ -147,7 +148,7 @@ extern "system" fn window_proc(
             if copy_data.dwData == FOCUS_COPYDATA
                 && !copy_data.lpData.is_null()
                 && copy_data.cbData > 0
-                && copy_data.cbData as usize <= MAX_MESSAGE_BYTES
+                && copy_data.cbData as usize <= MAX_SNAPSHOT_BYTES
             {
                 let message = std::slice::from_raw_parts(
                     copy_data.lpData.cast::<u8>(),
