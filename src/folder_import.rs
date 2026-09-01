@@ -74,6 +74,7 @@ fn scan_node(path: &Path, remaining_depth: usize) -> io::Result<FolderNode> {
                 continue;
             };
             if file_type.is_dir()
+                && !file_type.is_symlink()
                 && let Ok(child) = scan_node(&entry.path(), remaining_depth - 1)
             {
                 children.push(child);

@@ -12,8 +12,8 @@ use windows::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, FindWindowW, GetMessageW, PostMessageW, PostQuitMessage,
-    RegisterClassW, SendMessageW, WM_CLOSE, WM_COPYDATA, WM_DESTROY, WNDCLASSW, WS_EX_TOOLWINDOW,
-    WS_OVERLAPPED,
+    RegisterClassW, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_CLOSE, WM_COPYDATA, WM_DESTROY,
+    WNDCLASSW, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
 };
 use windows::core::w;
 
@@ -124,16 +124,17 @@ fn send_snapshot(message: &[u8]) -> bool {
         lpData: message.as_ptr().cast_mut().cast(),
     };
     unsafe {
-        let _ = SendMessageW(
+        SendMessageTimeoutW(
             tray,
             WM_COPYDATA,
-            Some(WPARAM(0)),
-            Some(LPARAM(
-                (&copy_data as *const COPYDATASTRUCT).cast::<()>() as isize
-            )),
-        );
+            WPARAM(0),
+            LPARAM((&copy_data as *const COPYDATASTRUCT).cast::<()>() as isize),
+            SMTO_ABORTIFHUNG,
+            100,
+            None,
+        )
+        .0 != 0
     }
-    true
 }
 
 extern "system" fn window_proc(

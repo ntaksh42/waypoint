@@ -73,8 +73,11 @@ pub fn collect(dir: &Path, out: &mut Vec<App>, seen: &mut std::collections::Hash
         return;
     };
     for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
         let path = entry.path();
-        if path.is_dir() {
+        if file_type.is_dir() && !file_type.is_symlink() {
             collect(&path, out, seen);
             continue;
         }
