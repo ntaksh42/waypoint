@@ -65,6 +65,7 @@ pub(crate) fn open() -> Result<Connection, String> {
     connection
         .pragma_update(None, "synchronous", "NORMAL")
         .map_err(|error| error.to_string())?;
+    migrate_work_items_primary_key(&connection)?;
     connection
         .execute_batch(
             "CREATE TABLE IF NOT EXISTS pull_requests (
@@ -108,7 +109,7 @@ pub(crate) fn open() -> Result<Connection, String> {
                 changed_date             TEXT,
                 web_url                  TEXT,
                 tags                     TEXT,
-                PRIMARY KEY (organization, id)
+                PRIMARY KEY (organization, project, id)
             );
 
             CREATE TABLE IF NOT EXISTS sync_state (
@@ -129,6 +130,30 @@ pub(crate) fn open() -> Result<Connection, String> {
         )
         .map_err(|error| error.to_string())?;
     Ok(connection)
+}
+
+/// 旧スキーマ (`PRIMARY KEY (organization, id)`) の `work_items` を新スキーマ
+/// (`PRIMARY KEY (organization, project, id)`) へ作り直す。work item の ID は
+/// 組織内通番のため、複数プロジェクトで ID が重複すると旧スキーマでは
+/// `UNIQUE constraint failed` で同期が失敗し続けていた。
+/// 中身は次回同期で再構築されるため、単純に破棄して作り直す。
+fn migrate_work_items_primary_key(connection: &Connection) -> Result<(), String> {
+    let has_old_schema: bool = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table' AND name = 'work_items'
+               AND sql NOT LIKE '%PRIMARY KEY (organization, project, id)%'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| error.to_string())?
+        > 0;
+    if has_old_schema {
+        connection
+            .execute_batch("DROP TABLE work_items;")
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 thread_local! {
@@ -264,6 +289,56 @@ mod tests {
             KIND_WORK_ITEMS,
             Duration::from_secs(600)
         ));
+    }
+
+    #[test]
+    fn old_work_items_schema_without_project_in_primary_key_is_dropped() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE work_items (
+                organization TEXT NOT NULL, project TEXT NOT NULL, id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                PRIMARY KEY (organization, id)
+            );
+            INSERT INTO work_items (organization, project, id, title)
+            VALUES ('org', 'proj', 1, 'stale row');",
+        )
+        .unwrap();
+        migrate_work_items_primary_key(&conn).unwrap();
+        let exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'work_items'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(exists, 0, "old-schema table should be dropped");
+    }
+
+    #[test]
+    fn new_work_items_schema_is_left_untouched() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE work_items (
+                organization TEXT NOT NULL, project TEXT NOT NULL, id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                PRIMARY KEY (organization, project, id)
+            );
+            INSERT INTO work_items (organization, project, id, title)
+            VALUES ('org', 'proj', 1, 'kept row');",
+        )
+        .unwrap();
+        migrate_work_items_primary_key(&conn).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM work_items", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "new-schema table should be kept as-is");
+    }
+
+    #[test]
+    fn missing_work_items_table_is_not_an_error() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_work_items_primary_key(&conn).unwrap();
     }
 
     #[test]

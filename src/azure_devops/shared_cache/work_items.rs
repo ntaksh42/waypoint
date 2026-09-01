@@ -101,7 +101,7 @@ mod tests {
                 organization TEXT NOT NULL, project TEXT NOT NULL, id INTEGER NOT NULL,
                 title TEXT NOT NULL, work_item_type TEXT, state TEXT, assigned_to TEXT,
                 assigned_to_unique_name TEXT, changed_date TEXT, web_url TEXT, tags TEXT,
-                PRIMARY KEY (organization, id)
+                PRIMARY KEY (organization, project, id)
             );",
         )
         .unwrap();
@@ -149,6 +149,24 @@ mod tests {
         assert_eq!(
             read_work_items(&conn, "org", "proj-b").unwrap(),
             vec![sample(2)]
+        );
+    }
+
+    /// work item ID は組織内通番ではなくプロジェクトごとに払い出されうる
+    /// ため、同一組織内の別プロジェクトで ID が重複しても書き込めること。
+    #[test]
+    fn same_work_item_id_in_different_projects_does_not_collide() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        schema(&conn);
+        write_work_items(&mut conn, "org", "proj-a", &[sample(1)]).unwrap();
+        write_work_items(&mut conn, "org", "proj-b", &[sample(1)]).unwrap();
+        assert_eq!(
+            read_work_items(&conn, "org", "proj-a").unwrap(),
+            vec![sample(1)]
+        );
+        assert_eq!(
+            read_work_items(&conn, "org", "proj-b").unwrap(),
+            vec![sample(1)]
         );
     }
 }
