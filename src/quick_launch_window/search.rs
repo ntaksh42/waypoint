@@ -792,16 +792,15 @@ pub(super) fn populate_list(list: HWND, labels: &[HSTRING], rows: &[RowKind]) {
 
 /// `populate_list` から呼ぶ、ウィンドウ再配置の実処理。表示中でなければ何もしない。
 fn resize_to_rows(rows: &[RowKind]) {
-    let (window, monitor_window, dpi, visible_results) = STATE.with(|state| {
+    let (window, dpi, visible_results) = STATE.with(|state| {
         let state = state.borrow();
-        let monitor_window = state.origin.or(state.owner);
-        (state.window, monitor_window, state.dpi, state.visible_results)
+        (state.window, state.dpi, state.visible_results)
     });
-    let (Some(window), Some(monitor_window)) = (window, monitor_window) else {
+    let Some(window) = window else {
         return;
     };
     let height = rows_height(rows, visible_results);
-    position_window(window, monitor_window, height, dpi);
+    position_window(window, height, dpi);
 }
 
 /// `results` と区分見出し (`results` 側インデックス昇順の `(挿入位置, ラベル)`) から、

@@ -17,7 +17,6 @@ use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{CreateSolidBrush, HBRUSH, HFONT};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::SetWindowTheme;
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_CONTROL, VK_SHIFT};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, HMENU, LBS_HASSTRINGS, LBS_NOTIFY, LBS_OWNERDRAWVARIABLE,
@@ -36,7 +35,7 @@ use input::{
     hide_window, last_selectable_row, move_selection, queue_selected, reveal_selected_in_explorer,
     select_at,
 };
-use layout::{apply_dpi, apply_window_chrome};
+use layout::{apply_dpi, apply_window_chrome, primary_monitor_dpi};
 use search::update_results;
 
 const EDIT_ID: isize = 1001;
@@ -332,8 +331,7 @@ pub fn show(owner: HWND, origin: Option<HWND>) -> Result<()> {
     let (Some(window), Some(edit)) = (window, edit) else {
         return Ok(());
     };
-    let monitor_window = origin.unwrap_or(owner);
-    let dpi = unsafe { GetDpiForWindow(monitor_window) }.max(96);
+    let dpi = primary_monitor_dpi();
     apply_dpi(window, dpi);
     unsafe {
         // SetWindowTextW は前回と同じ空文字列だと EN_CHANGE を送らないことが
@@ -546,7 +544,7 @@ fn ensure_window(owner: HWND) -> Result<()> {
             state.background_brush = Some(background_brush);
             state.surface_brush = Some(surface_brush);
         });
-        apply_dpi(window, GetDpiForWindow(window));
+        apply_dpi(window, primary_monitor_dpi());
         apply_window_chrome(window);
     }
     Ok(())

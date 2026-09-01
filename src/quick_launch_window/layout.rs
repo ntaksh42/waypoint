@@ -1,6 +1,6 @@
 //! ウィンドウ配置・DPI・フォント。
 
-use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
     DwmSetWindowAttribute,
@@ -8,7 +8,7 @@ use windows::Win32::Graphics::Dwm::{
 use windows::Win32::Graphics::Gdi::{
     CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, CreateFontW, DEFAULT_CHARSET, DEFAULT_PITCH,
     DeleteObject, FW_NORMAL, FW_SEMIBOLD, GetMonitorInfoW, HFONT, InvalidateRect,
-    MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow, OUT_DEFAULT_PRECIS,
+    MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint, OUT_DEFAULT_PRECIS,
 };
 use windows::Win32::UI::Controls::EM_SETMARGINS;
 use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, MoveWindow, WM_SETFONT};
@@ -34,9 +34,29 @@ pub(super) fn rows_height(rows: &[RowKind], max_rows: usize) -> i32 {
     height.max(ROW_HEIGHT)
 }
 
-pub(super) fn position_window(window: HWND, monitor_window: HWND, rows_height: i32, dpi: u32) {
+/// 常にプライマリモニターを返す。Quick Launch はトリガー元のウィンドウや
+/// マウス位置に関わらず、常にプライマリモニター中央へ表示する仕様のため。
+fn primary_monitor() -> windows::Win32::Graphics::Gdi::HMONITOR {
+    unsafe { MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) }
+}
+
+pub(super) fn primary_monitor_dpi() -> u32 {
+    let mut dpi_x = 0u32;
+    let mut dpi_y = 0u32;
+    let result = unsafe {
+        windows::Win32::UI::HiDpi::GetDpiForMonitor(
+            primary_monitor(),
+            windows::Win32::UI::HiDpi::MDT_EFFECTIVE_DPI,
+            &mut dpi_x,
+            &mut dpi_y,
+        )
+    };
+    if result.is_ok() { dpi_x.max(96) } else { 96 }
+}
+
+pub(super) fn position_window(window: HWND, rows_height: i32, dpi: u32) {
     unsafe {
-        let monitor = MonitorFromWindow(monitor_window, MONITOR_DEFAULTTONEAREST);
+        let monitor = primary_monitor();
         let mut info = MONITORINFO {
             cbSize: size_of::<MONITORINFO>() as u32,
             ..Default::default()
