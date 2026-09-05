@@ -9,11 +9,11 @@ use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 
 use crate::config::AzureDevOpsSettings;
 
-use super::super::Candidate;
 use super::super::api::{current_user_id, fetch_pull_requests_live, http_client};
 use super::super::auth_cache::OrganizationValues;
 use super::super::convert::{pull_request_cached_row_to_candidate, valid_project};
 use super::super::credential::load_pat;
+use super::super::{Candidate, title_match_quality};
 use super::common::lock_recovering;
 use super::work_items::WorkItemReply;
 
@@ -120,14 +120,19 @@ pub fn search_pull_requests_live_async(
                 "azure devops: could not initialize pull request client: {error}"
             )),
         }
-        let terms = query.trim().to_lowercase();
-        if !terms.is_empty() {
-            results.retain(|candidate| candidate.name.to_lowercase().contains(&terms));
+        if !query.trim().is_empty() {
+            results.retain(|candidate| title_match_quality(&candidate.name, &query).is_some());
         }
         if mine {
             results.retain(|candidate| candidate.is_mine);
         }
-        results.sort_by_key(|candidate| (candidate.priority, candidate.name.to_lowercase()));
+        results.sort_by_key(|candidate| {
+            (
+                title_match_quality(&candidate.name, &query).unwrap_or(u8::MAX),
+                candidate.priority,
+                candidate.name.to_lowercase(),
+            )
+        });
         failures.sort();
         failures.dedup();
         let empty_message = if results.is_empty() {

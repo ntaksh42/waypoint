@@ -305,6 +305,47 @@ fn azure_pr_status_command_filters_cached_pull_requests() {
 }
 
 #[test]
+fn azure_title_search_tolerates_one_transposed_character() {
+    let index = index();
+
+    let found = index.search("az pr serach");
+
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].name, "PR 42: Add Azure search");
+}
+
+#[test]
+fn azure_title_phrase_ranks_before_the_same_words_in_a_different_order() {
+    let mut index = index();
+    index.azure.clear();
+    for name in [
+        "PR 10: Service payment cleanup",
+        "PR 11: Payment service rollout",
+    ] {
+        let entry = Entry {
+            name: name.into(),
+            breadcrumb: "Azure DevOps — org/Waypoint — active".into(),
+            path: format!("https://dev.azure.com/org/Waypoint/_git/app/{name}"),
+            action: Action::OpenUrl(format!(
+                "https://dev.azure.com/org/Waypoint/_git/app/{name}"
+            )),
+            branch: None,
+        };
+        index.azure.push(super::super::azure::AzureIndexed {
+            lower: super::super::search::LowerKeys::new(&entry),
+            entry,
+            kind: crate::azure_devops::Kind::PullRequest,
+            status: "active".into(),
+            is_mine: false,
+        });
+    }
+
+    let found = index.search("az pr payment service");
+
+    assert_eq!(found[0].name, "PR 11: Payment service rollout");
+}
+
+#[test]
 fn cached_work_items_are_searchable_without_live_api() {
     let mut index = index();
     index.azure_work_items = vec![Entry {

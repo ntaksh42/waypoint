@@ -19,6 +19,7 @@ mod convert;
 mod credential;
 mod shared_cache;
 mod sync;
+mod title_search;
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
@@ -35,6 +36,7 @@ use convert::{
 };
 use credential::credential_for_request;
 use sync::REFRESHING;
+pub(crate) use title_search::match_quality as title_match_quality;
 
 pub use api::{fetch_area_nodes, fetch_my_area_suggestions, list_repository_names};
 pub use convert::AreaNode;

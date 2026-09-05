@@ -29,16 +29,16 @@ pub(crate) struct LowerKeys {
 /// `path_lower` は常に実体。使用履歴の順位付け (`Ranking::rank_lower`) が
 /// パスの小文字化を要求するため、マッチ対象でなくても値自体は必要になる。
 #[derive(Debug, Clone, Copy)]
-struct Fields<'a> {
+pub(super) struct Fields<'a> {
     name: &'a str,
     breadcrumb: &'a str,
     path: Option<&'a str>,
-    path_lower: &'a str,
+    pub(super) path_lower: &'a str,
 }
 
 impl<'a> Fields<'a> {
     /// 事前計算済みの `LowerKeys` から組み立てる。
-    fn from_keys(keys: &'a LowerKeys, search_paths: bool) -> Self {
+    pub(super) fn from_keys(keys: &'a LowerKeys, search_paths: bool) -> Self {
         Self {
             name: &keys.name,
             breadcrumb: &keys.breadcrumb,
@@ -119,7 +119,7 @@ impl Index {
         }
         if let Some((command, rest)) = azure_command(query) {
             return match command {
-                AzureCommand::All => search_indexed(
+                AzureCommand::All => super::azure_search::search(
                     self.azure
                         .iter()
                         .map(|entry| (&entry.entry, &entry.lower))
@@ -132,7 +132,7 @@ impl Index {
                     true,
                     &self.ranking,
                 ),
-                AzureCommand::PullRequests(filter) => search_indexed(
+                AzureCommand::PullRequests(filter) => super::azure_search::search(
                     self.azure
                         .iter()
                         .filter(|entry| {
@@ -145,7 +145,7 @@ impl Index {
                     true,
                     &self.ranking,
                 ),
-                AzureCommand::Projects => search_indexed(
+                AzureCommand::Projects => super::azure_search::search(
                     self.azure
                         .iter()
                         .filter(|entry| entry.kind == crate::azure_devops::Kind::Project)
@@ -205,9 +205,10 @@ impl Index {
     /// (毎キー入力で `to_lowercase` をやり直すと、事前キャッシュ化で
     /// 母集団が数百件規模に増えたときに体感できるカクつきになる。実測)。
     pub fn search_cached_work_items(&self, query: &str) -> Vec<&Entry> {
-        search_entries_cached(
-            &self.azure_work_items,
-            &self.azure_work_items_lower,
+        super::azure_search::search(
+            self.azure_work_items
+                .iter()
+                .zip(&self.azure_work_items_lower),
             query,
             true,
             &self.ranking,
@@ -234,7 +235,7 @@ impl Index {
 /// fuzzy は Skim の DP で、候補文字列ぶんの `Vec<char>` 確保を伴う。実測で
 /// 候補 2000 件に対し 2.3ms と、安価なティア判定 (0.1ms) の 20 倍以上かかる。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Fuzzy {
+pub(super) enum Fuzzy {
     Include,
     Skip,
 }
@@ -251,7 +252,7 @@ enum Fuzzy {
 const FUZZY_SKIP_THRESHOLD: usize = 64;
 
 /// 候補 1 件のスコア (検索一致の質、Fuzzy スコア、使用履歴)。
-type Score = (u8, i64, (u64, u64));
+pub(super) type Score = (u8, i64, (u64, u64));
 
 /// スコア付きの一致。`rank_matches` へ渡す前の中間表現。
 type ScoredMatch<'a> = (Score, usize, &'a Entry);
@@ -374,35 +375,7 @@ fn scan_sources<'a>(
     scored
 }
 
-/// `az pr` / `az pipeline` 等、ステータスでフィルタしてから検索する経路向け。
-/// フィルタで間引いた後は `entries` と `lower_keys` を対で並べ直せないため
-/// (`search_entries_cached` の「同じ順序・同じ長さ」前提が崩れる)、
-/// 呼び出し側が既に対応付けた `(Entry, LowerKeys)` の組をそのまま渡す。
-pub(crate) fn search_indexed<'a>(
-    items: impl IntoIterator<Item = (&'a Entry, &'a LowerKeys)>,
-    query: &str,
-    search_paths: bool,
-    ranking: &Ranking,
-) -> Vec<&'a Entry> {
-    let terms = lower_terms(query);
-    rank_matches(
-        items
-            .into_iter()
-            .enumerate()
-            .filter_map(|(order, (entry, keys))| {
-                score_entry(
-                    entry,
-                    Fields::from_keys(keys, search_paths),
-                    &terms,
-                    ranking,
-                    Fuzzy::Include,
-                )
-                .map(|score| (score, order, entry))
-            }),
-    )
-}
-
-fn lower_terms(query: &str) -> Vec<String> {
+pub(super) fn lower_terms(query: &str) -> Vec<String> {
     query.split_whitespace().map(str::to_lowercase).collect()
 }
 
@@ -412,7 +385,7 @@ fn lower_terms(query: &str) -> Vec<String> {
 /// 別に常に渡す。使用履歴の順位付け (`ranking.rank_lower`) がパスの小文字化を
 /// 要求するため、`path` が None のときも呼び出し側の事前計算済み値を使い回し、
 /// ここで `entry.path.to_lowercase()` を再計算しないようにする。
-fn score_entry(
+pub(super) fn score_entry(
     entry: &Entry,
     fields: Fields<'_>,
     terms: &[String],

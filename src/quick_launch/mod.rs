@@ -8,6 +8,7 @@ use crate::config::{Item, OpenMode};
 use crate::quick_launch_history::Ranking;
 
 mod azure;
+mod azure_search;
 mod index;
 mod scoring;
 mod search;
