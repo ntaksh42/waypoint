@@ -14,7 +14,7 @@ use super::super::api::{fetch_work_items, http_client};
 use super::super::auth_cache::OrganizationValues;
 use super::super::convert::valid_project;
 use super::super::credential::load_pat;
-use super::common::lock_recovering;
+use super::common::{join_worker, lock_recovering};
 
 #[derive(Debug, Clone, Default)]
 pub struct WorkItemReply {
@@ -75,7 +75,10 @@ pub fn search_work_items_async(
                         .collect();
                     handles
                         .into_iter()
-                        .map(|handle| handle.join().expect("work item fetch thread panicked"))
+                        .zip(targets.iter().copied())
+                        .map(|(handle, project)| {
+                            join_worker(handle).unwrap_or_else(|error| (project, Err(error)))
+                        })
                         .collect()
                 });
                 for (project, outcome) in outcomes {

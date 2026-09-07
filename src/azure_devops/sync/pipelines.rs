@@ -14,7 +14,7 @@ use super::super::auth_cache::OrganizationValues;
 use super::super::convert::{pipeline_cached_row_to_candidate, valid_project};
 use super::super::credential::load_pat;
 use super::super::{Candidate, title_match_quality};
-use super::common::lock_recovering;
+use super::common::{join_worker, lock_recovering};
 use super::work_items::WorkItemReply;
 
 /// Pipeline のライブ検索結果。同じ理由で独立した `reply_id` 空間を使う。
@@ -78,7 +78,10 @@ pub fn search_pipelines_live_async(
                         .collect();
                     handles
                         .into_iter()
-                        .map(|handle| handle.join().expect("pipeline fetch thread panicked"))
+                        .zip(targets.iter().copied())
+                        .map(|(handle, project)| {
+                            join_worker(handle).unwrap_or_else(|error| (project, Err(error)))
+                        })
                         .collect()
                 });
                 for (project, outcome) in outcomes {

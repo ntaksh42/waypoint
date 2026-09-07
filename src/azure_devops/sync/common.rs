@@ -33,6 +33,13 @@ pub(super) fn lock_recovering<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, 
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// scoped worker の panic を親ワーカーへ伝播させず、通常の取得失敗へ変換する。
+pub(super) fn join_worker<T>(handle: thread::ScopedJoinHandle<'_, T>) -> Result<T, String> {
+    handle
+        .join()
+        .map_err(|_| "Azure DevOps worker panicked.".to_string())
+}
+
 /// 同期を一つに直列化する。設定保存と手動更新が重なっても API と DB を競合させない。
 pub(crate) static REFRESHING: AtomicBool = AtomicBool::new(false);
 
@@ -93,27 +100,39 @@ pub fn refresh_async(settings: AzureDevOpsSettings, notify: HWND, message: u32) 
                     targets.iter().map(|project| project.organization.as_str()),
                 );
                 thread::scope(|scope| {
-                    for project in &targets {
-                        let client = &client;
-                        let pats = &pats;
-                        scope.spawn(move || {
-                            let Some(Ok(pat)) = pats.get_or_init(&project.organization, || {
-                                load_pat(&project.organization)
-                            }) else {
-                                let _ = cache::record_project_error(
-                                    project,
-                                    "No PAT is saved for this organization.",
-                                );
-                                return;
-                            };
-                            if let Err(error) = refresh_project(client, project, pat) {
-                                crate::panic_log::record(&format!(
-                                    "azure devops: refresh {}/{} failed: {error}",
-                                    project.organization, project.project
-                                ));
-                                let _ = cache::record_project_error(project, &error);
-                            }
-                        });
+                    let handles: Vec<_> = targets
+                        .iter()
+                        .map(|project| {
+                            let client = &client;
+                            let pats = &pats;
+                            scope.spawn(move || {
+                                let Some(Ok(pat)) = pats.get_or_init(&project.organization, || {
+                                    load_pat(&project.organization)
+                                }) else {
+                                    let _ = cache::record_project_error(
+                                        project,
+                                        "No PAT is saved for this organization.",
+                                    );
+                                    return;
+                                };
+                                if let Err(error) = refresh_project(client, project, pat) {
+                                    crate::panic_log::record(&format!(
+                                        "azure devops: refresh {}/{} failed: {error}",
+                                        project.organization, project.project
+                                    ));
+                                    let _ = cache::record_project_error(project, &error);
+                                }
+                            })
+                        })
+                        .collect();
+                    for (handle, project) in handles.into_iter().zip(targets.iter().copied()) {
+                        if let Err(error) = join_worker(handle) {
+                            crate::panic_log::record(&format!(
+                                "azure devops: refresh {}/{} failed: {error}",
+                                project.organization, project.project
+                            ));
+                            let _ = cache::record_project_error(project, &error);
+                        }
                     }
                 });
             }
@@ -170,6 +189,16 @@ mod tests {
 
         // 2 回目以降も同じく使える (恒久的な機能停止にならない)
         assert_eq!(*super::lock_recovering(&mutex), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn join_worker_reports_a_child_panic_instead_of_propagating_it() {
+        let result = std::thread::scope(|scope| {
+            let handle = scope.spawn(|| -> () { panic!("worker failed") });
+            super::join_worker(handle)
+        });
+
+        assert_eq!(result.unwrap_err(), "Azure DevOps worker panicked.");
     }
 
     #[test]

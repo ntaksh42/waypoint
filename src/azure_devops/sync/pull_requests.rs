@@ -14,7 +14,7 @@ use super::super::auth_cache::OrganizationValues;
 use super::super::convert::{pull_request_cached_row_to_candidate, valid_project};
 use super::super::credential::load_pat;
 use super::super::{Candidate, title_match_quality};
-use super::common::lock_recovering;
+use super::common::{join_worker, lock_recovering};
 use super::work_items::WorkItemReply;
 
 /// PR のライブ検索結果。フィールドは `WorkItemReply` と同じ形だが、
@@ -100,7 +100,11 @@ pub fn search_pull_requests_live_async(
                         .collect();
                     handles
                         .into_iter()
-                        .map(|handle| handle.join().expect("pull request fetch thread panicked"))
+                        .zip(jobs)
+                        .map(|(handle, (project, status))| {
+                            join_worker(handle)
+                                .unwrap_or_else(|error| (project, status, Err(error)))
+                        })
                         .collect()
                 });
                 for (project, status, outcome) in outcomes {

@@ -9,6 +9,7 @@ use super::super::api::{fetch_recent_activity_areas, http_client};
 use super::super::auth_cache::OrganizationValues;
 use super::super::convert::valid_project;
 use super::super::credential::load_pat;
+use super::common::join_worker;
 
 /// 監視プロジェクト 1 件分の、直近アクティビティ (アサイン + メンション) 件数。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,7 +66,10 @@ pub fn suggest_priorities_async(
                     .collect();
                 handles
                     .into_iter()
-                    .map(|handle| handle.join().expect("activity fetch thread panicked"))
+                    .zip(targets.iter().copied())
+                    .map(|(handle, project)| {
+                        join_worker(handle).unwrap_or_else(|error| (project, Err(error)))
+                    })
                     .collect()
             });
             Ok(outcomes
