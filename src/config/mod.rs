@@ -91,7 +91,7 @@ impl Default for QuickLaunchSettings {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AzureDevOpsSettings {
     #[serde(default)]
@@ -100,7 +100,7 @@ pub struct AzureDevOpsSettings {
     pub projects: Vec<AzureDevOpsProject>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AzureDevOpsProject {
     pub organization: String,

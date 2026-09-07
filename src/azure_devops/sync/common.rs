@@ -1,7 +1,7 @@
 //! 同期処理の共通ヘルパーと、監視プロジェクト全体のバックグラウンド更新。
 
-use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
@@ -38,7 +38,18 @@ pub(crate) static REFRESHING: AtomicBool = AtomicBool::new(false);
 
 /// 定期同期完了時に UI スレッドへ渡す、SQLite から構築済みの Azure 候補。
 pub(crate) struct RefreshReply {
+    source_settings: AzureDevOpsSettings,
     pub(crate) candidates: Result<CachedCandidateGroups, String>,
+}
+
+impl RefreshReply {
+    /// 同期開始後に設定が変わっていれば、古い候補を現在の索引へ適用しない。
+    pub(crate) fn into_candidates_for(
+        self,
+        current_settings: &AzureDevOpsSettings,
+    ) -> Option<Result<CachedCandidateGroups, String>> {
+        (self.source_settings == *current_settings).then_some(self.candidates)
+    }
 }
 
 fn refresh_replies() -> &'static Mutex<Option<RefreshReply>> {
@@ -111,7 +122,10 @@ pub fn refresh_async(settings: AzureDevOpsSettings, notify: HWND, message: u32) 
             )),
         }
         let candidates = try_cached_candidate_groups(&settings);
-        store_refresh_reply(RefreshReply { candidates });
+        store_refresh_reply(RefreshReply {
+            source_settings: settings,
+            candidates,
+        });
         REFRESHING.store(false, Ordering::Release);
         unsafe {
             let _ = PostMessageW(Some(HWND(notify as *mut _)), message, WPARAM(0), LPARAM(0));
@@ -163,9 +177,11 @@ mod tests {
         let _guard = MAILBOX_TEST_LOCK.lock().unwrap();
         let _ = take_refresh_reply();
         store_refresh_reply(RefreshReply {
+            source_settings: AzureDevOpsSettings::default(),
             candidates: Ok(CachedCandidateGroups::default()),
         });
         store_refresh_reply(RefreshReply {
+            source_settings: AzureDevOpsSettings::default(),
             candidates: Err("latest".into()),
         });
         let reply = take_refresh_reply().unwrap();
@@ -177,9 +193,56 @@ mod tests {
         let _guard = MAILBOX_TEST_LOCK.lock().unwrap();
         let _ = take_refresh_reply();
         store_refresh_reply(RefreshReply {
+            source_settings: AzureDevOpsSettings::default(),
             candidates: Ok(CachedCandidateGroups::default()),
         });
         assert!(take_refresh_reply().is_some());
         assert!(take_refresh_reply().is_none());
+    }
+
+    #[test]
+    fn reply_candidates_are_available_when_settings_match() {
+        let source_settings = AzureDevOpsSettings::default();
+        let reply = RefreshReply {
+            source_settings: source_settings.clone(),
+            candidates: Ok(CachedCandidateGroups::default()),
+        };
+
+        assert!(reply.into_candidates_for(&source_settings).unwrap().is_ok());
+    }
+
+    #[test]
+    fn reply_candidates_are_rejected_when_settings_changed() {
+        let source_settings = AzureDevOpsSettings {
+            enabled: true,
+            projects: Vec::new(),
+        };
+        let reply = RefreshReply {
+            source_settings,
+            candidates: Ok(CachedCandidateGroups::default()),
+        };
+
+        assert!(
+            reply
+                .into_candidates_for(&AzureDevOpsSettings::default())
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn failed_reply_is_preserved_when_settings_match() {
+        let source_settings = AzureDevOpsSettings::default();
+        let reply = RefreshReply {
+            source_settings: source_settings.clone(),
+            candidates: Err("cache read failed".into()),
+        };
+
+        assert_eq!(
+            reply
+                .into_candidates_for(&source_settings)
+                .unwrap()
+                .unwrap_err(),
+            "cache read failed"
+        );
     }
 }

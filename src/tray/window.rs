@@ -144,16 +144,30 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         }
         WM_AZURE_DEVOPS_REFRESHED => {
             if let Some(reply) = crate::azure_devops::take_refresh_reply() {
-                match reply.candidates {
-                    Ok(groups) => with_state(|state| {
-                        let state = state.borrow();
-                        if let Some(state) = state.as_ref() {
+                let settings_changed = with_state(|state| {
+                    let state = state.borrow();
+                    let Some(state) = state.as_ref() else {
+                        return false;
+                    };
+                    let Some(candidates) =
+                        reply.into_candidates_for(&state.config.settings.quick_launch.azure_devops)
+                    else {
+                        return true;
+                    };
+                    match candidates {
+                        Ok(groups) => {
                             quick_launch_window::configure_azure(&state.config, groups);
                         }
-                    }),
-                    Err(error) => crate::panic_log::record(&format!(
-                        "azure devops: candidate refresh failed: {error}"
-                    )),
+                        Err(error) => crate::panic_log::record(&format!(
+                            "azure devops: candidate refresh failed: {error}"
+                        )),
+                    }
+                    false
+                });
+                if settings_changed {
+                    // 設定リロード時の同期要求が旧同期の再入ガードに弾かれているため、
+                    // ガード解除後のここで現在設定を使って取り直す。
+                    refresh_azure_devops(hwnd);
                 }
             }
             LRESULT(0)

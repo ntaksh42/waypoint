@@ -46,12 +46,12 @@ pub(crate) use candidate_cache::{CachedCandidateGroups, try_cached_candidate_gro
 pub use candidate_cache::{cached_candidates, cached_work_item_candidates};
 pub use convert::AreaNode;
 pub use credential::{delete_pat, save_pat};
+pub(crate) use sync::take_refresh_reply;
 pub use sync::{
     ProjectActivity, PullRequestReply, WorkItemReply, refresh_async, search_pipelines_live_async,
     search_pull_requests_live_async, search_work_items_async, suggest_priorities_async,
     take_pipeline_results, take_pull_request_results, take_work_item_results,
 };
-pub(crate) use sync::{RefreshReply, take_refresh_reply};
 
 const PROJECT_PAGE_SIZE: usize = 1_000;
 
