@@ -14,7 +14,7 @@ use super::super::auth_cache::OrganizationValues;
 use super::super::cache;
 use super::super::convert::valid_project;
 use super::super::credential::load_pat;
-use super::super::{CachedCandidateGroups, try_cached_candidate_groups};
+use super::super::{CachedCandidateGroups, prune_cache, try_cached_candidate_groups};
 
 /// poisoned でも中身を取り出してロックする。
 ///
@@ -38,6 +38,20 @@ pub(super) fn join_worker<T>(handle: thread::ScopedJoinHandle<'_, T>) -> Result<
     handle
         .join()
         .map_err(|_| "Azure DevOps worker panicked.".to_string())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RefreshWork {
+    PruneOnly,
+    PruneAndSync,
+}
+
+fn refresh_work(settings: &AzureDevOpsSettings) -> RefreshWork {
+    if settings.enabled && !settings.projects.is_empty() {
+        RefreshWork::PruneAndSync
+    } else {
+        RefreshWork::PruneOnly
+    }
 }
 
 /// 同期を一つに直列化する。設定保存と手動更新が重なっても API と DB を競合させない。
@@ -81,64 +95,68 @@ pub(crate) fn take_refresh_reply() -> Option<RefreshReply> {
 /// SQLite への書き込みはプロジェクトごとに別接続で行うため、同時書き込みは
 /// ファイルロックにより自動的に順番待ちされるだけで安全。
 pub fn refresh_async(settings: AzureDevOpsSettings, notify: HWND, message: u32) -> bool {
-    if !settings.enabled || settings.projects.is_empty() {
-        return false;
-    }
     if REFRESHING.swap(true, Ordering::AcqRel) {
         return false;
     }
     let notify = notify.0 as isize;
     thread::spawn(move || {
-        match http_client() {
-            Ok(client) => {
-                let targets: Vec<_> = settings
-                    .projects
-                    .iter()
-                    .filter(|project| valid_project(project))
-                    .collect();
-                let pats = OrganizationValues::new(
-                    targets.iter().map(|project| project.organization.as_str()),
-                );
-                thread::scope(|scope| {
-                    let handles: Vec<_> = targets
+        if let Err(error) = prune_cache(&settings) {
+            crate::panic_log::record(&format!("azure devops: cache prune failed: {error}"));
+        }
+        if refresh_work(&settings) == RefreshWork::PruneAndSync {
+            match http_client() {
+                Ok(client) => {
+                    let targets: Vec<_> = settings
+                        .projects
                         .iter()
-                        .map(|project| {
-                            let client = &client;
-                            let pats = &pats;
-                            scope.spawn(move || {
-                                let Some(Ok(pat)) = pats.get_or_init(&project.organization, || {
-                                    load_pat(&project.organization)
-                                }) else {
-                                    let _ = cache::record_project_error(
-                                        project,
-                                        "No PAT is saved for this organization.",
-                                    );
-                                    return;
-                                };
-                                if let Err(error) = refresh_project(client, project, pat) {
-                                    crate::panic_log::record(&format!(
-                                        "azure devops: refresh {}/{} failed: {error}",
-                                        project.organization, project.project
-                                    ));
-                                    let _ = cache::record_project_error(project, &error);
-                                }
-                            })
-                        })
+                        .filter(|project| valid_project(project))
                         .collect();
-                    for (handle, project) in handles.into_iter().zip(targets.iter().copied()) {
-                        if let Err(error) = join_worker(handle) {
-                            crate::panic_log::record(&format!(
-                                "azure devops: refresh {}/{} failed: {error}",
-                                project.organization, project.project
-                            ));
-                            let _ = cache::record_project_error(project, &error);
+                    let pats = OrganizationValues::new(
+                        targets.iter().map(|project| project.organization.as_str()),
+                    );
+                    thread::scope(|scope| {
+                        let handles: Vec<_> = targets
+                            .iter()
+                            .map(|project| {
+                                let client = &client;
+                                let pats = &pats;
+                                scope.spawn(move || {
+                                    let Some(Ok(pat)) = pats
+                                        .get_or_init(&project.organization, || {
+                                            load_pat(&project.organization)
+                                        })
+                                    else {
+                                        let _ = cache::record_project_error(
+                                            project,
+                                            "No PAT is saved for this organization.",
+                                        );
+                                        return;
+                                    };
+                                    if let Err(error) = refresh_project(client, project, pat) {
+                                        crate::panic_log::record(&format!(
+                                            "azure devops: refresh {}/{} failed: {error}",
+                                            project.organization, project.project
+                                        ));
+                                        let _ = cache::record_project_error(project, &error);
+                                    }
+                                })
+                            })
+                            .collect();
+                        for (handle, project) in handles.into_iter().zip(targets.iter().copied()) {
+                            if let Err(error) = join_worker(handle) {
+                                crate::panic_log::record(&format!(
+                                    "azure devops: refresh {}/{} failed: {error}",
+                                    project.organization, project.project
+                                ));
+                                let _ = cache::record_project_error(project, &error);
+                            }
                         }
-                    }
-                });
+                    });
+                }
+                Err(error) => crate::panic_log::record(&format!(
+                    "azure devops: could not initialize refresh client: {error}"
+                )),
             }
-            Err(error) => crate::panic_log::record(&format!(
-                "azure devops: could not initialize refresh client: {error}"
-            )),
         }
         let candidates = try_cached_candidate_groups(&settings);
         store_refresh_reply(RefreshReply {
@@ -199,6 +217,39 @@ mod tests {
         });
 
         assert_eq!(result.unwrap_err(), "Azure DevOps worker panicked.");
+    }
+
+    #[test]
+    fn disabled_refresh_still_plans_background_pruning_without_remote_sync() {
+        let settings = AzureDevOpsSettings::default();
+
+        assert_eq!(
+            super::refresh_work(&settings),
+            super::RefreshWork::PruneOnly
+        );
+    }
+
+    #[test]
+    fn enabled_refresh_with_projects_plans_pruning_and_remote_sync() {
+        let settings = AzureDevOpsSettings {
+            enabled: true,
+            projects: vec![crate::config::AzureDevOpsProject {
+                organization: "org".into(),
+                project: "project".into(),
+                aliases: Vec::new(),
+                priority: 0,
+                include_pull_requests: true,
+                include_pipelines: true,
+                include_work_items: true,
+                interest_areas: Vec::new(),
+                interest_repositories: Vec::new(),
+            }],
+        };
+
+        assert_eq!(
+            super::refresh_work(&settings),
+            super::RefreshWork::PruneAndSync
+        );
     }
 
     #[test]

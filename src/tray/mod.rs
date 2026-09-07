@@ -139,7 +139,6 @@ pub fn refresh_azure_devops(hwnd: HWND) {
         let Some(state) = state.as_ref() else {
             return;
         };
-        let _ = crate::azure_devops::prune_cache(&state.config.settings.quick_launch.azure_devops);
         let _ = crate::azure_devops::refresh_async(
             state.config.settings.quick_launch.azure_devops.clone(),
             hwnd,

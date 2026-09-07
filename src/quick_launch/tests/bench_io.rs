@@ -157,6 +157,11 @@ fn bench_azure_refresh() {
     let azure_settings = &config.settings.quick_launch.azure_devops;
 
     let start = Instant::now();
+    crate::azure_devops::prune_cache(azure_settings)
+        .expect("Azure candidate cache must be writable for this machine benchmark");
+    let prune_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+    let start = Instant::now();
     let groups = crate::azure_devops::try_cached_candidate_groups(azure_settings)
         .expect("Azure candidate cache must be readable for this machine benchmark");
     let cache_read = start.elapsed().as_secs_f64() * 1000.0;
@@ -170,7 +175,7 @@ fn bench_azure_refresh() {
     let apply_ms = start.elapsed().as_secs_f64() * 1000.0 / 100.0;
 
     println!(
-        "azure background cache read {cache_read:>8.3} ms  UI snapshot apply {apply_ms:>8.3} ms  (PR/Project={} work_items={})",
+        "azure background prune {prune_ms:>8.3} ms  cache read {cache_read:>8.3} ms  UI snapshot apply {apply_ms:>8.3} ms  (PR/Project={} work_items={})",
         index.azure.len(),
         index.azure_work_items.len(),
     );
