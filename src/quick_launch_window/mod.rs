@@ -36,7 +36,7 @@ use input::{
     select_at,
 };
 use layout::{apply_dpi, apply_window_chrome, primary_monitor_dpi};
-use search::update_results;
+use search::{start_azure_live_search_for_query, update_results};
 
 const EDIT_ID: isize = 1001;
 const LIST_ID: isize = 1002;
@@ -86,10 +86,6 @@ const EVERYTHING_REPLY_ID_START: u32 = WM_APP + 5;
 pub const WM_QUICK_LAUNCH_ADD_TO_FAVORITES: u32 = WM_APP + 6;
 /// Azure DevOps の Work Item 検索スレッドが結果を返す通知。
 pub const WM_QUICK_LAUNCH_AZURE_RESULTS: u32 = WM_APP + 7;
-/// `az wit live` / `az pr live` のデバウンス用タイマー (`SetTimer` の `nIDEvent`)。
-const LIVE_SEARCH_TIMER_ID: usize = 1;
-/// 入力が止まってからライブ検索を実行するまでの待ち時間。
-const LIVE_SEARCH_DEBOUNCE_MS: u32 = 400;
 /// Quick Launch が一度に Everything へ要求する最大件数。
 /// 全件表示はしない (`visible_results` の上限と同じ枠で足りる)。
 const EVERYTHING_MAX_RESULTS: u32 = 24;
@@ -186,6 +182,7 @@ struct State {
     /// たびにこの経路を通る (PR/Work Item と違いキャッシュ検索を挟まない)。
     azure_pipelines_live_active: bool,
     azure_pipeline_reply_id: u32,
+    azure_live_search_gate: search::LiveSearchGate,
     /// 非同期検索中・0 件時に結果一覧へ出す説明。実行対象にはしない。
     empty_message: Option<String>,
     /// 現在の入力が `b `/`w `/`a `/`f ` のいずれかに入っていれば
@@ -195,20 +192,6 @@ struct State {
     /// ハイライトしない (絞り込みなし一覧や Everything / Azure の
     /// 非同期検索など、一致箇所が `name` に対応しない場合)。
     highlight_term: String,
-    /// `az wit live` / `az pr live` で保留中のライブ検索。`LIVE_SEARCH_TIMER_ID`
-    /// が発火するまでの間、直近の入力内容をここへ差し替え続ける
-    /// (`SetTimer` の再設定と合わせてデバウンスする — 打鍵のたびに
-    /// Azure DevOps API を叩かないため。`az wit` の通常入口は Enter 確定
-    /// なのでここを経由しない)。
-    pending_live_search: Option<PendingLiveSearch>,
-}
-
-/// `update_results` が `live` トークンを見た瞬間ではなく、入力が
-/// `LIVE_SEARCH_DEBOUNCE_MS` の間止まってから実行するライブ検索。
-#[derive(Debug, Clone)]
-enum PendingLiveSearch {
-    WorkItem(String),
-    PullRequest(crate::quick_launch::PullRequestFilter, String),
 }
 
 pub fn configure(config: &Config, dynamic: &Menus) {
@@ -436,6 +419,18 @@ pub fn handle_message(message: &windows::Win32::UI::WindowsAndMessaging::MSG) ->
             && unsafe { GetKeyState(VK_SHIFT.0 as i32) } < 0 =>
         {
             add_selected_to_favorites();
+        }
+        0x0d if unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0 => {
+            let query = STATE.with(|state| {
+                state
+                    .borrow()
+                    .edit
+                    .map(input::read_text)
+                    .unwrap_or_default()
+            });
+            if !STATE.with(|state| start_azure_live_search_for_query(state, &query)) {
+                queue_selected();
+            }
         }
         0x0d => queue_selected(),
         // Ctrl+C: 選択中候補のパスをクリップボードへコピーする。

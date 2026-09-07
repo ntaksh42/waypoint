@@ -16,7 +16,10 @@ mod search;
 mod tests;
 
 pub(crate) use azure::azure_suggest_entry;
-pub use azure::{AzureCommand, PipelineFilter, PullRequestFilter, azure_command};
+pub use azure::{
+    AzureCommand, AzureLiveRequest, PipelineFilter, PullRequestFilter, azure_command,
+    azure_live_request,
+};
 pub(crate) use scoring::highlight_ranges;
 pub(crate) use search::search_entries;
 

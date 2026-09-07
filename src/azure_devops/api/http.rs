@@ -21,14 +21,23 @@ pub(crate) fn get_json(
 ) -> Result<Value, String> {
     let mut last_error = None;
     for attempt in 0..=REQUEST_RETRIES {
+        let mut delay = response_retry_delay(&reqwest::header::HeaderMap::new(), attempt);
         match client
             .get(url)
             .header("Authorization", authorization(pat))
             .send()
         {
-            Ok(response) if response.status().is_success() => return response_json(response),
+            Ok(response) if response.status().is_success() => {
+                let retry_after = retry_after_delay(response.headers());
+                let value = response_json(response)?;
+                if let Some(delay) = retry_after {
+                    thread::sleep(delay);
+                }
+                return Ok(value);
+            }
             Ok(response) => {
                 let status = response.status();
+                delay = response_retry_delay(response.headers(), attempt);
                 last_error = Some(format!("Azure DevOps request returned HTTP {status}"));
                 if !retryable_status(status.as_u16()) || attempt == REQUEST_RETRIES {
                     break;
@@ -41,7 +50,7 @@ pub(crate) fn get_json(
                 }
             }
         }
-        thread::sleep(RETRY_DELAY * (attempt as u32 + 1));
+        thread::sleep(delay);
     }
     Err(last_error.unwrap_or_else(|| "Azure DevOps request failed.".to_string()))
 }
@@ -54,15 +63,24 @@ pub(crate) fn post_json(
 ) -> Result<Value, String> {
     let mut last_error = None;
     for attempt in 0..=REQUEST_RETRIES {
+        let mut delay = response_retry_delay(&reqwest::header::HeaderMap::new(), attempt);
         match client
             .post(url)
             .header("Authorization", authorization(pat))
             .json(body)
             .send()
         {
-            Ok(response) if response.status().is_success() => return response_json(response),
+            Ok(response) if response.status().is_success() => {
+                let retry_after = retry_after_delay(response.headers());
+                let value = response_json(response)?;
+                if let Some(delay) = retry_after {
+                    thread::sleep(delay);
+                }
+                return Ok(value);
+            }
             Ok(response) => {
                 let status = response.status();
+                delay = response_retry_delay(response.headers(), attempt);
                 last_error = Some(format!("Azure DevOps request returned HTTP {status}"));
                 if !retryable_status(status.as_u16()) || attempt == REQUEST_RETRIES {
                     break;
@@ -75,9 +93,24 @@ pub(crate) fn post_json(
                 }
             }
         }
-        thread::sleep(RETRY_DELAY * (attempt as u32 + 1));
+        thread::sleep(delay);
     }
     Err(last_error.unwrap_or_else(|| "Azure DevOps request failed.".to_string()))
+}
+
+fn retry_after_delay(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    headers
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .map(Duration::from_secs)
+}
+
+fn response_retry_delay(headers: &reqwest::header::HeaderMap, attempt: usize) -> Duration {
+    retry_after_delay(headers).unwrap_or(RETRY_DELAY * (attempt as u32 + 1))
 }
 
 pub(crate) fn retryable_status(status: u16) -> bool {
@@ -86,7 +119,7 @@ pub(crate) fn retryable_status(status: u16) -> bool {
 
 pub(crate) fn http_client() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(35))
         // PAT 付き要求を別 URL へ自動追従させない。Azure DevOps REST API は
         // 通常の取得でリダイレクトを必要としない。
         .redirect(reqwest::redirect::Policy::none())
@@ -133,6 +166,21 @@ mod tests {
         assert!(retryable_status(503));
         assert!(!retryable_status(401));
         assert!(!retryable_status(404));
+    }
+
+    #[test]
+    fn retry_after_header_overrides_the_local_backoff() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(reqwest::header::RETRY_AFTER, "3".parse().unwrap());
+        assert_eq!(response_retry_delay(&headers, 0), Duration::from_secs(3));
+    }
+
+    #[test]
+    fn missing_retry_after_uses_incremental_local_backoff() {
+        assert_eq!(
+            response_retry_delay(&reqwest::header::HeaderMap::new(), 1),
+            Duration::from_millis(700)
+        );
     }
 
     #[test]

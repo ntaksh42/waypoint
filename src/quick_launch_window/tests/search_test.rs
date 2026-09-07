@@ -5,6 +5,7 @@ use super::super::search::{
 };
 use crate::config::OpenMode;
 use crate::quick_launch::{Action, Entry};
+use std::time::{Duration, Instant};
 
 fn folder_entry(name: &str) -> Entry {
     Entry {
@@ -119,4 +120,18 @@ fn build_rows_inserts_a_header_row_before_each_section_start() {
             RowKind::Item(2),
         ]
     ));
+}
+
+#[test]
+fn live_search_gate_blocks_overlap_and_recent_duplicate_but_allows_other_query() {
+    let now = Instant::now();
+    let mut gate = super::super::search::LiveSearchGate::default();
+
+    assert!(gate.try_start("wit:one", now));
+    assert!(!gate.try_start("pr:two", now));
+    gate.finish(now + Duration::from_secs(10));
+    assert!(!gate.try_start("WIT:ONE", now + Duration::from_secs(11)));
+    assert!(gate.try_start("wit:two", now + Duration::from_secs(11)));
+    gate.finish(now + Duration::from_secs(11));
+    assert!(gate.try_start("wit:one", now + Duration::from_secs(12)));
 }

@@ -15,6 +15,10 @@ pub(super) fn badge_color(badge: &str) -> COLORREF {
     }
 }
 
+pub(super) fn shows_live_search_hint(badge: Option<&str>) -> bool {
+    badge == Some("AZURE DEVOPS")
+}
+
 /// 候補のアクション種別を表す色。種別の判別はアイコン自体の形が担うため、
 /// 背景色は原則アクセント 1 色に寄せて静かにする。
 pub(super) fn action_color(action: &Action) -> COLORREF {

@@ -1,4 +1,11 @@
-use super::super::badge::{AzureIconKind, azure_icon_kind};
+use super::super::badge::{AzureIconKind, azure_icon_kind, shows_live_search_hint};
+
+#[test]
+fn live_search_hint_is_only_shown_in_azure_mode() {
+    assert!(shows_live_search_hint(Some("AZURE DEVOPS")));
+    assert!(!shows_live_search_hint(Some("FILES")));
+    assert!(!shows_live_search_hint(None));
+}
 
 #[test]
 fn azure_urls_use_distinct_icons_only_in_azure_mode() {

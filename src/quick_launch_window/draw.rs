@@ -8,7 +8,9 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::UI::Controls::{DRAWITEMSTRUCT, ODS_SELECTED};
 
-use super::badge::{action_color, azure_icon_color, azure_icon_kind, badge_color};
+use super::badge::{
+    action_color, azure_icon_color, azure_icon_kind, badge_color, shows_live_search_hint,
+};
 use super::draw_icons::{
     FaviconFallback, backdrop_tint, draw_azure_icon, draw_command_icon, draw_favicon_icon,
     draw_icon_backdrop, draw_path_icon, draw_window_icon,
@@ -133,7 +135,12 @@ pub(super) unsafe fn draw_badge(
             SetBkMode(hdc, TRANSPARENT);
             SetTextColor(hdc, color);
             let mut text_rect = rect;
-            draw_text_centered(hdc, badge, &mut text_rect);
+            let label = if shows_live_search_hint(Some(badge)) {
+                "Ctrl+Enter  Live"
+            } else {
+                badge
+            };
+            draw_text_centered(hdc, label, &mut text_rect);
             SelectObject(hdc, old_font);
         }
     }

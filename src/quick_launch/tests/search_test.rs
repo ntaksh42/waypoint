@@ -453,6 +453,7 @@ fn azure_command_recognizes_all_supported_subcommands() {
         Some((
             AzureCommand::PullRequests(PullRequestFilter {
                 status: crate::azure_devops::PullRequestStatus::Completed,
+                status_explicit: true,
                 mine: false,
                 live: false,
             }),
@@ -476,6 +477,7 @@ fn azure_command_recognizes_all_supported_subcommands() {
         Some((
             AzureCommand::PullRequests(PullRequestFilter {
                 status: crate::azure_devops::PullRequestStatus::Active,
+                status_explicit: true,
                 mine: true,
                 live: false,
             }),
@@ -488,6 +490,7 @@ fn azure_command_recognizes_all_supported_subcommands() {
         Some((
             AzureCommand::PullRequests(PullRequestFilter {
                 status: crate::azure_devops::PullRequestStatus::Active,
+                status_explicit: true,
                 mine: true,
                 live: false,
             }),
@@ -500,6 +503,7 @@ fn azure_command_recognizes_all_supported_subcommands() {
         Some((
             AzureCommand::PullRequests(PullRequestFilter {
                 status: crate::azure_devops::PullRequestStatus::Active,
+                status_explicit: true,
                 mine: false,
                 live: false,
             }),

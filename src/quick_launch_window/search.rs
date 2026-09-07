@@ -1,11 +1,12 @@
 //! 検索実行・非同期結果の反映。
 
 use std::cell::RefCell;
+use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::InvalidateRect;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetClientRect, KillTimer, LB_ADDSTRING, LB_RESETCONTENT, LB_SETCURSEL, SetTimer,
+    GetClientRect, LB_ADDSTRING, LB_RESETCONTENT, LB_SETCURSEL,
 };
 use windows::core::HSTRING;
 
@@ -16,6 +17,42 @@ use super::{
 };
 use crate::config::OpenMode;
 use crate::quick_launch::Entry;
+
+const LIVE_SEARCH_COOLDOWN: Duration = Duration::from_secs(2);
+
+#[derive(Default)]
+pub(super) struct LiveSearchGate {
+    active_key: Option<String>,
+    last_finished: Option<(String, Instant)>,
+}
+
+impl LiveSearchGate {
+    pub(super) fn try_start(&mut self, key: &str, now: Instant) -> bool {
+        let key = key
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase();
+        if self.active_key.is_some()
+            || self
+                .last_finished
+                .as_ref()
+                .is_some_and(|(previous, finished)| {
+                    previous == &key && now.duration_since(*finished) < LIVE_SEARCH_COOLDOWN
+                })
+        {
+            return false;
+        }
+        self.active_key = Some(key);
+        true
+    }
+
+    pub(super) fn finish(&mut self, now: Instant) {
+        if let Some(key) = self.active_key.take() {
+            self.last_finished = Some((key, now));
+        }
+    }
+}
 
 /// 検索結果を作り直し、リストボックスへ反映する。
 ///
@@ -71,18 +108,10 @@ pub(super) fn update_results(state: &RefCell<State>) {
         start_everything_query(state, rest);
         return;
     }
-    if let Some((crate::quick_launch::AzureCommand::WorkItems { live }, rest)) =
+    if let Some((crate::quick_launch::AzureCommand::WorkItems { .. }, rest)) =
         crate::quick_launch::azure_command(&query)
     {
-        let trimmed = rest.trim();
-        if live && !trimmed.is_empty() {
-            schedule_live_search(
-                state,
-                super::PendingLiveSearch::WorkItem(trimmed.to_string()),
-            );
-        } else {
-            start_azure_work_item_query(state, rest);
-        }
+        start_azure_work_item_query(state, rest);
         return;
     }
     if let Some((crate::quick_launch::AzureCommand::Suggest, _)) =
@@ -91,19 +120,6 @@ pub(super) fn update_results(state: &RefCell<State>) {
         show_azure_suggest_entry(state);
         return;
     }
-    if let Some((crate::quick_launch::AzureCommand::PullRequests(filter), rest)) =
-        crate::quick_launch::azure_command(&query)
-    {
-        let trimmed = rest.trim();
-        if filter.live && !trimmed.is_empty() {
-            schedule_live_search(
-                state,
-                super::PendingLiveSearch::PullRequest(filter, trimmed.to_string()),
-            );
-            return;
-        }
-    }
-
     let (list, labels, rows, copy_feedback_cleared, window, dpi) = {
         let mut state = state.borrow_mut();
         // プレフィックスを外れたら、遅れて届く Everything の応答を無視させる
@@ -312,59 +328,6 @@ fn show_azure_suggest_entry(state: &RefCell<State>) {
     populate_list(list, &labels, &rows);
 }
 
-/// `az wit live` / `az pr live` の入力を受けるたびに呼ばれる。即座に API を
-/// 叩く代わりに保留内容を差し替えて `SetTimer` をリセットするだけに留め、
-/// `LIVE_SEARCH_DEBOUNCE_MS` の間だけ入力が止まったら `WM_TIMER` 経由で
-/// 実際の検索を発火する (打鍵のたびに Azure DevOps API を叫ばないため)。
-fn schedule_live_search(state: &RefCell<State>, pending: super::PendingLiveSearch) {
-    let (window, message) = {
-        let mut state = state.borrow_mut();
-        state.pending_live_search = Some(pending);
-        state.empty_message = Some("Waiting for input to settle…".to_string());
-        state.results.clear();
-        state.rows = vec![RowKind::Message];
-        (state.window, state.empty_message.clone())
-    };
-    let Some(list) = STATE.with(|state| state.borrow().list) else {
-        return;
-    };
-    populate_empty_message(list, message.as_deref());
-    let Some(window) = window else {
-        return;
-    };
-    unsafe {
-        SetTimer(
-            Some(window),
-            super::LIVE_SEARCH_TIMER_ID,
-            super::LIVE_SEARCH_DEBOUNCE_MS,
-            None,
-        );
-    }
-}
-
-/// `LIVE_SEARCH_TIMER_ID` の発火 (`WM_TIMER`) を受けて呼ばれる。保留中の
-/// ライブ検索があれば実行し、タイマーは止める。
-pub(super) fn fire_pending_live_search(state: &RefCell<State>) {
-    let (window, pending) = {
-        let mut state = state.borrow_mut();
-        (state.window, state.pending_live_search.take())
-    };
-    if let Some(window) = window {
-        unsafe {
-            let _ = KillTimer(Some(window), super::LIVE_SEARCH_TIMER_ID);
-        }
-    }
-    match pending {
-        Some(super::PendingLiveSearch::WorkItem(query)) => {
-            start_azure_work_item_live_search(state, &query);
-        }
-        Some(super::PendingLiveSearch::PullRequest(filter, query)) => {
-            start_azure_pull_request_live_search(state, filter, &query);
-        }
-        None => {}
-    }
-}
-
 /// キャッシュ検索が 0 件だったときにリストへ足す、ライブ検索への入口。
 fn live_work_item_search_entry(query: &str) -> Entry {
     Entry {
@@ -378,7 +341,15 @@ fn live_work_item_search_entry(query: &str) -> Entry {
 
 /// `AzureLiveWorkItemSearch` が選ばれた。ウィンドウは閉じずにその場で
 /// API 検索を投げ、結果が届いたらリストだけ差し替える。
-pub(super) fn start_azure_work_item_live_search(state: &RefCell<State>, query: &str) {
+pub(super) fn start_azure_work_item_live_search(state: &RefCell<State>, query: &str) -> bool {
+    let key = format!("wit:{}", query.trim());
+    if !state
+        .borrow_mut()
+        .azure_live_search_gate
+        .try_start(&key, Instant::now())
+    {
+        return false;
+    }
     let (window, reply_id, settings) = {
         let mut state = state.borrow_mut();
         state.azure_work_items_active = true;
@@ -395,15 +366,27 @@ pub(super) fn start_azure_work_item_live_search(state: &RefCell<State>, query: &
         )
     };
     let Some(list) = STATE.with(|state| state.borrow().list) else {
-        return;
+        state
+            .borrow_mut()
+            .azure_live_search_gate
+            .finish(Instant::now());
+        return false;
     };
     populate_empty_message(list, Some("Searching Azure DevOps work items…"));
     let Some(window) = window else {
-        return;
+        state
+            .borrow_mut()
+            .azure_live_search_gate
+            .finish(Instant::now());
+        return false;
     };
     if !settings.enabled {
+        state
+            .borrow_mut()
+            .azure_live_search_gate
+            .finish(Instant::now());
         set_azure_empty_message("Azure DevOps search is disabled in Settings.");
-        return;
+        return false;
     }
     crate::azure_devops::search_work_items_async(
         settings,
@@ -412,6 +395,7 @@ pub(super) fn start_azure_work_item_live_search(state: &RefCell<State>, query: &
         window,
         WM_QUICK_LAUNCH_AZURE_RESULTS,
     );
+    true
 }
 
 pub(super) fn set_azure_empty_message(message: &str) {
@@ -432,6 +416,7 @@ pub(super) fn handle_azure_work_item_results(reply_id: u32) {
     };
     let outcome = STATE.with(|state| {
         let mut state = state.borrow_mut();
+        state.azure_live_search_gate.finish(Instant::now());
         if !accepts_azure_work_item_reply(
             state.azure_work_items_active,
             state.azure_work_item_reply_id,
@@ -502,7 +487,16 @@ pub(super) fn start_azure_pull_request_live_search(
     state: &RefCell<State>,
     filter: crate::quick_launch::PullRequestFilter,
     query: &str,
-) {
+) -> bool {
+    let filter = filter.for_live();
+    let key = format!("pr:{:?}:{}:{}", filter.status, filter.mine, query.trim());
+    if !state
+        .borrow_mut()
+        .azure_live_search_gate
+        .try_start(&key, Instant::now())
+    {
+        return false;
+    }
     let (window, reply_id, settings) = {
         let mut state = state.borrow_mut();
         state.azure_pull_requests_live_active = true;
@@ -518,15 +512,27 @@ pub(super) fn start_azure_pull_request_live_search(
         )
     };
     let Some(list) = STATE.with(|state| state.borrow().list) else {
-        return;
+        state
+            .borrow_mut()
+            .azure_live_search_gate
+            .finish(Instant::now());
+        return false;
     };
     populate_empty_message(list, Some("Searching Azure DevOps pull requests…"));
     let Some(window) = window else {
-        return;
+        state
+            .borrow_mut()
+            .azure_live_search_gate
+            .finish(Instant::now());
+        return false;
     };
     if !settings.enabled {
+        state
+            .borrow_mut()
+            .azure_live_search_gate
+            .finish(Instant::now());
         set_azure_empty_message("Azure DevOps search is disabled in Settings.");
-        return;
+        return false;
     }
     crate::azure_devops::search_pull_requests_live_async(
         settings,
@@ -537,6 +543,7 @@ pub(super) fn start_azure_pull_request_live_search(
         window,
         WM_QUICK_LAUNCH_AZURE_RESULTS,
     );
+    true
 }
 
 pub(super) fn accepts_azure_pull_request_reply(active: bool, expected: u32, received: u32) -> bool {
@@ -549,6 +556,7 @@ pub(super) fn handle_azure_pull_request_results(reply_id: u32) {
     };
     let outcome = STATE.with(|state| {
         let mut state = state.borrow_mut();
+        state.azure_live_search_gate.finish(Instant::now());
         if !accepts_azure_pull_request_reply(
             state.azure_pull_requests_live_active,
             state.azure_pull_request_reply_id,
@@ -616,7 +624,15 @@ pub(super) fn start_azure_pipeline_live_search(
     state: &RefCell<State>,
     filter: crate::quick_launch::PipelineFilter,
     query: &str,
-) {
+) -> bool {
+    let key = format!("pipeline:{filter:?}:{}", query.trim());
+    if !state
+        .borrow_mut()
+        .azure_live_search_gate
+        .try_start(&key, Instant::now())
+    {
+        return false;
+    }
     let (window, reply_id, settings) = {
         let mut state = state.borrow_mut();
         state.azure_pipelines_live_active = true;
@@ -631,15 +647,27 @@ pub(super) fn start_azure_pipeline_live_search(
         )
     };
     let Some(list) = STATE.with(|state| state.borrow().list) else {
-        return;
+        state
+            .borrow_mut()
+            .azure_live_search_gate
+            .finish(Instant::now());
+        return false;
     };
     populate_empty_message(list, Some("Searching Azure DevOps pipelines…"));
     let Some(window) = window else {
-        return;
+        state
+            .borrow_mut()
+            .azure_live_search_gate
+            .finish(Instant::now());
+        return false;
     };
     if !settings.enabled {
+        state
+            .borrow_mut()
+            .azure_live_search_gate
+            .finish(Instant::now());
         set_azure_empty_message("Azure DevOps search is disabled in Settings.");
-        return;
+        return false;
     }
     crate::azure_devops::search_pipelines_live_async(
         settings,
@@ -649,6 +677,25 @@ pub(super) fn start_azure_pipeline_live_search(
         window,
         WM_QUICK_LAUNCH_AZURE_RESULTS,
     );
+    true
+}
+
+/// `Ctrl+Enter` を現在の `az` サブコマンドに対応する Live 検索へ振り分ける。
+pub(super) fn start_azure_live_search_for_query(state: &RefCell<State>, query: &str) -> bool {
+    let Some(request) = crate::quick_launch::azure_live_request(query) else {
+        return false;
+    };
+    match request {
+        crate::quick_launch::AzureLiveRequest::WorkItems { query } => {
+            start_azure_work_item_live_search(state, &query)
+        }
+        crate::quick_launch::AzureLiveRequest::PullRequests { filter, query } => {
+            start_azure_pull_request_live_search(state, filter, &query)
+        }
+        crate::quick_launch::AzureLiveRequest::Pipelines { filter, query } => {
+            start_azure_pipeline_live_search(state, filter, &query)
+        }
+    }
 }
 
 pub(super) fn accepts_azure_pipeline_reply(active: bool, expected: u32, received: u32) -> bool {
@@ -661,6 +708,7 @@ pub(super) fn handle_azure_pipeline_results(reply_id: u32) {
     };
     let outcome = STATE.with(|state| {
         let mut state = state.borrow_mut();
+        state.azure_live_search_gate.finish(Instant::now());
         if !accepts_azure_pipeline_reply(
             state.azure_pipelines_live_active,
             state.azure_pipeline_reply_id,

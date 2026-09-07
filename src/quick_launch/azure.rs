@@ -33,16 +33,42 @@ pub enum AzureCommand {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PullRequestFilter {
     pub(crate) status: crate::azure_devops::PullRequestStatus,
+    pub(crate) status_explicit: bool,
     pub(crate) mine: bool,
-    /// `live` トークンが付いていた場合、キャッシュのヒット件数に関わらず
-    /// 即座にライブ検索へ入る (`az pr live <query>`)。
+    /// `live` トークンの解析互換性を保つ。API 呼び出しは入力変更ではなく
+    /// `Ctrl+Enter` の明示操作でのみ開始する。
     pub(crate) live: bool,
+}
+
+impl PullRequestFilter {
+    pub(crate) fn for_live(mut self) -> Self {
+        if !self.status_explicit {
+            self.status = crate::azure_devops::PullRequestStatus::Active;
+        }
+        self
+    }
 }
 
 /// Pipeline は永続キャッシュを持たずライブ検索専用になったため、絞り込み
 /// 分類は `azure_devops` 側 (`search_pipelines_live_async` が直接使う) に
 /// 定義してここから再エクスポートする。
 pub use crate::azure_devops::PipelineFilter;
+
+/// `Ctrl+Enter` で現在の Azure 検索条件を Live 検索へ渡すための要求。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AzureLiveRequest {
+    WorkItems {
+        query: String,
+    },
+    PullRequests {
+        filter: PullRequestFilter,
+        query: String,
+    },
+    Pipelines {
+        filter: PipelineFilter,
+        query: String,
+    },
+}
 
 /// `az` のサブコマンドを分解する。未知の先頭語は検索語として扱うので、
 /// `az waypoint` は横断検索、`az pr waypoint` は PR 検索になる。
@@ -92,14 +118,27 @@ fn strip_attribute_tokens(text: &str, mut apply: impl FnMut(&str) -> bool) -> &s
 /// `live`) を剥がしていき、未知のトークンからを検索語として返す。
 fn parse_pull_request_command(text: &str) -> (AzureCommand, &str) {
     let mut status = crate::azure_devops::PullRequestStatus::All;
+    let mut status_explicit = false;
     let mut mine = false;
     let mut live = false;
     let rest = strip_attribute_tokens(text, |token| {
         match token {
-            "active" => status = crate::azure_devops::PullRequestStatus::Active,
-            "completed" | "complete" => status = crate::azure_devops::PullRequestStatus::Completed,
-            "abandoned" | "abandon" => status = crate::azure_devops::PullRequestStatus::Abandoned,
-            "all" => status = crate::azure_devops::PullRequestStatus::All,
+            "active" => {
+                status = crate::azure_devops::PullRequestStatus::Active;
+                status_explicit = true;
+            }
+            "completed" | "complete" => {
+                status = crate::azure_devops::PullRequestStatus::Completed;
+                status_explicit = true;
+            }
+            "abandoned" | "abandon" => {
+                status = crate::azure_devops::PullRequestStatus::Abandoned;
+                status_explicit = true;
+            }
+            "all" => {
+                status = crate::azure_devops::PullRequestStatus::All;
+                status_explicit = true;
+            }
             "mine" | "me" => mine = true,
             "live" => live = true,
             _ => return false,
@@ -107,7 +146,12 @@ fn parse_pull_request_command(text: &str) -> (AzureCommand, &str) {
         true
     });
     (
-        AzureCommand::PullRequests(PullRequestFilter { status, mine, live }),
+        AzureCommand::PullRequests(PullRequestFilter {
+            status,
+            status_explicit,
+            mine,
+            live,
+        }),
         rest,
     )
 }
@@ -140,6 +184,22 @@ fn parse_pipeline_command(text: &str) -> (AzureCommand, &str) {
         true
     });
     (AzureCommand::Pipelines(filter), rest)
+}
+
+/// 現在の入力を、ユーザーが明示的に実行する Live 検索要求へ変換する。
+/// 検索語が空でも「最近の項目を今取得する」操作として許可する。
+pub fn azure_live_request(query: &str) -> Option<AzureLiveRequest> {
+    let (command, rest) = azure_command(query)?;
+    let query = rest.trim().to_string();
+    match command {
+        AzureCommand::WorkItems { .. } => Some(AzureLiveRequest::WorkItems { query }),
+        AzureCommand::PullRequests(filter) => {
+            let filter = filter.for_live();
+            Some(AzureLiveRequest::PullRequests { filter, query })
+        }
+        AzureCommand::Pipelines(filter) => Some(AzureLiveRequest::Pipelines { filter, query }),
+        AzureCommand::All | AzureCommand::Projects | AzureCommand::Suggest => None,
+    }
 }
 
 /// 未確定の Azure コマンドだけを補完候補の検索語として取り出す。
@@ -215,7 +275,66 @@ mod tests {
     use super::*;
 
     #[test]
-    fn live_token_forces_immediate_live_search_for_work_items_and_pull_requests() {
+    fn manual_live_search_accepts_empty_work_item_query() {
+        assert_eq!(
+            azure_live_request("az wit"),
+            Some(AzureLiveRequest::WorkItems {
+                query: String::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn manual_live_search_preserves_pull_request_filters() {
+        assert_eq!(
+            azure_live_request("az pr active mine waypoint"),
+            Some(AzureLiveRequest::PullRequests {
+                filter: PullRequestFilter {
+                    status: crate::azure_devops::PullRequestStatus::Active,
+                    status_explicit: true,
+                    mine: true,
+                    live: false,
+                },
+                query: "waypoint".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn manual_live_search_defaults_pull_requests_to_active_but_honors_explicit_all() {
+        let Some(AzureLiveRequest::PullRequests { filter, .. }) =
+            azure_live_request("az pr waypoint")
+        else {
+            panic!("expected pull request live search");
+        };
+        assert_eq!(
+            filter.status,
+            crate::azure_devops::PullRequestStatus::Active
+        );
+
+        let Some(AzureLiveRequest::PullRequests { filter, .. }) =
+            azure_live_request("az pr all waypoint")
+        else {
+            panic!("expected pull request live search");
+        };
+        assert_eq!(filter.status, crate::azure_devops::PullRequestStatus::All);
+    }
+
+    #[test]
+    fn manual_live_search_supports_pipeline_and_rejects_other_modes() {
+        assert_eq!(
+            azure_live_request("az pipeline failed"),
+            Some(AzureLiveRequest::Pipelines {
+                filter: PipelineFilter::Failed,
+                query: String::new(),
+            })
+        );
+        assert_eq!(azure_live_request("az project waypoint"), None);
+        assert_eq!(azure_live_request("waypoint"), None);
+    }
+
+    #[test]
+    fn live_token_is_parsed_without_becoming_part_of_the_search_term() {
         assert_eq!(
             azure_command("az wit live foo"),
             Some((AzureCommand::WorkItems { live: true }, "foo"))
@@ -225,6 +344,7 @@ mod tests {
             Some((
                 AzureCommand::PullRequests(PullRequestFilter {
                     status: crate::azure_devops::PullRequestStatus::All,
+                    status_explicit: false,
                     mine: true,
                     live: true,
                 }),
