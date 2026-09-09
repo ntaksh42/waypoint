@@ -36,7 +36,7 @@ use input::{
     select_at,
 };
 use layout::{apply_dpi, apply_window_chrome, primary_monitor_dpi};
-use search::{start_azure_live_search_for_query, update_results};
+use search::{AzureLiveSearchStart, start_azure_live_search_for_query, update_results};
 
 const EDIT_ID: isize = 1001;
 const LIST_ID: isize = 1002;
@@ -428,8 +428,9 @@ pub fn handle_message(message: &windows::Win32::UI::WindowsAndMessaging::MSG) ->
                     .map(input::read_text)
                     .unwrap_or_default()
             });
-            if !STATE.with(|state| start_azure_live_search_for_query(state, &query)) {
-                queue_selected();
+            match STATE.with(|state| start_azure_live_search_for_query(state, &query)) {
+                AzureLiveSearchStart::NotApplicable => queue_selected(),
+                AzureLiveSearchStart::Started | AzureLiveSearchStart::Suppressed => {}
             }
         }
         0x0d => queue_selected(),

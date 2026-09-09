@@ -20,6 +20,17 @@ use crate::quick_launch::Entry;
 
 const LIVE_SEARCH_COOLDOWN: Duration = Duration::from_secs(2);
 
+/// `Ctrl+Enter` による Azure Live 検索の開始結果。
+///
+/// Azure コマンドではあるが、既存検索の実行中・クールダウン中などで開始を
+/// 抑止した場合は通常の候補実行へフォールバックしてはいけない。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AzureLiveSearchStart {
+    Started,
+    Suppressed,
+    NotApplicable,
+}
+
 #[derive(Default)]
 pub(super) struct LiveSearchGate {
     active_key: Option<String>,
@@ -102,6 +113,9 @@ pub(super) fn update_results(state: &RefCell<State>) {
     // read_text も Win32 呼び出しなので借用の外で済ませる
     let edit = state.borrow().edit;
     let query = edit.map(super::input::read_text).unwrap_or_default();
+    // 入力が変わった時点で、先行する Live 検索の応答は現在の候補ではない。
+    // リクエスト自体は中断できないため、到着時に捨てる。
+    invalidate_azure_live_searches(&mut state.borrow_mut());
     update_badge(state, &query);
 
     if let Some(rest) = query.strip_prefix(crate::quick_launch::EVERYTHING_PREFIX) {
@@ -124,7 +138,6 @@ pub(super) fn update_results(state: &RefCell<State>) {
         let mut state = state.borrow_mut();
         // プレフィックスを外れたら、遅れて届く Everything の応答を無視させる
         state.everything_active = false;
-        state.azure_work_items_active = false;
         state.empty_message = None;
         // COPIED バッジは update_badge のプレフィックスバッジ変化検知の
         // 対象外なので、ここで変化を見て自前で再描画要求しないと、次に
@@ -264,7 +277,6 @@ pub(super) fn start_azure_work_item_query(state: &RefCell<State>, text: &str) {
         state.everything_active = false;
         state.previous_query = None;
         state.highlight_term.clear();
-        state.azure_work_items_active = true;
         state.results = state
             .index
             .search_cached_work_items(text)
@@ -352,6 +364,7 @@ pub(super) fn start_azure_work_item_live_search(state: &RefCell<State>, query: &
     }
     let (window, reply_id, settings) = {
         let mut state = state.borrow_mut();
+        invalidate_azure_live_searches(&mut state);
         state.azure_work_items_active = true;
         state.azure_work_item_reply_id = next_azure_reply_id(state.azure_work_item_reply_id);
         state.azure_work_item_query = query.trim().to_string();
@@ -424,6 +437,7 @@ pub(super) fn handle_azure_work_item_results(reply_id: u32) {
         ) {
             return None;
         }
+        state.azure_work_items_active = false;
         state.results = reply
             .candidates
             .into_iter()
@@ -499,6 +513,7 @@ pub(super) fn start_azure_pull_request_live_search(
     }
     let (window, reply_id, settings) = {
         let mut state = state.borrow_mut();
+        invalidate_azure_live_searches(&mut state);
         state.azure_pull_requests_live_active = true;
         state.azure_pull_request_reply_id = next_azure_reply_id(state.azure_pull_request_reply_id);
         state.highlight_term.clear();
@@ -564,6 +579,7 @@ pub(super) fn handle_azure_pull_request_results(reply_id: u32) {
         ) {
             return None;
         }
+        state.azure_pull_requests_live_active = false;
         state.results = reply
             .candidates
             .into_iter()
@@ -635,6 +651,7 @@ pub(super) fn start_azure_pipeline_live_search(
     }
     let (window, reply_id, settings) = {
         let mut state = state.borrow_mut();
+        invalidate_azure_live_searches(&mut state);
         state.azure_pipelines_live_active = true;
         state.azure_pipeline_reply_id = next_azure_reply_id(state.azure_pipeline_reply_id);
         state.empty_message = Some("Searching Azure DevOps pipelines…".to_string());
@@ -681,11 +698,14 @@ pub(super) fn start_azure_pipeline_live_search(
 }
 
 /// `Ctrl+Enter` を現在の `az` サブコマンドに対応する Live 検索へ振り分ける。
-pub(super) fn start_azure_live_search_for_query(state: &RefCell<State>, query: &str) -> bool {
+pub(super) fn start_azure_live_search_for_query(
+    state: &RefCell<State>,
+    query: &str,
+) -> AzureLiveSearchStart {
     let Some(request) = crate::quick_launch::azure_live_request(query) else {
-        return false;
+        return AzureLiveSearchStart::NotApplicable;
     };
-    match request {
+    let started = match request {
         crate::quick_launch::AzureLiveRequest::WorkItems { query } => {
             start_azure_work_item_live_search(state, &query)
         }
@@ -695,7 +715,21 @@ pub(super) fn start_azure_live_search_for_query(state: &RefCell<State>, query: &
         crate::quick_launch::AzureLiveRequest::Pipelines { filter, query } => {
             start_azure_pipeline_live_search(state, filter, &query)
         }
+    };
+    if started {
+        AzureLiveSearchStart::Started
+    } else {
+        AzureLiveSearchStart::Suppressed
     }
+}
+
+/// 入力が変わった、または別種別の Live 検索を始めるときに、先行応答を
+/// 現在の一覧へ反映させない。3 種別は reply_id が独立しているため、
+/// 個別フラグを残すと別種別の遅延応答まで有効になってしまう。
+pub(super) fn invalidate_azure_live_searches(state: &mut State) {
+    state.azure_work_items_active = false;
+    state.azure_pull_requests_live_active = false;
+    state.azure_pipelines_live_active = false;
 }
 
 pub(super) fn accepts_azure_pipeline_reply(active: bool, expected: u32, received: u32) -> bool {
@@ -716,6 +750,7 @@ pub(super) fn handle_azure_pipeline_results(reply_id: u32) {
         ) {
             return None;
         }
+        state.azure_pipelines_live_active = false;
         state.results = reply
             .candidates
             .into_iter()

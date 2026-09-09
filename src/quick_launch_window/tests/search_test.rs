@@ -1,8 +1,9 @@
-use super::super::RowKind;
 use super::super::search::{
-    accepts_azure_work_item_reply, accepts_everything_reply, build_rows, next_everything_reply_id,
-    refinable_search_term,
+    accepts_azure_work_item_reply, accepts_everything_reply, build_rows,
+    invalidate_azure_live_searches, next_everything_reply_id, refinable_search_term,
+    start_azure_work_item_query,
 };
+use super::super::{RowKind, STATE, State};
 use crate::config::OpenMode;
 use crate::quick_launch::{Action, Entry};
 use std::time::{Duration, Instant};
@@ -32,6 +33,32 @@ fn stale_azure_work_item_request_is_rejected_after_more_typing() {
     assert!(!accepts_azure_work_item_reply(true, 8, 7));
     assert!(!accepts_azure_work_item_reply(false, 8, 8));
     assert!(accepts_azure_work_item_reply(true, 8, 8));
+}
+
+#[test]
+fn editing_a_query_invalidates_all_pending_live_replies() {
+    STATE.with(|state| {
+        *state.borrow_mut() = State::default();
+        {
+            let mut state = state.borrow_mut();
+            state.azure_work_items_active = true;
+            state.azure_work_item_reply_id = 7;
+            state.azure_pull_requests_live_active = true;
+            state.azure_pipelines_live_active = true;
+        }
+
+        invalidate_azure_live_searches(&mut state.borrow_mut());
+        start_azure_work_item_query(state, "new query");
+
+        let state = state.borrow();
+        assert!(!accepts_azure_work_item_reply(
+            state.azure_work_items_active,
+            state.azure_work_item_reply_id,
+            7,
+        ));
+        assert!(!state.azure_pull_requests_live_active);
+        assert!(!state.azure_pipelines_live_active);
+    });
 }
 
 #[test]
