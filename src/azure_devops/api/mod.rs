@@ -17,7 +17,7 @@ pub use pull_requests::list_repository_names;
 
 pub(crate) use pipelines::fetch_pipelines;
 pub(crate) use pull_requests::fetch_pull_requests_live;
-pub(crate) use work_items::{fetch_recent_activity_areas, fetch_work_items};
+pub(crate) use work_items::{RecentActivityPaths, fetch_recent_activity_paths, fetch_work_items};
 
 /// Active PR と Work Item は共有キャッシュ (`shared_cache`) にだけ書き、
 /// waypoint 自身の DB には複製を持たない。共有キャッシュが新しければ

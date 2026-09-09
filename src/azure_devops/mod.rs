@@ -22,7 +22,11 @@ mod shared_cache;
 mod sync;
 mod title_search;
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 
 use rusqlite::params;
 
@@ -48,19 +52,68 @@ pub use convert::AreaNode;
 pub use credential::{delete_pat, save_pat};
 pub(crate) use sync::take_refresh_reply;
 pub use sync::{
-    ProjectActivity, PullRequestReply, WorkItemReply, refresh_async, search_pipelines_live_async,
-    search_pull_requests_live_async, search_work_items_async, suggest_priorities_async,
-    take_pipeline_results, take_pull_request_results, take_work_item_results,
+    ProjectActivity, PullRequestReply, WorkItemReply, apply_optimization, refresh_async,
+    search_pipelines_live_async, search_pull_requests_live_async, search_work_items_async,
+    suggest_priorities_async, take_pipeline_results, take_pull_request_results,
+    take_work_item_results,
 };
 
 const PROJECT_PAGE_SIZE: usize = 1_000;
 
-/// Quick Launch の `az optimize`（`suggest` / `rank` でも入れる）から
-/// `waypoint-settings.exe` を起動する際に渡すコマンドライン引数。設定
-/// エディターはこれを見て、起動直後に優先度提案モーダルを自動で開く
-/// (`az optimize` → 別プロセス起動 → 直後に集計開始、という導線を
-/// 常駐部と設定エディターの両方で共有するための定数)。
+/// 設定エディターを外部から起動したとき、従来の優先度提案モーダルを
+/// 自動表示するためのコマンドライン引数。`az optimize` 自体は使わない。
 pub const AZURE_SUGGEST_ARG: &str = "--azure-suggest";
+
+static OPTIMIZING: AtomicBool = AtomicBool::new(false);
+
+/// `az optimize` 用。ネットワーク集計と保存を UI スレッド外で完結させ、成功時
+/// だけ設定再読み込みメッセージを返す。同じ最適化を同時に走らせない。
+pub fn optimize_async(settings: AzureDevOpsSettings, notify: HWND, message: u32) -> bool {
+    if OPTIMIZING.swap(true, Ordering::AcqRel) {
+        return false;
+    }
+    let notify = notify.0 as isize;
+    thread::spawn(move || {
+        let result = suggest_priorities_async(settings)
+            .recv()
+            .map_err(|_| "Recent activity worker stopped unexpectedly.".to_string())
+            .and_then(|result| result)
+            .and_then(|activity| match crate::config::load() {
+                crate::config::LoadOutcome::Loaded(mut config)
+                | crate::config::LoadOutcome::Created(mut config) => {
+                    let optimized = apply_optimization(
+                        &mut config.settings.quick_launch.azure_devops,
+                        &activity,
+                    );
+                    if optimized == 0 {
+                        return Err(
+                            "No recent work item activity found in the last 90 days.".to_string()
+                        );
+                    }
+                    crate::config::save(&config)
+                        .map_err(|error| format!("Could not save optimization: {error}"))?;
+                    Ok(optimized)
+                }
+                crate::config::LoadOutcome::Failed(error) => Err(error),
+            });
+        match result {
+            Ok(optimized) => {
+                crate::panic_log::record(&format!(
+                    "azure devops: optimized {optimized} project(s) from recent activity"
+                ));
+                unsafe {
+                    let _ =
+                        PostMessageW(Some(HWND(notify as *mut _)), message, WPARAM(0), LPARAM(0));
+                }
+            }
+            Err(error) => {
+                crate::panic_log::record(&format!("azure devops: optimize failed: {error}"))
+            }
+        }
+        OPTIMIZING.store(false, Ordering::Release);
+    });
+    true
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {

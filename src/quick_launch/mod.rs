@@ -135,10 +135,9 @@ pub enum Action {
         filter: PipelineFilter,
         query: String,
     },
-    /// `az optimize`（`suggest` / `rank` でも入れる）— 直近のアサイン・
-    /// メンションから優先 Project / Area を提案する専用画面を開く
-    /// (設定エディタープロセスを別引数で起動する)。
-    AzureSuggestPriorities,
+    /// `az optimize`（`suggest` / `rank` でも入れる）— 直近アクティビティから
+    /// 優先 Project / Iteration を自動更新する。
+    AzureOptimize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -189,7 +188,7 @@ impl Entry {
             | Action::AzureLiveWorkItemSearch(_)
             | Action::AzureLivePullRequestSearch { .. }
             | Action::AzureLivePipelineSearch { .. }
-            | Action::AzureSuggestPriorities => None,
+            | Action::AzureOptimize => None,
         }
     }
 }

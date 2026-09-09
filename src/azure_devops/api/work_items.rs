@@ -9,7 +9,7 @@ use super::super::convert::{
     encode_segment, json_i64, project_url, work_item_batch_candidates, work_item_candidates,
 };
 use super::super::shared_cache::{self, SharedWorkItem};
-use super::http::{API_VERSION, post_json};
+use super::http::{API_VERSION, get_json, post_json};
 use super::pull_requests::SHARED_CACHE_FRESHNESS;
 
 /// `az wit <query>` のライブ全文検索 (ユーザーがキャッシュ検索で見つからず
@@ -20,17 +20,15 @@ const WORK_ITEM_RESULT_LIMIT: usize = 300;
 /// 共有キャッシュ (`shared_cache`) を見るのでここへは来ない。
 const RECENT_WORK_ITEM_LIMIT: usize = 800;
 
-/// `az` コマンドの優先 Project / Area 提案用。1 プロジェクトあたり、直近
-/// `RECENT_ACTIVITY_WINDOW_DAYS` 日以内に自分がアサインされた、または
-/// コメント (`System.History`) で @メンションされた Work Item の Area Path
-/// を集める (プロジェクトごとの件数は呼び出し側で数える)。
-///
-/// Azure DevOps Boards の `@recentMentions` マクロは Web UI 専用で WIQL
-/// REST API での動作が保証されないため使わず、`System.History CONTAINS @Me`
-/// で代替する (`Discussion` は独立フィールドではなく `History` に統合される
-/// 仕様: https://learn.microsoft.com/azure/devops/boards/queries/history-and-auditing)。
+/// `az optimize` 用に集計する「最近の作業」の期間。
 pub(crate) const RECENT_ACTIVITY_WINDOW_DAYS: i64 = 90;
-const RECENT_ACTIVITY_LIMIT: usize = 200;
+const WORK_ITEM_BATCH_LIMIT: usize = 200;
+
+/// 直近の自分の作業に含まれる Area / Iteration Path。
+pub(crate) struct RecentActivityPaths {
+    pub areas: Vec<String>,
+    pub iterations: Vec<String>,
+}
 
 pub(crate) fn sync_work_items_to_shared_cache(
     client: &reqwest::blocking::Client,
@@ -154,21 +152,36 @@ pub(crate) fn fetch_work_items(
     Ok(work_item_candidates(project, &value))
 }
 
-/// `interest_areas` が設定されていれば `UNDER` 条件で WIQL を絞り込む。
-/// 空なら従来どおりプロジェクト全体を対象にする。
+/// Area / Iteration の関心パスが設定されていれば `UNDER` 条件で WIQL を絞り込む。
+/// 同じ種類のパスは OR、Area と Iteration の間は AND で結ぶ。どちらも空なら
+/// 従来どおりプロジェクト全体を対象にする。
 fn recent_work_items_wiql(project: &AzureDevOpsProject) -> String {
     let base = "SELECT [System.Id] FROM WorkItems ORDER BY [System.ChangedDate] DESC";
-    if project.interest_areas.is_empty() {
+    let mut clauses = Vec::new();
+    if !project.interest_areas.is_empty() {
+        let areas = project
+            .interest_areas
+            .iter()
+            .map(|area| format!("[System.AreaPath] UNDER '{}'", wiql_escape(area)))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        clauses.push(format!("({areas})"));
+    }
+    if !project.interest_iterations.is_empty() {
+        let iterations = project
+            .interest_iterations
+            .iter()
+            .map(|iteration| format!("[System.IterationPath] UNDER '{}'", wiql_escape(iteration)))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        clauses.push(format!("({iterations})"));
+    }
+    if clauses.is_empty() {
         return base.to_string();
     }
-    let conditions = project
-        .interest_areas
-        .iter()
-        .map(|area| format!("[System.AreaPath] UNDER '{}'", wiql_escape(area)))
-        .collect::<Vec<_>>()
-        .join(" OR ");
     format!(
-        "SELECT [System.Id] FROM WorkItems WHERE {conditions} ORDER BY [System.ChangedDate] DESC"
+        "SELECT [System.Id] FROM WorkItems WHERE {} ORDER BY [System.ChangedDate] DESC",
+        clauses.join(" AND ")
     )
 }
 
@@ -235,64 +248,106 @@ pub(crate) fn fetch_recent_work_items(
     )
 }
 
-/// `AssignedTo` / `History` はプロジェクト固有のフィールドではないため、
-/// URL パスのプロジェクトスコープだけに頼ると組織内の他プロジェクトの
-/// Work Item まで返ってくる (実測で確認済み: 3 プロジェクトとも同じ ID
-/// 集合が返った)。`[System.TeamProject] = @project` を明示して絞り込む。
-fn recent_activity_wiql() -> String {
-    format!(
-        "SELECT [System.Id] FROM WorkItems WHERE \
-         [System.TeamProject] = @project \
-         AND [System.ChangedDate] >= @Today - {RECENT_ACTIVITY_WINDOW_DAYS} \
-         AND ([System.AssignedTo] = @Me OR [System.History] CONTAINS @Me)"
-    )
-}
-
-pub(crate) fn fetch_recent_activity_areas(
+/// Azure DevOps のアカウント単位「最近の作業」API を使う。WIQL REST API では
+/// `@Me` / `@Project` などの UI マクロが展開されないため、これらを含む WIQL
+/// では HTTP 400 または空結果になる。応答を対象プロジェクトと直近 90 日で
+/// 絞り、必要な Work Item だけを batch API で読み直す。
+pub(crate) fn fetch_recent_activity_paths(
     client: &reqwest::blocking::Client,
     project: &AzureDevOpsProject,
     pat: &str,
-) -> Result<Vec<String>, String> {
+) -> Result<RecentActivityPaths, String> {
+    let activity = get_json(
+        client,
+        &format!(
+            "https://dev.azure.com/{}/_apis/work/accountmyworkrecentactivity?api-version={API_VERSION}",
+            encode_segment(&project.organization)
+        ),
+        pat,
+    )?;
+    let cutoff = recent_activity_cutoff_date();
+    let ids = recent_activity_ids(&activity, project.project.trim(), &cutoff);
+    if ids.is_empty() {
+        return Ok(RecentActivityPaths {
+            areas: Vec::new(),
+            iterations: Vec::new(),
+        });
+    }
     let base = format!(
         "https://dev.azure.com/{}/{}",
         encode_segment(&project.organization),
         encode_segment(&project.project)
     );
-    let query = post_json(
-        client,
-        &format!("{base}/_apis/wit/wiql?$top={RECENT_ACTIVITY_LIMIT}&api-version={API_VERSION}"),
-        pat,
-        &json!({ "query": recent_activity_wiql() }),
-    )?;
-    let ids: Vec<i64> = query["workItems"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|item| json_i64(&item["id"]))
-        .collect();
-    if ids.is_empty() {
-        return Ok(Vec::new());
+    let mut paths = RecentActivityPaths {
+        areas: Vec::new(),
+        iterations: Vec::new(),
+    };
+    for ids in ids.chunks(WORK_ITEM_BATCH_LIMIT) {
+        let items = post_json(
+            client,
+            &format!("{base}/_apis/wit/workitemsbatch?api-version={API_VERSION}"),
+            pat,
+            &json!({
+                "ids": ids,
+                "fields": ["System.AreaPath", "System.IterationPath"],
+                "errorPolicy": "omit"
+            }),
+        )?;
+        for item in items["value"].as_array().into_iter().flatten() {
+            if let Some(path) = item["fields"]["System.AreaPath"].as_str() {
+                paths.areas.push(path.to_string());
+            }
+            if let Some(path) = item["fields"]["System.IterationPath"].as_str() {
+                paths.iterations.push(path.to_string());
+            }
+        }
     }
-    let items = post_json(
-        client,
-        &format!("{base}/_apis/wit/workitemsbatch?api-version={API_VERSION}"),
-        pat,
-        &json!({
-            "ids": ids,
-            "fields": ["System.AreaPath"],
-            "errorPolicy": "omit"
-        }),
-    )?;
-    Ok(items["value"]
+    Ok(paths)
+}
+
+fn recent_activity_ids(activity: &serde_json::Value, project: &str, cutoff: &str) -> Vec<i64> {
+    activity
         .as_array()
+        .or_else(|| activity["value"].as_array())
         .into_iter()
         .flatten()
-        .filter_map(|item| {
-            item["fields"]["System.AreaPath"]
+        .filter(|item| {
+            item["teamProject"]
                 .as_str()
-                .map(str::to_string)
+                .is_some_and(|name| name.eq_ignore_ascii_case(project))
+                && item["activityDate"]
+                    .as_str()
+                    .and_then(|date| date.get(..10))
+                    .is_some_and(|date| date >= cutoff)
         })
-        .collect())
+        .filter_map(|item| json_i64(&item["id"]))
+        .collect()
+}
+
+fn recent_activity_cutoff_date() -> String {
+    let current_days = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        / 86_400;
+    date_from_unix_days(current_days.saturating_sub(RECENT_ACTIVITY_WINDOW_DAYS as u64))
+}
+
+/// UNIX epoch からの日数を ISO 8601 の日付へ変換する。Azure DevOps の
+/// `activityDate` は UTC の ISO 8601 なので、日付部分はこの形式で比較できる。
+fn date_from_unix_days(days: u64) -> String {
+    let z = days as i64 + 719_468;
+    let era = z / 146_097;
+    let day_of_era = z - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_index = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
+    let month = month_index + if month_index < 10 { 3 } else { -9 };
+    let year = year + if month <= 2 { 1 } else { 0 };
+    format!("{year:04}-{month:02}-{day:02}")
 }
 
 #[cfg(test)]
@@ -309,6 +364,7 @@ mod tests {
             include_pipelines: true,
             include_work_items: true,
             interest_areas,
+            interest_iterations: Vec::new(),
             interest_repositories: Vec::new(),
         }
     }
@@ -336,19 +392,29 @@ mod tests {
     }
 
     #[test]
-    fn recent_activity_wiql_covers_assignment_and_mention_within_the_window() {
-        let wiql = recent_activity_wiql();
-        assert!(wiql.contains(&format!("@Today - {RECENT_ACTIVITY_WINDOW_DAYS}")));
-        assert!(wiql.contains("[System.AssignedTo] = @Me"));
-        assert!(wiql.contains("[System.History] CONTAINS @Me"));
+    fn recent_activity_cutoff_uses_iso_dates() {
+        assert_eq!(date_from_unix_days(0), "1970-01-01");
+        assert_eq!(date_from_unix_days(20_147), "2025-02-28");
     }
 
     #[test]
-    fn recent_activity_wiql_scopes_to_the_current_project() {
-        // AssignedTo / History はプロジェクト固有のフィールドではないため、
-        // TeamProject を明示しないと組織内の他プロジェクトの Work Item も
-        // 返ってくる (実機で確認済みの不具合の再発防止)。
-        let wiql = recent_activity_wiql();
-        assert!(wiql.contains("[System.TeamProject] = @project"));
+    fn recent_work_items_wiql_filters_by_interest_iterations() {
+        let mut project = project(Vec::new());
+        project.interest_iterations = vec!["Waypoint\\Sprint 1".to_string()];
+        let wiql = recent_work_items_wiql(&project);
+        assert!(wiql.contains("[System.IterationPath] UNDER 'Waypoint\\Sprint 1'"));
+    }
+
+    #[test]
+    fn recent_activity_ids_accepts_the_rest_collection_shape_and_applies_the_window() {
+        let activity = json!({ "value": [
+            { "id": 1, "teamProject": "Waypoint", "activityDate": "2026-06-11T00:00:00Z" },
+            { "id": 2, "teamProject": "Other", "activityDate": "2026-06-11T00:00:00Z" },
+            { "id": 3, "teamProject": "Waypoint", "activityDate": "2026-06-09T23:59:59Z" }
+        ]});
+        assert_eq!(
+            recent_activity_ids(&activity, "waypoint", "2026-06-10"),
+            [1]
+        );
     }
 }

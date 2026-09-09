@@ -217,7 +217,7 @@ pub(crate) fn incomplete_azure_command(query: &str) -> Option<&str> {
 /// `az ` の直後に出すコマンド候補。`pr` / `wit` / `pipeline` / `project` は
 /// 検索対象を持つサブコマンドなので選んでも検索欄を補完するだけだが、
 /// `optimize` は検索を挟まない単一アクションなので、選んだ時点で
-/// `AzureSuggestPriorities` を直接実行する (`az optimize` とフルタイプして
+/// `AzureOptimize` を直接実行する (`az optimize` とフルタイプして
 /// Enter した場合と同じ 1 手で済ませる — 補完してからもう一度 Enter する
 /// 二度手間を避ける)。
 pub(crate) fn azure_command_entries() -> &'static [Entry] {
@@ -244,14 +244,14 @@ pub(crate) fn azure_command_entries() -> &'static [Entry] {
 }
 
 /// `az optimize`（`suggest` / `rank` でも入れる）に入ったときの唯一の確定候補。
-/// 検索対象を持たないコマンドなので、`az wit` のような絞り込み検索ではなく
-/// この 1 件だけを返す。
+/// 検索対象を持たないコマンドなので、選択すると直近アクティビティから
+/// Project / Iteration の優先度をバックグラウンドで自動更新する。
 pub(crate) fn azure_suggest_entry() -> Entry {
     Entry {
         name: "az optimize".to_string(),
-        breadcrumb: "Rank projects & areas by recent assignments and @mentions".to_string(),
+        breadcrumb: "Automatically rank projects & iterations from recent activity".to_string(),
         path: String::new(),
-        action: Action::AzureSuggestPriorities,
+        action: Action::AzureOptimize,
         branch: None,
     }
 }
@@ -375,7 +375,7 @@ mod tests {
     #[test]
     fn azure_suggest_entry_triggers_the_suggest_priorities_action() {
         let entry = azure_suggest_entry();
-        assert_eq!(entry.action, Action::AzureSuggestPriorities);
+        assert_eq!(entry.action, Action::AzureOptimize);
         assert!(entry.path.is_empty());
     }
 

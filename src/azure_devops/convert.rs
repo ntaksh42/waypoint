@@ -415,6 +415,7 @@ mod tests {
             include_pipelines: true,
             include_work_items: true,
             interest_areas: Vec::new(),
+            interest_iterations: Vec::new(),
             interest_repositories: Vec::new(),
         };
         let results = work_item_candidates(
@@ -444,6 +445,7 @@ mod tests {
             include_pipelines: true,
             include_work_items: true,
             interest_areas: Vec::new(),
+            interest_iterations: Vec::new(),
             interest_repositories: Vec::new(),
         };
         let results = work_item_candidates(
@@ -466,6 +468,7 @@ mod tests {
             include_pipelines: true,
             include_work_items: true,
             interest_areas: Vec::new(),
+            interest_iterations: Vec::new(),
             interest_repositories: Vec::new(),
         };
         let results = work_item_batch_candidates(

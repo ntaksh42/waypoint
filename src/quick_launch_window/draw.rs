@@ -17,8 +17,8 @@ use super::draw_icons::{
 };
 use super::layout::{scale, weekday_label};
 use super::{
-    ACCENT, BACKGROUND, BADGE_WIDTH, EDIT_HEIGHT, ICON_LEFT, PADDING, SELECTED_BG,
-    SELECTED_BORDER, STATE, SURFACE_HOVER, TEXT_LEFT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY,
+    ACCENT, BACKGROUND, BADGE_WIDTH, EDIT_HEIGHT, ICON_LEFT, PADDING, SELECTED_BG, SELECTED_BORDER,
+    STATE, SURFACE_HOVER, TEXT_LEFT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY,
 };
 use crate::quick_launch::{Action, Entry};
 
@@ -422,9 +422,7 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
                 | Action::AzureLiveWorkItemSearch(_)
                 | Action::AzureLivePullRequestSearch { .. }
                 | Action::AzureLivePipelineSearch { .. }
-                | Action::AzureSuggestPriorities => {
-                    draw_command_icon(draw.hDC, draw.rcItem, dpi, name_font)
-                }
+                | Action::AzureOptimize => draw_command_icon(draw.hDC, draw.rcItem, dpi, name_font),
             }
         }
         SetBkMode(draw.hDC, TRANSPARENT);

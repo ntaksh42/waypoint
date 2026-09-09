@@ -15,6 +15,7 @@ fn project(organization: &str, project: &str) -> AzureDevOpsProject {
         include_pipelines: true,
         include_work_items: true,
         interest_areas: Vec::new(),
+        interest_iterations: Vec::new(),
         interest_repositories: Vec::new(),
     }
 }
@@ -251,6 +252,7 @@ fn project_with_details(organization: &str, project: &str) -> AzureDevOpsProject
         include_pipelines: false,
         include_work_items: true,
         interest_areas: vec!["Waypoint\\Launcher".to_string()],
+        interest_iterations: Vec::new(),
         interest_repositories: Vec::new(),
     }
 }
@@ -315,6 +317,7 @@ fn activity(
             .into_iter()
             .map(|(path, n)| (path.to_string(), n))
             .collect(),
+        iterations: Vec::new(),
     }
 }
 

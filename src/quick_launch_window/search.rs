@@ -320,7 +320,7 @@ pub(super) fn start_azure_work_item_query(state: &RefCell<State>, text: &str) {
 }
 
 /// `az suggest` に入った。検索対象を持たないコマンドなので、確定候補を
-/// 1 件だけ表示する (Enter または選択で `AzureSuggestPriorities` が走る)。
+/// 1 件だけ表示する (Enter または選択で `AzureOptimize` が走る)。
 fn show_azure_suggest_entry(state: &RefCell<State>) {
     let (list, labels, rows) = {
         let mut state = state.borrow_mut();

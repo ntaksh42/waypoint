@@ -284,6 +284,7 @@ pub fn list_repository_names(
         include_pipelines: true,
         include_work_items: true,
         interest_areas: Vec::new(),
+        interest_iterations: Vec::new(),
         interest_repositories: Vec::new(),
     };
     let repositories = fetch_repositories(&client, &target, &pat)?;
