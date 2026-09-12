@@ -41,6 +41,7 @@ public partial class MainWindow
             _azureProjects.Add(new AzureProjectRow(project));
         }
         Changed();
+        RebuildAzureTree();
     }
 
     private void DeletePat_Click(object sender, RoutedEventArgs e)

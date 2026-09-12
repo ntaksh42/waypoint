@@ -44,4 +44,9 @@ public sealed class AzureProjectRow(JsonObject project)
     public JsonObject ProjectNode { get; } = project;
     public string Organization => ProjectNode["organization"]?.GetValue<string>() ?? "";
     public string Project => ProjectNode["project"]?.GetValue<string>() ?? "";
+    public int Priority => ProjectNode["priority"]?.GetValue<int?>() ?? 0;
+    public bool IncludePullRequests => ProjectNode["includePullRequests"]?.GetValue<bool?>() ?? true;
+    public bool IncludePipelines => ProjectNode["includePipelines"]?.GetValue<bool?>() ?? true;
+    public bool IncludeWorkItems => ProjectNode["includeWorkItems"]?.GetValue<bool?>() ?? true;
+    public int RepositoryCount => (ProjectNode["interestRepositories"] as JsonArray)?.Count ?? 0;
 }

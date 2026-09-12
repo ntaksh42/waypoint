@@ -3,7 +3,6 @@ using System.ComponentModel;
 using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
 using System.Windows.Input;
 
 namespace Waypoint.Settings;
@@ -24,7 +23,6 @@ public partial class MainWindow : Window
         InitializeComponent();
         ItemsGrid.ItemsSource = _rows;
         VariablesGrid.ItemsSource = _variables;
-        AzureProjectsGrid.ItemsSource = _azureProjects;
         try
         {
             _store.Load();
@@ -248,7 +246,8 @@ public partial class MainWindow : Window
         _azureProjects.Clear();
         foreach (var project in Array(AzureSettings(), "projects").OfType<JsonObject>())
             _azureProjects.Add(new AzureProjectRow(project));
-        AzureDetailsPanel.IsEnabled = false;
+        ClearAzureDetailsPanel();
+        RebuildAzureTree();
     }
 
     private static string Lines(JsonNode? value) => string.Join(Environment.NewLine,
@@ -258,35 +257,6 @@ public partial class MainWindow : Window
         .Split(['\r', '\n', ','], StringSplitOptions.RemoveEmptyEntries)
         .Select(line => (JsonNode?)line.Trim()).ToArray());
 
-    private void AzureProjectSelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        CommitAzureProject();
-        _selectedAzureProject = AzureProjectsGrid.SelectedItem as AzureProjectRow;
-        _loading = true;
-        AzureDetailsPanel.IsEnabled = _selectedAzureProject is not null;
-        if (_selectedAzureProject is not null)
-        {
-            var project = _selectedAzureProject.ProjectNode;
-            AzureOrganization.Text = Text(project, "organization");
-            if (string.IsNullOrWhiteSpace(AzureConnectionOrganization.Text)) AzureConnectionOrganization.Text = AzureOrganization.Text;
-            AzureProject.Text = Text(project, "project");
-            AzureAliases.Text = string.Join(", ", (project["aliases"] as JsonArray ?? []).Select(entry => entry?.GetValue<string>() ?? ""));
-            AzurePriority.Text = (project["priority"]?.GetValue<int?>() ?? 0).ToString();
-            AzurePullRequests.IsChecked = Bool(project, "includePullRequests", true);
-            AzurePipelines.IsChecked = Bool(project, "includePipelines", true);
-            AzureWorkItems.IsChecked = Bool(project, "includeWorkItems", true);
-            AzureRepositories.Text = Lines(project["interestRepositories"]);
-            AzureAreas.Text = Lines(project["interestAreas"]);
-            AzureIterations.Text = Lines(project["interestIterations"]);
-        }
-        else
-        {
-            AzureOrganization.Clear(); AzureProject.Clear(); AzureAliases.Clear(); AzurePriority.Clear();
-            AzureRepositories.Clear(); AzureAreas.Clear(); AzureIterations.Clear();
-        }
-        _loading = false;
-    }
-
     private void CommitAzureProject()
     {
         if (_loading || _selectedAzureProject is null) return;
@@ -294,7 +264,7 @@ public partial class MainWindow : Window
         project["organization"] = AzureOrganization.Text.Trim();
         project["project"] = AzureProject.Text.Trim();
         project["aliases"] = LinesToArray(AzureAliases.Text);
-        if (!uint.TryParse(AzurePriority.Text, out var priority)) priority = 0;
+        if (!int.TryParse(AzurePriority.Text, out var priority) || priority < 0) priority = 0;
         project["priority"] = priority;
         project["includePullRequests"] = AzurePullRequests.IsChecked == true;
         project["includePipelines"] = AzurePipelines.IsChecked == true;
@@ -302,29 +272,6 @@ public partial class MainWindow : Window
         project["interestRepositories"] = LinesToArray(AzureRepositories.Text);
         project["interestAreas"] = LinesToArray(AzureAreas.Text);
         project["interestIterations"] = LinesToArray(AzureIterations.Text);
-        AzureProjectsGrid.Items.Refresh();
-    }
-
-    private void AddAzureProject_Click(object sender, RoutedEventArgs e)
-    {
-        CommitAzureProject();
-        var project = NewAzureProject("", "");
-        Array(AzureSettings(), "projects").Add(project);
-        var row = new AzureProjectRow(project);
-        _azureProjects.Add(row);
-        AzureProjectsGrid.SelectedItem = row;
-        Changed();
-    }
-
-    private void RemoveAzureProject_Click(object sender, RoutedEventArgs e)
-    {
-        if (_selectedAzureProject is null) return;
-        if (MessageBox.Show(this, $"Remove {_selectedAzureProject.Project}?", "Waypoint", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-        Array(AzureSettings(), "projects").Remove(_selectedAzureProject.ProjectNode);
-        _azureProjects.Remove(_selectedAzureProject);
-        _selectedAzureProject = null;
-        AzureProjectsGrid.SelectedItem = null;
-        Changed();
     }
 
     private void Save_Click(object sender, RoutedEventArgs e) => Save();
