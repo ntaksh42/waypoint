@@ -524,6 +524,29 @@ fn azure_command_recognizes_all_supported_subcommands() {
     );
 }
 
+/// `az <query>` (サブコマンド無し) の `Ctrl+Enter` が Live 検索になること。
+/// 以前は `None` を返していたため、Quick Launch が通常の Enter として扱い
+/// 選択中の候補をブラウザで開いてしまっていた (検索窓は「Ctrl+Enter Live」
+/// と表示しているのに Live にならない)。
+#[test]
+fn azure_live_request_covers_bare_query() {
+    assert_eq!(
+        azure_live_request("az waypoint"),
+        Some(AzureLiveRequest::AllKinds {
+            query: "waypoint".to_string()
+        })
+    );
+    assert_eq!(
+        azure_live_request("az wit bug"),
+        Some(AzureLiveRequest::WorkItems {
+            query: "bug".to_string()
+        })
+    );
+    // 検索対象を持たないコマンドは従来どおり Live 検索の対象外
+    assert_eq!(azure_live_request("az optimize"), None);
+    assert_eq!(azure_live_request("az project"), None);
+}
+
 #[test]
 fn azure_prefix_alone_shows_nothing() {
     let index = index();

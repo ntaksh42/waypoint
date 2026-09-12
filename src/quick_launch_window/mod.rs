@@ -183,11 +183,20 @@ struct State {
     azure_pipelines_live_active: bool,
     azure_pipeline_reply_id: u32,
     azure_live_search_gate: search::LiveSearchGate,
+    /// `az <query>` (サブコマンド無し) の `Ctrl+Enter` で 3 種の Live 検索を
+    /// 同時に投げたときだけ `Some`。到着順に結果をここへ積み、都度リストを
+    /// 組み直す (単独種別の検索は従来どおり `results` を丸ごと置き換える)。
+    azure_live_combined: Option<search::CombinedLiveSearch>,
     /// 非同期検索中・0 件時に結果一覧へ出す説明。実行対象にはしない。
     empty_message: Option<String>,
     /// 現在の入力が `b `/`w `/`a `/`f ` のいずれかに入っていれば
     /// そのモード名。検索窓のバッジ表示に使う。
     badge: Option<&'static str>,
+    /// 現在の入力で `Ctrl+Enter` の Live 検索が実際に成立するか。
+    /// `az project` / `az optimize` のように検索対象を持たないコマンドでは
+    /// 立たない。描画のたびに入力を読み直さずに済むよう、バッジと同じく
+    /// 入力が変わった時点 (`update_badge`) で確定させる。
+    live_search_hint: bool,
     /// モードプレフィックス除去済みの検索語。空なら一覧の候補名を
     /// ハイライトしない (絞り込みなし一覧や Everything / Azure の
     /// 非同期検索など、一致箇所が `name` に対応しない場合)。

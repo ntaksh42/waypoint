@@ -57,6 +57,11 @@ pub use crate::azure_devops::PipelineFilter;
 /// `Ctrl+Enter` で現在の Azure 検索条件を Live 検索へ渡すための要求。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AzureLiveRequest {
+    /// `az <query>` (サブコマンド無し) — PR / Work Item / Pipeline を
+    /// まとめて Live 検索する。横断検索の候補一覧と対象が揃う。
+    AllKinds {
+        query: String,
+    },
     WorkItems {
         query: String,
     },
@@ -198,7 +203,8 @@ pub fn azure_live_request(query: &str) -> Option<AzureLiveRequest> {
             Some(AzureLiveRequest::PullRequests { filter, query })
         }
         AzureCommand::Pipelines(filter) => Some(AzureLiveRequest::Pipelines { filter, query }),
-        AzureCommand::All | AzureCommand::Projects | AzureCommand::Suggest => None,
+        AzureCommand::All => Some(AzureLiveRequest::AllKinds { query }),
+        AzureCommand::Projects | AzureCommand::Suggest => None,
     }
 }
 

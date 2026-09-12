@@ -31,21 +31,47 @@ pub(super) enum AzureLiveSearchStart {
     NotApplicable,
 }
 
+/// Live 検索の種別。`az <query>` (サブコマンド無し) は 3 種を同時に投げる
+/// ため、実行中フラグとクールダウンを種別ごとに独立させる。1 本の gate を
+/// 共有すると、同時に投げた 2 本目以降が自分自身に弾かれる。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LiveSearchKind {
+    WorkItems,
+    PullRequests,
+    Pipelines,
+}
+
+impl LiveSearchKind {
+    fn slot(self) -> usize {
+        match self {
+            LiveSearchKind::WorkItems => 0,
+            LiveSearchKind::PullRequests => 1,
+            LiveSearchKind::Pipelines => 2,
+        }
+    }
+}
+
 #[derive(Default)]
-pub(super) struct LiveSearchGate {
+struct LiveSearchSlot {
     active_key: Option<String>,
     last_finished: Option<(String, Instant)>,
 }
 
+#[derive(Default)]
+pub(super) struct LiveSearchGate {
+    slots: [LiveSearchSlot; 3],
+}
+
 impl LiveSearchGate {
-    pub(super) fn try_start(&mut self, key: &str, now: Instant) -> bool {
+    pub(super) fn try_start(&mut self, kind: LiveSearchKind, key: &str, now: Instant) -> bool {
         let key = key
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ")
             .to_ascii_lowercase();
-        if self.active_key.is_some()
-            || self
+        let slot = &mut self.slots[kind.slot()];
+        if slot.active_key.is_some()
+            || slot
                 .last_finished
                 .as_ref()
                 .is_some_and(|(previous, finished)| {
@@ -54,14 +80,73 @@ impl LiveSearchGate {
         {
             return false;
         }
-        self.active_key = Some(key);
+        slot.active_key = Some(key);
         true
     }
 
-    pub(super) fn finish(&mut self, now: Instant) {
-        if let Some(key) = self.active_key.take() {
-            self.last_finished = Some((key, now));
+    pub(super) fn finish(&mut self, kind: LiveSearchKind, now: Instant) {
+        let slot = &mut self.slots[kind.slot()];
+        if let Some(key) = slot.active_key.take() {
+            slot.last_finished = Some((key, now));
         }
+    }
+}
+
+/// `az <query>` (サブコマンド無し) の `Ctrl+Enter` で 3 種の Live 検索を
+/// 同時に投げたときの集約先。到着した種別から順に結果を積み、まだ応答が
+/// 残っている間も届いた分だけ表示する (全種そろうまで空白にしない)。
+#[derive(Default)]
+pub(super) struct CombinedLiveSearch {
+    pending: usize,
+    work_items: Vec<Entry>,
+    pull_requests: Vec<Entry>,
+    pipelines: Vec<Entry>,
+    /// 1 種でも結果を返したか。全種 0 件のときだけ「見つからない」を出す。
+    messages: Vec<String>,
+}
+
+impl CombinedLiveSearch {
+    pub(super) fn new(pending: usize) -> Self {
+        Self {
+            pending,
+            ..Self::default()
+        }
+    }
+
+    /// 1 種別の応答を取り込む。戻り値は表示に使う (候補一覧, 説明文)。
+    pub(super) fn absorb(
+        &mut self,
+        kind: LiveSearchKind,
+        candidates: Vec<Entry>,
+        message: Option<String>,
+    ) -> (Vec<Entry>, Option<String>) {
+        match kind {
+            LiveSearchKind::WorkItems => self.work_items = candidates,
+            LiveSearchKind::PullRequests => self.pull_requests = candidates,
+            LiveSearchKind::Pipelines => self.pipelines = candidates,
+        }
+        if let Some(message) = message {
+            self.messages.push(message);
+        }
+        self.pending = self.pending.saturating_sub(1);
+        let merged: Vec<Entry> = self
+            .pull_requests
+            .iter()
+            .chain(self.work_items.iter())
+            .chain(self.pipelines.iter())
+            .take(MAX_LIST_RESULTS)
+            .cloned()
+            .collect();
+        let message = if !merged.is_empty() {
+            None
+        } else if self.pending > 0 {
+            Some("Searching Azure DevOps…".to_string())
+        } else if self.messages.is_empty() {
+            Some("No Azure DevOps results.".to_string())
+        } else {
+            Some(self.messages.join(" / "))
+        };
+        (merged, message)
     }
 }
 
@@ -78,10 +163,12 @@ impl LiveSearchGate {
 /// 検索窓部分だけ再描画する。
 pub(super) fn update_badge(state: &RefCell<State>, query: &str) {
     let badge = crate::quick_launch::prefix_badge(query);
+    let live_hint = crate::quick_launch::azure_live_request(query).is_some();
     let (window, dpi, changed) = {
         let mut state = state.borrow_mut();
-        let changed = state.badge != badge;
+        let changed = state.badge != badge || state.live_search_hint != live_hint;
         state.badge = badge;
+        state.live_search_hint = live_hint;
         (state.window, state.dpi, changed)
     };
     if changed {
@@ -355,22 +442,32 @@ fn live_work_item_search_entry(query: &str) -> Entry {
 /// API 検索を投げ、結果が届いたらリストだけ差し替える。
 pub(super) fn start_azure_work_item_live_search(state: &RefCell<State>, query: &str) -> bool {
     let key = format!("wit:{}", query.trim());
-    if !state
-        .borrow_mut()
-        .azure_live_search_gate
-        .try_start(&key, Instant::now())
-    {
+    if !state.borrow_mut().azure_live_search_gate.try_start(
+        LiveSearchKind::WorkItems,
+        &key,
+        Instant::now(),
+    ) {
         return false;
     }
     let (window, reply_id, settings) = {
         let mut state = state.borrow_mut();
-        invalidate_azure_live_searches(&mut state);
+        // 集約モード (`az <query>`) では 3 種を同時に投げるので、他種別の
+        // 実行中フラグや到着済みの結果を潰してはいけない
+        if state.azure_live_combined.is_none() {
+            invalidate_azure_live_searches(&mut state);
+            state.results.clear();
+        }
         state.azure_work_items_active = true;
         state.azure_work_item_reply_id = next_azure_reply_id(state.azure_work_item_reply_id);
         state.azure_work_item_query = query.trim().to_string();
         state.highlight_term.clear();
-        state.empty_message = Some("Searching Azure DevOps work items…".to_string());
-        state.results.clear();
+        // 集約モードでは 3 種の進捗を 1 行にまとめる (種別ごとの文言で
+        // 上書きし合うと、どの検索が走っているか読めなくなる)
+        state.empty_message = Some(if state.azure_live_combined.is_some() {
+            "Searching Azure DevOps…".to_string()
+        } else {
+            "Searching Azure DevOps work items…".to_string()
+        });
         state.rows = vec![RowKind::Message];
         (
             state.window,
@@ -382,22 +479,23 @@ pub(super) fn start_azure_work_item_live_search(state: &RefCell<State>, query: &
         state
             .borrow_mut()
             .azure_live_search_gate
-            .finish(Instant::now());
+            .finish(LiveSearchKind::WorkItems, Instant::now());
         return false;
     };
-    populate_empty_message(list, Some("Searching Azure DevOps work items…"));
+    let progress = STATE.with(|state| state.borrow().empty_message.clone());
+    populate_empty_message(list, progress.as_deref());
     let Some(window) = window else {
         state
             .borrow_mut()
             .azure_live_search_gate
-            .finish(Instant::now());
+            .finish(LiveSearchKind::WorkItems, Instant::now());
         return false;
     };
     if !settings.enabled {
         state
             .borrow_mut()
             .azure_live_search_gate
-            .finish(Instant::now());
+            .finish(LiveSearchKind::WorkItems, Instant::now());
         set_azure_empty_message("Azure DevOps search is disabled in Settings.");
         return false;
     }
@@ -409,6 +507,36 @@ pub(super) fn start_azure_work_item_live_search(state: &RefCell<State>, query: &
         WM_QUICK_LAUNCH_AZURE_RESULTS,
     );
     true
+}
+
+/// Live 検索の応答を `State` へ反映する。集約モード (`az <query>`) では
+/// 種別ごとの結果をマージし、単独種別なら従来どおり丸ごと置き換える。
+/// 戻り値は借用解放後にリストへ流し込むための (labels, rows, message)。
+fn apply_live_results(
+    state: &mut State,
+    kind: LiveSearchKind,
+    candidates: Vec<Entry>,
+    message: Option<String>,
+) -> (Vec<HSTRING>, Vec<RowKind>, Option<String>) {
+    if let Some(mut combined) = state.azure_live_combined.take() {
+        let (merged, message) = combined.absorb(kind, candidates, message);
+        // まだ応答待ちの種別があれば集約を戻して次の到着に備える
+        if combined.pending > 0 {
+            state.azure_live_combined = Some(combined);
+        }
+        state.results = merged;
+        state.empty_message = message;
+    } else {
+        state.results = candidates;
+        state.empty_message = message;
+    }
+    let (labels, rows) = build_rows(&state.results, &[]);
+    state.rows = if rows.is_empty() {
+        vec![RowKind::Message]
+    } else {
+        rows.clone()
+    };
+    (labels, rows, state.empty_message.clone())
 }
 
 pub(super) fn set_azure_empty_message(message: &str) {
@@ -429,7 +557,9 @@ pub(super) fn handle_azure_work_item_results(reply_id: u32) {
     };
     let outcome = STATE.with(|state| {
         let mut state = state.borrow_mut();
-        state.azure_live_search_gate.finish(Instant::now());
+        state
+            .azure_live_search_gate
+            .finish(LiveSearchKind::WorkItems, Instant::now());
         if !accepts_azure_work_item_reply(
             state.azure_work_items_active,
             state.azure_work_item_reply_id,
@@ -438,7 +568,7 @@ pub(super) fn handle_azure_work_item_results(reply_id: u32) {
             return None;
         }
         state.azure_work_items_active = false;
-        state.results = reply
+        let fetched_entries: Vec<Entry> = reply
             .candidates
             .into_iter()
             .take(MAX_LIST_RESULTS)
@@ -450,16 +580,14 @@ pub(super) fn handle_azure_work_item_results(reply_id: u32) {
                 branch: None,
             })
             .collect();
-        let fetched_entries = state.results.clone();
         state.index.merge_cached_work_items(&fetched_entries);
-        state.empty_message = reply.message;
-        let (labels, rows) = build_rows(&state.results, &[]);
-        state.rows = if rows.is_empty() {
-            vec![RowKind::Message]
-        } else {
-            rows.clone()
-        };
-        Some((state.list, labels, rows, state.empty_message.clone()))
+        let (labels, rows, empty_message) = apply_live_results(
+            &mut state,
+            LiveSearchKind::WorkItems,
+            fetched_entries,
+            reply.message,
+        );
+        Some((state.list, labels, rows, empty_message))
     });
     let Some((list, labels, rows, empty_message)) = outcome else {
         return;
@@ -504,21 +632,31 @@ pub(super) fn start_azure_pull_request_live_search(
 ) -> bool {
     let filter = filter.for_live();
     let key = format!("pr:{:?}:{}:{}", filter.status, filter.mine, query.trim());
-    if !state
-        .borrow_mut()
-        .azure_live_search_gate
-        .try_start(&key, Instant::now())
-    {
+    if !state.borrow_mut().azure_live_search_gate.try_start(
+        LiveSearchKind::PullRequests,
+        &key,
+        Instant::now(),
+    ) {
         return false;
     }
     let (window, reply_id, settings) = {
         let mut state = state.borrow_mut();
-        invalidate_azure_live_searches(&mut state);
+        // 集約モード (`az <query>`) では 3 種を同時に投げるので、他種別の
+        // 実行中フラグや到着済みの結果を潰してはいけない
+        if state.azure_live_combined.is_none() {
+            invalidate_azure_live_searches(&mut state);
+            state.results.clear();
+        }
         state.azure_pull_requests_live_active = true;
         state.azure_pull_request_reply_id = next_azure_reply_id(state.azure_pull_request_reply_id);
         state.highlight_term.clear();
-        state.empty_message = Some("Searching Azure DevOps pull requests…".to_string());
-        state.results.clear();
+        // 集約モードでは 3 種の進捗を 1 行にまとめる (種別ごとの文言で
+        // 上書きし合うと、どの検索が走っているか読めなくなる)
+        state.empty_message = Some(if state.azure_live_combined.is_some() {
+            "Searching Azure DevOps…".to_string()
+        } else {
+            "Searching Azure DevOps pull requests…".to_string()
+        });
         state.rows = vec![RowKind::Message];
         (
             state.window,
@@ -530,22 +668,23 @@ pub(super) fn start_azure_pull_request_live_search(
         state
             .borrow_mut()
             .azure_live_search_gate
-            .finish(Instant::now());
+            .finish(LiveSearchKind::PullRequests, Instant::now());
         return false;
     };
-    populate_empty_message(list, Some("Searching Azure DevOps pull requests…"));
+    let progress = STATE.with(|state| state.borrow().empty_message.clone());
+    populate_empty_message(list, progress.as_deref());
     let Some(window) = window else {
         state
             .borrow_mut()
             .azure_live_search_gate
-            .finish(Instant::now());
+            .finish(LiveSearchKind::PullRequests, Instant::now());
         return false;
     };
     if !settings.enabled {
         state
             .borrow_mut()
             .azure_live_search_gate
-            .finish(Instant::now());
+            .finish(LiveSearchKind::PullRequests, Instant::now());
         set_azure_empty_message("Azure DevOps search is disabled in Settings.");
         return false;
     }
@@ -571,7 +710,9 @@ pub(super) fn handle_azure_pull_request_results(reply_id: u32) {
     };
     let outcome = STATE.with(|state| {
         let mut state = state.borrow_mut();
-        state.azure_live_search_gate.finish(Instant::now());
+        state
+            .azure_live_search_gate
+            .finish(LiveSearchKind::PullRequests, Instant::now());
         if !accepts_azure_pull_request_reply(
             state.azure_pull_requests_live_active,
             state.azure_pull_request_reply_id,
@@ -580,7 +721,7 @@ pub(super) fn handle_azure_pull_request_results(reply_id: u32) {
             return None;
         }
         state.azure_pull_requests_live_active = false;
-        state.results = reply
+        let fetched_entries: Vec<Entry> = reply
             .candidates
             .into_iter()
             .take(MAX_LIST_RESULTS)
@@ -592,14 +733,13 @@ pub(super) fn handle_azure_pull_request_results(reply_id: u32) {
                 branch: None,
             })
             .collect();
-        state.empty_message = reply.message;
-        let (labels, rows) = build_rows(&state.results, &[]);
-        state.rows = if rows.is_empty() {
-            vec![RowKind::Message]
-        } else {
-            rows.clone()
-        };
-        Some((state.list, labels, rows, state.empty_message.clone()))
+        let (labels, rows, empty_message) = apply_live_results(
+            &mut state,
+            LiveSearchKind::PullRequests,
+            fetched_entries,
+            reply.message,
+        );
+        Some((state.list, labels, rows, empty_message))
     });
     let Some((list, labels, rows, empty_message)) = outcome else {
         return;
@@ -642,20 +782,30 @@ pub(super) fn start_azure_pipeline_live_search(
     query: &str,
 ) -> bool {
     let key = format!("pipeline:{filter:?}:{}", query.trim());
-    if !state
-        .borrow_mut()
-        .azure_live_search_gate
-        .try_start(&key, Instant::now())
-    {
+    if !state.borrow_mut().azure_live_search_gate.try_start(
+        LiveSearchKind::Pipelines,
+        &key,
+        Instant::now(),
+    ) {
         return false;
     }
     let (window, reply_id, settings) = {
         let mut state = state.borrow_mut();
-        invalidate_azure_live_searches(&mut state);
+        // 集約モード (`az <query>`) では 3 種を同時に投げるので、他種別の
+        // 実行中フラグや到着済みの結果を潰してはいけない
+        if state.azure_live_combined.is_none() {
+            invalidate_azure_live_searches(&mut state);
+            state.results.clear();
+        }
         state.azure_pipelines_live_active = true;
         state.azure_pipeline_reply_id = next_azure_reply_id(state.azure_pipeline_reply_id);
-        state.empty_message = Some("Searching Azure DevOps pipelines…".to_string());
-        state.results.clear();
+        // 集約モードでは 3 種の進捗を 1 行にまとめる (種別ごとの文言で
+        // 上書きし合うと、どの検索が走っているか読めなくなる)
+        state.empty_message = Some(if state.azure_live_combined.is_some() {
+            "Searching Azure DevOps…".to_string()
+        } else {
+            "Searching Azure DevOps pipelines…".to_string()
+        });
         state.rows = vec![RowKind::Message];
         (
             state.window,
@@ -667,22 +817,23 @@ pub(super) fn start_azure_pipeline_live_search(
         state
             .borrow_mut()
             .azure_live_search_gate
-            .finish(Instant::now());
+            .finish(LiveSearchKind::Pipelines, Instant::now());
         return false;
     };
-    populate_empty_message(list, Some("Searching Azure DevOps pipelines…"));
+    let progress = STATE.with(|state| state.borrow().empty_message.clone());
+    populate_empty_message(list, progress.as_deref());
     let Some(window) = window else {
         state
             .borrow_mut()
             .azure_live_search_gate
-            .finish(Instant::now());
+            .finish(LiveSearchKind::Pipelines, Instant::now());
         return false;
     };
     if !settings.enabled {
         state
             .borrow_mut()
             .azure_live_search_gate
-            .finish(Instant::now());
+            .finish(LiveSearchKind::Pipelines, Instant::now());
         set_azure_empty_message("Azure DevOps search is disabled in Settings.");
         return false;
     }
@@ -706,6 +857,9 @@ pub(super) fn start_azure_live_search_for_query(
         return AzureLiveSearchStart::NotApplicable;
     };
     let started = match request {
+        crate::quick_launch::AzureLiveRequest::AllKinds { query } => {
+            start_azure_combined_live_search(state, &query)
+        }
         crate::quick_launch::AzureLiveRequest::WorkItems { query } => {
             start_azure_work_item_live_search(state, &query)
         }
@@ -721,6 +875,49 @@ pub(super) fn start_azure_live_search_for_query(
     } else {
         AzureLiveSearchStart::Suppressed
     }
+}
+
+/// `az <query>` (サブコマンド無し) の `Ctrl+Enter`。PR / Work Item /
+/// Pipeline の 3 種を同時に投げ、到着順に結果をマージして表示する
+/// (横断検索の一覧と Live 検索の対象を揃えるため)。
+///
+/// 集約バッファを先に置いてから各 start を呼ぶ。start 側はこのバッファの
+/// 有無で「他種別を潰さない」「進捗文言を共通化する」を切り替える。
+pub(super) fn start_azure_combined_live_search(state: &RefCell<State>, query: &str) -> bool {
+    {
+        let mut state = state.borrow_mut();
+        invalidate_azure_live_searches(&mut state);
+        state.results.clear();
+        state.highlight_term.clear();
+        state.azure_live_combined = Some(CombinedLiveSearch::new(3));
+    }
+    let started = [
+        start_azure_pull_request_live_search(
+            state,
+            crate::quick_launch::PullRequestFilter {
+                status: crate::azure_devops::PullRequestStatus::Active,
+                status_explicit: false,
+                mine: false,
+                live: true,
+            },
+            query,
+        ),
+        start_azure_work_item_live_search(state, query),
+        start_azure_pipeline_live_search(state, crate::quick_launch::PipelineFilter::All, query),
+    ];
+    let launched = started.iter().filter(|started| **started).count();
+    let mut state_ref = state.borrow_mut();
+    if launched == 0 {
+        // 全種が gate に弾かれた / 設定無効。集約は残さない
+        state_ref.azure_live_combined = None;
+        return false;
+    }
+    // 投げられなかった種別の分だけ待ち数を減らす (減らさないと
+    // 「Searching…」のまま最後の応答で確定しない)
+    if let Some(combined) = state_ref.azure_live_combined.as_mut() {
+        combined.pending = launched;
+    }
+    true
 }
 
 /// 入力が変わった、または別種別の Live 検索を始めるときに、先行応答を
@@ -742,7 +939,9 @@ pub(super) fn handle_azure_pipeline_results(reply_id: u32) {
     };
     let outcome = STATE.with(|state| {
         let mut state = state.borrow_mut();
-        state.azure_live_search_gate.finish(Instant::now());
+        state
+            .azure_live_search_gate
+            .finish(LiveSearchKind::Pipelines, Instant::now());
         if !accepts_azure_pipeline_reply(
             state.azure_pipelines_live_active,
             state.azure_pipeline_reply_id,
@@ -751,7 +950,7 @@ pub(super) fn handle_azure_pipeline_results(reply_id: u32) {
             return None;
         }
         state.azure_pipelines_live_active = false;
-        state.results = reply
+        let fetched_entries: Vec<Entry> = reply
             .candidates
             .into_iter()
             .take(MAX_LIST_RESULTS)
@@ -763,14 +962,13 @@ pub(super) fn handle_azure_pipeline_results(reply_id: u32) {
                 branch: None,
             })
             .collect();
-        state.empty_message = reply.message;
-        let (labels, rows) = build_rows(&state.results, &[]);
-        state.rows = if rows.is_empty() {
-            vec![RowKind::Message]
-        } else {
-            rows.clone()
-        };
-        Some((state.list, labels, rows, state.empty_message.clone()))
+        let (labels, rows, empty_message) = apply_live_results(
+            &mut state,
+            LiveSearchKind::Pipelines,
+            fetched_entries,
+            reply.message,
+        );
+        Some((state.list, labels, rows, empty_message))
     });
     let Some((list, labels, rows, empty_message)) = outcome else {
         return;

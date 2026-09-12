@@ -28,24 +28,33 @@ pub(super) fn paint_window(window: HWND) {
         let hdc = BeginPaint(window, &mut paint);
         let mut client = RECT::default();
         let _ = windows::Win32::UI::WindowsAndMessaging::GetClientRect(window, &mut client);
-        let (dpi, background, surface, badge, detail_font, everything_flags, everything_active) =
-            STATE.with(|state| {
-                let state = state.borrow();
-                let badge = if state.copy_feedback {
-                    Some("COPIED")
-                } else {
-                    state.badge
-                };
-                (
-                    state.dpi,
-                    state.background_brush,
-                    state.surface_brush,
-                    badge,
-                    state.detail_font,
-                    state.everything_flags,
-                    state.everything_active,
-                )
-            });
+        let (
+            dpi,
+            background,
+            surface,
+            badge,
+            detail_font,
+            everything_flags,
+            everything_active,
+            live_hint,
+        ) = STATE.with(|state| {
+            let state = state.borrow();
+            let badge = if state.copy_feedback {
+                Some("COPIED")
+            } else {
+                state.badge
+            };
+            (
+                state.dpi,
+                state.background_brush,
+                state.surface_brush,
+                badge,
+                state.detail_font,
+                state.everything_flags,
+                state.everything_active,
+                state.live_search_hint,
+            )
+        });
         if let Some(background) = background {
             FillRect(hdc, &client, background);
         }
@@ -78,7 +87,7 @@ pub(super) fn paint_window(window: HWND) {
             let _ = DeleteObject(surface_pen.into());
 
             if let Some(badge) = badge {
-                draw_badge(hdc, badge, search, dpi, detail_font);
+                draw_badge(hdc, badge, search, dpi, detail_font, live_hint);
                 if everything_active {
                     draw_everything_flag_badges(hdc, everything_flags, search, dpi, detail_font);
                 }
@@ -97,6 +106,10 @@ pub(super) unsafe fn draw_badge(
     search: RECT,
     dpi: u32,
     detail_font: Option<HFONT>,
+    // 現在の入力で `Ctrl+Enter` の Live 検索が実際に成立するか。
+    // `az project` / `az optimize` は検索対象を持たず Live にならないので、
+    // バッジも通常表示に戻す (表示と挙動の食い違いを残さない)
+    live_hint: bool,
 ) {
     unsafe {
         let color = badge_color(badge);
@@ -135,7 +148,7 @@ pub(super) unsafe fn draw_badge(
             SetBkMode(hdc, TRANSPARENT);
             SetTextColor(hdc, color);
             let mut text_rect = rect;
-            let label = if shows_live_search_hint(Some(badge)) {
+            let label = if live_hint && shows_live_search_hint(Some(badge)) {
                 "Ctrl+Enter  Live"
             } else {
                 badge

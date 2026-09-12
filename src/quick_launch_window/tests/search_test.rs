@@ -151,14 +151,90 @@ fn build_rows_inserts_a_header_row_before_each_section_start() {
 
 #[test]
 fn live_search_gate_blocks_overlap_and_recent_duplicate_but_allows_other_query() {
+    use super::super::search::LiveSearchKind::WorkItems;
     let now = Instant::now();
     let mut gate = super::super::search::LiveSearchGate::default();
 
-    assert!(gate.try_start("wit:one", now));
-    assert!(!gate.try_start("pr:two", now));
-    gate.finish(now + Duration::from_secs(10));
-    assert!(!gate.try_start("WIT:ONE", now + Duration::from_secs(11)));
-    assert!(gate.try_start("wit:two", now + Duration::from_secs(11)));
-    gate.finish(now + Duration::from_secs(11));
-    assert!(gate.try_start("wit:one", now + Duration::from_secs(12)));
+    assert!(gate.try_start(WorkItems, "wit:one", now));
+    assert!(!gate.try_start(WorkItems, "wit:two", now));
+    gate.finish(WorkItems, now + Duration::from_secs(10));
+    assert!(!gate.try_start(WorkItems, "WIT:ONE", now + Duration::from_secs(11)));
+    assert!(gate.try_start(WorkItems, "wit:two", now + Duration::from_secs(11)));
+    gate.finish(WorkItems, now + Duration::from_secs(11));
+    assert!(gate.try_start(WorkItems, "wit:one", now + Duration::from_secs(12)));
+}
+
+/// `az <query>` は 3 種を同時に投げるので、gate は種別ごとに独立している
+/// 必要がある。1 本の gate を共有していたとき、2 本目以降が自分自身に
+/// 弾かれて Live 検索が 1 種しか走らなかった。
+#[test]
+fn live_search_gate_allows_all_kinds_at_once() {
+    use super::super::search::LiveSearchKind::{Pipelines, PullRequests, WorkItems};
+    let now = Instant::now();
+    let mut gate = super::super::search::LiveSearchGate::default();
+
+    assert!(gate.try_start(PullRequests, "pr:x", now));
+    assert!(gate.try_start(WorkItems, "wit:x", now));
+    assert!(gate.try_start(Pipelines, "pipeline:x", now));
+}
+
+/// 集約 Live 検索 (`az <query>`) は、全種そろう前でも届いた分を表示し、
+/// 最後の応答で確定する。PR → Work Item → Pipeline の順に並べる。
+#[test]
+fn combined_live_search_merges_results_as_they_arrive() {
+    use super::super::search::{CombinedLiveSearch, LiveSearchKind};
+    use crate::quick_launch::{Action, Entry};
+
+    fn entry(name: &str) -> Entry {
+        Entry {
+            name: name.to_string(),
+            breadcrumb: String::new(),
+            path: String::new(),
+            action: Action::OpenUrl(String::new()),
+            branch: None,
+        }
+    }
+
+    let mut combined = CombinedLiveSearch::new(3);
+
+    // 1 種目は 0 件でも、残りを待っている間は「検索中」のまま
+    let (merged, message) = combined.absorb(LiveSearchKind::WorkItems, Vec::new(), None);
+    assert!(merged.is_empty());
+    assert_eq!(message.as_deref(), Some("Searching Azure DevOps…"));
+
+    // 2 種目が返れば、残りを待たずにその分を表示する
+    let (merged, message) =
+        combined.absorb(LiveSearchKind::PullRequests, vec![entry("pr-1")], None);
+    assert_eq!(
+        merged
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["pr-1"]
+    );
+    assert_eq!(message, None);
+
+    // PR → Work Item → Pipeline の順で並ぶ
+    let (merged, message) = combined.absorb(LiveSearchKind::Pipelines, vec![entry("pipe-1")], None);
+    assert_eq!(
+        merged
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["pr-1", "pipe-1"]
+    );
+    assert_eq!(message, None);
+}
+
+/// 全種が 0 件だったときだけ「見つからない」を出す。
+#[test]
+fn combined_live_search_reports_empty_only_when_all_kinds_finish() {
+    use super::super::search::{CombinedLiveSearch, LiveSearchKind};
+
+    let mut combined = CombinedLiveSearch::new(2);
+    let (_, message) = combined.absorb(LiveSearchKind::PullRequests, Vec::new(), None);
+    assert_eq!(message.as_deref(), Some("Searching Azure DevOps…"));
+    let (merged, message) = combined.absorb(LiveSearchKind::WorkItems, Vec::new(), None);
+    assert!(merged.is_empty());
+    assert_eq!(message.as_deref(), Some("No Azure DevOps results."));
 }
