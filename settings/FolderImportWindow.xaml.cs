@@ -8,8 +8,18 @@ public partial class FolderImportWindow : Window
 {
     private FolderImportNode? _root;
     public JsonObject? ResultItem { get; private set; }
+    public List<JsonObject>? ResultChildren { get; private set; }
 
     public FolderImportWindow() => InitializeComponent();
+
+    public FolderImportWindow(string rootPath) : this()
+    {
+        Title = $"Import subfolders — {System.IO.Path.GetFileName(rootPath.TrimEnd(System.IO.Path.DirectorySeparatorChar))}";
+        RootPath.Text = rootPath;
+        RootPath.IsReadOnly = true;
+        BrowseButton.IsEnabled = false;
+        Loaded += (_, _) => Preview_Click(this, new RoutedEventArgs());
+    }
 
     private void Browse_Click(object sender, RoutedEventArgs e)
     {
@@ -32,6 +42,7 @@ public partial class FolderImportWindow : Window
     {
         if (_root is null || !int.TryParse((Depth.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content?.ToString(), out _)) { MessageBox.Show(this, "Preview a folder before importing.", "Import", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
         ResultItem = _root.ToItem();
+        ResultChildren = _root.Children.Select(child => child.ToItem()).Where(child => child is not null).Cast<JsonObject>().ToList();
         if (ResultItem is null) { MessageBox.Show(this, "Select at least one folder to import.", "Import", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
         DialogResult = true;
     }

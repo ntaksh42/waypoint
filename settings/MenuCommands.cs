@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 
 namespace Waypoint.Settings;
 
@@ -141,6 +142,44 @@ public partial class MainWindow
         var dialog = new FolderImportWindow { Owner = this };
         if (dialog.ShowDialog() != true || dialog.ResultItem is null) return;
         _selectedMenu.Items.Add(dialog.ResultItem);
+        Changed();
+        RefreshItems();
+        RebuildTree();
+    }
+
+    private void ItemsGrid_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (FindAncestor<DataGridRow>(e.OriginalSource as DependencyObject) is { } row) row.IsSelected = true;
+    }
+
+    private static T? FindAncestor<T>(DependencyObject? current) where T : DependencyObject
+    {
+        while (current is not null)
+        {
+            if (current is T match) return match;
+            current = VisualTreeHelper.GetParent(current);
+        }
+        return null;
+    }
+
+    private void ItemsGrid_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        if (_selectedMenu is null || !string.IsNullOrWhiteSpace(ItemSearch.Text) || ItemsGrid.SelectedItem is not ItemRow { Type: "folder" }) e.Handled = true;
+    }
+
+    private void ImportSubfolders_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedMenu is null || ItemsGrid.SelectedItem is not ItemRow row || row.Type != "folder") return;
+        var path = row.Item["path"]?.GetValue<string>() ?? "";
+        var dialog = new FolderImportWindow(path) { Owner = this };
+        if (dialog.ShowDialog() != true || dialog.ResultChildren is not { Count: > 0 } children) return;
+        row.Item.Remove("path");
+        row.Item.Remove("open");
+        row.Item.Remove("icon");
+        row.Item["type"] = "submenu";
+        var items = new JsonArray { new JsonObject { ["type"] = "folder", ["name"] = "Open this folder", ["path"] = path } };
+        foreach (var child in children) items.Add(child);
+        row.Item["items"] = items;
         Changed();
         RefreshItems();
         RebuildTree();
