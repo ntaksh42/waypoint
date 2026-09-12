@@ -2,24 +2,23 @@
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    DefWindowProcW, GetCursorPos, PostQuitMessage, WM_COMMAND, WM_COPYDATA, WM_DESTROY,
-    WM_DRAWITEM, WM_HOTKEY, WM_LBUTTONUP, WM_MEASUREITEM, WM_RBUTTONUP, WM_SETTINGCHANGE,
-    WM_THEMECHANGED, WM_TIMER,
+    DefWindowProcW, GetCursorPos, PostQuitMessage, WM_COMMAND, WM_COPYDATA, WM_DESTROY, WM_HOTKEY,
+    WM_LBUTTONUP, WM_RBUTTONUP, WM_SETTINGCHANGE, WM_THEMECHANGED, WM_TIMER,
 };
 
 use crate::quick_launch;
 use crate::quick_launch_history;
 use crate::quick_launch_window::{self, WM_QUICK_LAUNCH_ADD_TO_FAVORITES, WM_QUICK_LAUNCH_EXECUTE};
 use crate::shell;
-use crate::trigger::{self, WM_TRIGGER_MENU};
+use crate::trigger;
 
 use super::actions::{
-    add_entry_to_favorites, handle_dynamic_refreshed, rebuild_menu, refresh_dynamic, show_launcher,
-    show_launcher_at_cursor, show_tray_menu,
+    add_entry_to_favorites, handle_dynamic_refreshed, refresh_dynamic, show_quick_launch,
+    show_tray_menu,
 };
 use super::{
-    AZURE_FULL_REFRESH_TIMER_ID, WM_AZURE_DEVOPS_REFRESHED, WM_DYNAMIC_REFRESHED, WM_RELOAD_CONFIG,
-    WM_TRAY, refresh_azure_devops, reload, with_state,
+    AZURE_FULL_REFRESH_TIMER_ID, WM_AZURE_DEVOPS_REFRESHED, WM_DYNAMIC_REFRESHED,
+    WM_OPEN_QUICK_LAUNCH, WM_RELOAD_CONFIG, WM_TRAY, refresh_azure_devops, reload, with_state,
 };
 
 /// Win32 から呼ばれる入口。
@@ -49,47 +48,18 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         WM_TRAY => {
             let event = (lparam.0 as u32) & 0xffff;
             match event {
-                // 左クリックでランチャーメニュー (FR-1.3)
-                WM_LBUTTONUP => show_launcher_at_cursor(hwnd),
+                WM_LBUTTONUP => show_quick_launch(hwnd),
                 WM_RBUTTONUP => show_tray_menu(hwnd),
                 _ => {}
             }
             LRESULT(0)
         }
-        // フックまたは二重起動からの要求 (R-4: 構築はここで行う)
-        WM_TRIGGER_MENU => {
-            let at = POINT {
-                x: wparam.0 as i32,
-                y: lparam.0 as i32,
-            };
-            // 座標が無い (二重起動からの通知) 場合はカーソル位置
-            if at.x == 0 && at.y == 0 {
-                show_launcher_at_cursor(hwnd);
-            } else {
-                show_launcher(hwnd, at, trigger::origin_window());
-            }
+        WM_OPEN_QUICK_LAUNCH => {
+            show_quick_launch(hwnd);
             LRESULT(0)
         }
-        WM_HOTKEY => {
-            if wparam.0 as i32 == trigger::QUICK_LAUNCH_HOTKEY_ID {
-                let origin =
-                    unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
-                // config 由来の候補 (showBranch の Git ブランチ名を含む) を
-                // 表示のたびに読み直す。COM/SQLite を伴わず軽量なので
-                // トリガー経路で呼んでも 50ms 予算を圧迫しない
-                // (`Index::refresh_config_items` 参照)。ここで呼ばないと、
-                // 直前のフル構築 (起動時・設定保存時・お気に入り昇格時) 時点の
-                // ブランチ名のまま古くなる。
-                with_state(|state| {
-                    let state = state.borrow();
-                    if let Some(state) = state.as_ref() {
-                        quick_launch_window::configure_config_items(&state.config, &state.dynamic);
-                    }
-                });
-                let _ = quick_launch_window::show(hwnd, Some(origin));
-            } else {
-                show_launcher_at_cursor(hwnd);
-            }
+        WM_HOTKEY if wparam.0 as i32 == trigger::QUICK_LAUNCH_HOTKEY_ID => {
+            show_quick_launch(hwnd);
             LRESULT(0)
         }
         WM_QUICK_LAUNCH_EXECUTE => {
@@ -213,38 +183,12 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
             }
             LRESULT(1)
         }
-        // ダーク / ライトの切り替えでアイコンの見え方が変わる。
-        // 古いビットマップを捨て、次回表示で引き直す。
-        //
-        // `WM_SETTINGCHANGE` はテーマ以外 (環境変数・ポリシー・ロケール・
-        // 電源設定など) でも飛んでくる。全部に反応するとアイコンキャッシュを
-        // 捨ててメニューを組み直す処理が毎回走り、UI スレッドで実測 15ms
-        // かかる。テーマ変更は lParam が "ImmersiveColorSet" で判別できる
-        // ので、それ以外は無視する。
+        // ダーク / ライトの切り替えで Quick Launch のアイコンを引き直す。
         WM_SETTINGCHANGE | WM_THEMECHANGED => {
             if msg == WM_THEMECHANGED || is_immersive_color_set(lparam) {
                 crate::icon::clear_cache();
-                // メニューフォントとテーマの色も変わる。掴んだまま使わない
-                crate::menu_draw::reset_font();
-                crate::theme::enable_dark_menus();
-                rebuild_menu();
             }
             unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
-        }
-        // オーナードロー項目の採寸と描画 (FR-2.3)
-        WM_MEASUREITEM => {
-            if crate::menu_draw::measure(wparam, lparam) {
-                LRESULT(1)
-            } else {
-                unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
-            }
-        }
-        WM_DRAWITEM => {
-            if crate::menu_draw::draw(wparam, lparam) {
-                LRESULT(1)
-            } else {
-                unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
-            }
         }
         WM_COMMAND => LRESULT(0),
         WM_DESTROY => {

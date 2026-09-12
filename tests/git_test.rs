@@ -1,4 +1,4 @@
-//! FR-2.14 / FR-2.15 のブランチ表示に関するテスト。
+//! Quick Launch のブランチ表示に関するテスト。
 
 use std::path::{Path, PathBuf};
 

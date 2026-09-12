@@ -3,8 +3,7 @@
 //! ウィンドウは見せないが、`HWND_MESSAGE` の子ではなく
 //! 「非表示の通常ウィンドウ」にしている。理由は 2 つ:
 //!
-//! - `TrackPopupMenuEx` は所有ウィンドウを前面化できる必要がある (R-2) 。
-//!   メッセージ専用ウィンドウは前面化できない。
+//! - Quick Launch の所有ウィンドウとして使う。
 //! - 二重起動時に `FindWindowW` で先行プロセスを探す (FR-8.3) 。
 //!   メッセージ専用ウィンドウは列挙・検索の対象外になる。
 
@@ -25,8 +24,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{PCWSTR, Result, w};
 
 use crate::config::{Config, LoadOutcome};
-use crate::menu::BuiltMenu;
-use crate::process;
 use crate::quick_launch_window;
 use crate::trigger::{self, Registration};
 
@@ -34,6 +31,8 @@ use window::wnd_proc;
 
 /// トレイアイコンからの通知。WM_APP 以降はアプリが自由に使える。
 pub(crate) const WM_TRAY: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 1;
+/// 二重起動時に既存プロセスへ Quick Launch の表示を要求する。
+pub const WM_OPEN_QUICK_LAUNCH: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 2;
 pub(crate) const WM_RELOAD_CONFIG: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 3;
 pub const WM_AZURE_DEVOPS_REFRESHED: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 8;
 /// `dynamic::refresh_async` の完了通知 (Recent/Frequent/Windows の再列挙)。
@@ -57,19 +56,15 @@ pub(crate) const ICON_CLOSE: &[u8] = include_bytes!("../../assets/menu/close.png
 pub const CLASS_NAME: PCWSTR = w!("WaypointMessageWindow");
 
 thread_local! {
-    /// 現在の設定と、そこから組み立てたメニュー。
-    /// 設定を再読み込みしたら両方入れ替える。
+    /// 現在の設定と Quick Launch の動的候補。
     static STATE: RefCell<Option<AppState>> = const { RefCell::new(None) };
 }
 
 pub(crate) struct AppState {
     pub(crate) config: Config,
     pub(crate) dynamic: crate::dynamic::Menus,
-    pub(crate) menu: Option<BuiltMenu>,
     /// 設定の読み込みに失敗した理由。空メニューで起動した場合に入る。
     pub(crate) load_error: Option<String>,
-    /// ホットキーが他アプリに取られていた場合に立つ。
-    pub(crate) hotkey_failed: bool,
     pub(crate) quick_launch_hotkey_failed: bool,
 }
 
@@ -79,7 +74,7 @@ pub(crate) fn with_state<R>(f: impl FnOnce(&RefCell<Option<AppState>>) -> R) -> 
     STATE.with(f)
 }
 
-/// 設定を読み込み、メニューを構築して保持する。
+/// 設定を読み込み、Quick Launch の候補を構築して保持する。
 pub fn load_state() {
     let (config, load_error) = match crate::config::load() {
         LoadOutcome::Loaded(c) => {
@@ -96,27 +91,23 @@ pub fn load_state() {
             (Config::default(), Some(e))
         }
     };
-    // 解決できない変数を含む項目を残す。メニューではグレー表示に
-    // なるだけで理由が分からない (FR-5.4)
+    // 解決できない変数を含む項目をログへ残す (FR-5.4)。
     for (name, path) in crate::config::unresolved_items(&config) {
         crate::panic_log::record(&format!("unresolved variable in \"{name}\": {path}"));
     }
     let dynamic = crate::dynamic::refresh();
-    let menu = crate::menu::build(&config, &dynamic).ok();
     quick_launch_window::configure(&config, &dynamic);
     STATE.with(|s| {
         *s.borrow_mut() = Some(AppState {
             config,
             dynamic,
-            menu,
             load_error,
-            hotkey_failed: false,
             quick_launch_hotkey_failed: false,
         })
     });
 }
 
-/// 設定を読み直してメニューを組み立て直す (FR-8.2) 。
+/// 設定を読み直して Quick Launch の候補を組み立て直す (FR-8.2) 。
 pub fn reload(hwnd: HWND) {
     // ホットキーが変わっているかもしれないので張り直す
     trigger::unregister_hotkeys(hwnd);
@@ -124,8 +115,6 @@ pub fn reload(hwnd: HWND) {
     // 古いビットマップを使い回さないよう捨ててから組み直す
     crate::icon::clear_cache();
     load_state();
-    let reg = register_hotkey_from_config(hwnd);
-    set_hotkey_failed(!reg.is_active());
     let quick_reg = register_quick_launch_hotkey_from_config(hwnd);
     set_quick_launch_hotkey_failed(!quick_reg.is_active());
     refresh_azure_devops(hwnd);
@@ -147,15 +136,6 @@ pub fn refresh_azure_devops(hwnd: HWND) {
     });
 }
 
-/// 読み込み済みの設定でホットキーを登録する。
-/// 他アプリに取られていた場合はフックで横取りする (FR-1.2.1) 。
-pub fn register_hotkey_from_config(hwnd: HWND) -> Registration {
-    STATE.with(|s| match s.borrow().as_ref() {
-        Some(state) => trigger::register_hotkey(hwnd, &state.config.settings.trigger.hotkey),
-        None => Registration::Failed,
-    })
-}
-
 pub fn register_quick_launch_hotkey_from_config(hwnd: HWND) -> Registration {
     STATE.with(|s| match s.borrow().as_ref() {
         Some(state) => {
@@ -165,12 +145,12 @@ pub fn register_quick_launch_hotkey_from_config(hwnd: HWND) -> Registration {
     })
 }
 
-/// 現在のホットキー設定。診断表示に使う。
-pub fn hotkey_spec() -> String {
+/// 現在の Quick Launch ホットキー設定。診断表示に使う。
+pub fn quick_launch_hotkey_spec() -> String {
     STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|st| st.config.settings.trigger.hotkey.clone())
+            .map(|st| st.config.settings.quick_launch.hotkey.clone())
             .unwrap_or_default()
     })
 }
@@ -178,37 +158,6 @@ pub fn hotkey_spec() -> String {
 /// 読み込み済みの設定の項目数。診断表示に使う。
 pub fn item_count() -> usize {
     STATE.with(|s| s.borrow().as_ref().map_or(0, |st| st.config.items.len()))
-}
-
-/// メニューに登録された実行可能項目の数。診断表示に使う。
-pub fn action_count() -> usize {
-    STATE.with(|s| {
-        s.borrow()
-            .as_ref()
-            .and_then(|st| st.menu.as_ref())
-            .map_or(0, |m| m.action_count())
-    })
-}
-
-/// 組み立て済みメニューの全項目を「表示名 → 解決済みパス」で返す。
-/// 診断用。パスが解決できなかった項目はメニューでグレー表示になる。
-pub fn dump_actions() -> Vec<(usize, String, String)> {
-    STATE.with(|s| {
-        s.borrow()
-            .as_ref()
-            .and_then(|st| st.menu.as_ref())
-            .map(|m| m.dump())
-            .unwrap_or_default()
-    })
-}
-
-/// ホットキーが取れなかったことをトレイメニューで知らせるために保持する。
-pub fn set_hotkey_failed(failed: bool) {
-    STATE.with(|s| {
-        if let Some(state) = s.borrow_mut().as_mut() {
-            state.hotkey_failed = failed;
-        }
-    });
 }
 
 pub fn set_quick_launch_hotkey_failed(failed: bool) {
@@ -339,24 +288,4 @@ pub fn signal_reload() -> bool {
         )
         .is_ok()
     }
-}
-
-/// 中ボタンのトリガーを受け付けてよいか (FR-1.4 / R-1) 。
-pub fn middle_click_allowed() -> bool {
-    STATE.with(|s| {
-        let state = s.borrow();
-        let Some(state) = state.as_ref() else {
-            return false;
-        };
-        if !state.config.settings.trigger.middle_click {
-            return false;
-        }
-        // ブラウザ等ではオートスクロールを壊さないよう見送る
-        match process::foreground_process_name() {
-            Some(name) => {
-                !process::is_excluded(&name, &state.config.settings.trigger.excluded_processes)
-            }
-            None => true,
-        }
-    })
 }

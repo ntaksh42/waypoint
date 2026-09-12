@@ -4,7 +4,7 @@ use crate::config::Config;
 use crate::dynamic::Menus;
 
 /// showBranch が真の Folder は、このリポジトリ自身を指せば
-/// Entry::branch にブランチ名が入る (FR-2.14 相当) 。
+/// Entry::branch にブランチ名が入る。
 #[test]
 fn folder_with_show_branch_carries_branch_name() {
     let config = Config {

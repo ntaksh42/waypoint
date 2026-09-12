@@ -42,6 +42,11 @@ if (-not $SkipBuild) {
     Write-Host "cargo build --release --target $target"
     cargo build --release --target $target
     if ($LASTEXITCODE -ne 0) { throw "cargo build に失敗しました" }
+
+    Write-Host "dotnet publish settings (self-contained x64)"
+    dotnet publish .\settings\Waypoint.Settings.csproj -c Release -r win-x64 --self-contained true `
+        -p:PublishSingleFile=true -p:DebugType=None -o $relDir
+    if ($LASTEXITCODE -ne 0) { throw "Settings の .NET publish に失敗しました" }
 }
 
 foreach ($exe in @('waypoint.exe', 'waypoint-settings.exe', 'waypoint-tab-host.exe')) {

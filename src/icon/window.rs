@@ -9,7 +9,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use super::cached_bitmap;
 use super::convert::icon_to_bitmap;
-use super::menu_icon_size;
 
 /// Current Windows の各項目にそのウィンドウのアイコンを付ける。
 ///
@@ -17,11 +16,7 @@ use super::menu_icon_size;
 /// `WM_GETICON` に応答する形でアイコンを渡す (実測でクラス側は
 /// large=0/small=0 だった) 。`WM_GETICON` を先に試し、無応答なら
 /// クラスアイコンへフォールバックする。
-pub fn bitmap_for_window(hwnd: HWND) -> Option<HBITMAP> {
-    bitmap_for_window_sized(hwnd, menu_icon_size().cx)
-}
-
-/// `bitmap_for_window` のメニュー設定に依存しない版。[`super::bitmap_for_sized`] 参照。
+/// 指定ウィンドウのアイコンを指定寸法でビットマップ化する。
 pub(crate) fn bitmap_for_window_sized(hwnd: HWND, size: i32) -> Option<HBITMAP> {
     let key = format!("window-icon:{size}:{}", hwnd.0 as isize);
     cached_bitmap(&key, || unsafe {

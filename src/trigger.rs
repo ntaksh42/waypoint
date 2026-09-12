@@ -1,15 +1,14 @@
-//! トリガー: マウス中ボタンの低レベルフックとグローバルホットキー。
+//! Quick Launch のグローバルホットキー。
 //!
 //! # フック内で仕事をしないこと
 //!
-//! 低レベルフックの応答が `LowLevelHooksTimeout` (既定 300ms) を超えると、
-//! Windows はフックを**通知なく解除する** (R-4) 。以後トリガーが効かなくなり
-//! 再現しづらい不具合になるため、フック内では「メニューを出すか」の判定だけ
-//! 行い、実際の構築と表示は `PostMessage` した先で行う。
+//! 低レベルキーボードフックの応答が `LowLevelHooksTimeout` (既定 300ms) を
+//! 超えると Windows はフックを**通知なく解除する**。フック内では一致判定と
+//! `PostMessage` だけを行い、Quick Launch の表示は受け口ウィンドウへ任せる。
 
 use std::cell::{Cell, RefCell};
 
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, HOT_KEY_MODIFIERS, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS,
     KEYBDINPUT, KEYEVENTF_KEYUP, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN,
@@ -17,21 +16,13 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, HHOOK, KBDLLHOOKSTRUCT, MSLLHOOKSTRUCT, PostMessageW, SetWindowsHookExW,
-    UnhookWindowsHookEx, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_APP, WM_HOTKEY, WM_KEYDOWN, WM_KEYUP,
-    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    CallNextHookEx, HHOOK, KBDLLHOOKSTRUCT, PostMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
+    WH_KEYBOARD_LL, WM_HOTKEY, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 use windows::core::Result;
 
-/// フックが「メニューを出せ」と伝えるためのメッセージ。
-pub const WM_TRIGGER_MENU: u32 = WM_APP + 2;
-
-/// ホットキーの識別子。
-pub const HOTKEY_ID: i32 = 1;
-pub const QUICK_LAUNCH_HOTKEY_ID: i32 = 2;
-
-/// ドラッグとみなす移動量 (ピクセル) 。これを超えたらメニューを出さない。
-const DRAG_THRESHOLD: i32 = 5;
+/// Quick Launch ホットキーの識別子。
+pub const QUICK_LAUNCH_HOTKEY_ID: i32 = 1;
 
 /// 自分が送った打鍵の目印。フックで自分の注入を見分けるために付ける。
 /// 値は "WYPT"。
@@ -41,11 +32,7 @@ thread_local! {
     /// フックの通知先。フックプロシージャは状態を持てないので
     /// スレッドローカルに置く。
     static TARGET: Cell<isize> = const { Cell::new(0) };
-    /// 中ボタンを押した位置。離した位置と比べてドラッグを判定する (FR-1.5) 。
-    static PRESS_AT: Cell<(i32, i32)> = const { Cell::new((0, 0)) };
-    /// 中ボタンを押した時点で最前面だったウィンドウ (FR-1.6) 。
-    static ORIGIN: Cell<isize> = const { Cell::new(0) };
-    /// `RegisterHotKey` が失敗し、フックで横取りするホットキー (FR-1.2.1) 。
+    /// `RegisterHotKey` が失敗し、フックで横取りするホットキー (FR-9.1) 。
     static FALLBACKS: RefCell<Vec<Fallback>> = const { RefCell::new(Vec::new()) };
     /// 横取り用のキーボードフック。必要になるまで張らない。
     static KEY_HOOK: Cell<isize> = const { Cell::new(0) };
@@ -58,7 +45,7 @@ thread_local! {
 pub enum Registration {
     /// `RegisterHotKey` で取れた。
     Native,
-    /// OS 側に先に握られていたので、フックで横取りしている (FR-1.2.1) 。
+    /// OS 側に先に握られていたので、フックで横取りしている (FR-9.1) 。
     Hook,
     /// 指定が不正、またはフックも張れず受け取れない。
     Failed,
@@ -86,72 +73,6 @@ struct Fallback {
     id: i32,
     mods: HOT_KEY_MODIFIERS,
     vk: u32,
-}
-
-/// 直前のトリガーで保持した元ウィンドウ。`reuse` の対象になる。
-pub fn origin_window() -> Option<HWND> {
-    let raw = ORIGIN.with(|o| o.get());
-    (raw != 0).then_some(HWND(raw as *mut _))
-}
-
-/// 中ボタンのフックを張る。戻り値は解除用のハンドル。
-pub fn install_mouse_hook(target: HWND) -> Result<HHOOK> {
-    TARGET.with(|t| t.set(target.0 as isize));
-    unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), None, 0) }
-}
-
-pub fn remove_mouse_hook(hook: HHOOK) {
-    unsafe {
-        let _ = UnhookWindowsHookEx(hook);
-    }
-}
-
-unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    // code < 0 のときは処理せず次へ回すのが規約
-    if code >= 0 {
-        let msg = wparam.0 as u32;
-        if msg == WM_MBUTTONDOWN || msg == WM_MBUTTONUP {
-            // 生ポインタ参照は最小範囲に閉じる
-            let pt = unsafe { (*(lparam.0 as *const MSLLHOOKSTRUCT)).pt };
-
-            if msg == WM_MBUTTONDOWN {
-                PRESS_AT.with(|p| p.set((pt.x, pt.y)));
-                ORIGIN.with(|o| {
-                    let fg =
-                        unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
-                    o.set(fg.0 as isize);
-                });
-            } else if should_open(pt) {
-                // ここで消費し、アプリ側には中ボタンを渡さない
-                notify(pt);
-                return LRESULT(1);
-            }
-        }
-    }
-    unsafe { CallNextHookEx(None, code, wparam, lparam) }
-}
-
-/// 離した位置が押した位置から離れていればドラッグ (FR-1.5) 。
-/// ドラッグならメニューを出さず、アプリ側にそのまま通す。
-fn should_open(release: POINT) -> bool {
-    let (px, py) = PRESS_AT.with(|p| p.get());
-    (release.x - px).abs() <= DRAG_THRESHOLD && (release.y - py).abs() <= DRAG_THRESHOLD
-}
-
-/// フック内では判定だけ。構築と表示はメッセージを投げた先で行う (R-4) 。
-fn notify(pt: POINT) {
-    let target = TARGET.with(|t| t.get());
-    if target == 0 {
-        return;
-    }
-    unsafe {
-        let _ = PostMessageW(
-            Some(HWND(target as *mut _)),
-            WM_TRIGGER_MENU,
-            WPARAM(pt.x as usize),
-            LPARAM(pt.y as isize),
-        );
-    }
 }
 
 /// `"Win+W"` のような文字列を修飾キーと仮想キーコードに分解する。
@@ -239,16 +160,11 @@ fn key_name(vk: u32) -> Option<String> {
     None
 }
 
-/// ホットキーを登録する。
-pub fn register_hotkey(target: HWND, spec: &str) -> Registration {
-    register_hotkey_with_id(target, HOTKEY_ID, spec)
-}
-
 pub fn register_quick_launch_hotkey(target: HWND, spec: &str) -> Registration {
     register_hotkey_with_id(target, QUICK_LAUNCH_HOTKEY_ID, spec)
 }
 
-/// `RegisterHotKey` を試し、取られていたらフックへ退避する (FR-1.2.1) 。
+/// `RegisterHotKey` を試し、取られていたらフックへ退避する (FR-9.1) 。
 ///
 /// Windows 11 の Widgets は `Win+W` を先に握っており、`RegisterHotKey` は
 /// 「既に登録されています」で失敗する。低レベルフックは OS のホットキー処理
@@ -273,7 +189,6 @@ fn register_hotkey_with_id(target: HWND, id: i32, spec: &str) -> Registration {
 
 pub fn unregister_hotkeys(target: HWND) {
     unsafe {
-        let _ = UnregisterHotKey(Some(target), HOTKEY_ID);
         let _ = UnregisterHotKey(Some(target), QUICK_LAUNCH_HOTKEY_ID);
     }
     FALLBACKS.with(|f| f.borrow_mut().clear());
@@ -341,11 +256,7 @@ fn is_repeat_key(previous: u32, current: u32) -> bool {
 
 /// 押されたキーが横取り対象で、修飾キーの状態も一致するか。
 ///
-/// 同じ vk を異なる修飾キーで登録した Fallback が複数あり得る
-/// (例: メインホットキーとクイックランチのホットキーが両方ともフック
-/// 経路に落ちた場合) 。最初に vk が一致した 1 件だけを見ると、修飾キーが
-/// 違う後続の Fallback が一致するはずの入力を取りこぼすため、vk が一致する
-/// 全件について修飾キーの一致を確かめる。
+/// 仮想キーが一致する候補について、修飾キーの一致まで確認する。
 fn match_fallback(vk: u32) -> Option<Fallback> {
     FALLBACKS.with(|f| find_matching(f.borrow().iter().copied(), vk, modifiers_match))
 }
@@ -414,9 +325,8 @@ mod tests {
     use super::{Fallback, find_matching, is_repeat_key};
     use windows::Win32::UI::Input::KeyboardAndMouse::{HOT_KEY_MODIFIERS, MOD_ALT, MOD_WIN};
 
-    /// 同じ vk (Space) をメインホットキー (Win+Space) とクイックランチの
-    /// ホットキー (Alt+Space) の両方がフックへ退避した場合、押されている
-    /// 修飾キーに応じて正しい方を選べること。最初に登録された Fallback の
+    /// 同じ vk (Space) の候補が複数ある場合、押されている修飾キーに応じて
+    /// 正しい方を選べること。最初に登録された Fallback の
     /// vk だけを見て決め打ちすると、後から一致するはずの Fallback を
     /// 取りこぼす (修正前の実際のバグ)。
     #[test]

@@ -16,36 +16,6 @@ pub use item::{Item, OpenMode};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TriggerSettings {
-    #[serde(default = "default_true")]
-    pub middle_click: bool,
-    #[serde(default = "default_hotkey")]
-    pub hotkey: String,
-    #[serde(default = "default_excluded")]
-    pub excluded_processes: Vec<String>,
-}
-
-impl Default for TriggerSettings {
-    fn default() -> Self {
-        Self {
-            middle_click: true,
-            hotkey: default_hotkey(),
-            excluded_processes: default_excluded(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MenuSettings {
-    #[serde(default = "default_icon_size")]
-    pub icon_size: u32,
-    #[serde(default = "default_true")]
-    pub numeric_accelerators: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct QuickLaunchSettings {
     #[serde(default = "default_quick_launch_hotkey")]
     pub hotkey: String,
@@ -129,22 +99,9 @@ pub struct AzureDevOpsProject {
     pub interest_repositories: Vec<String>,
 }
 
-impl Default for MenuSettings {
-    fn default() -> Self {
-        Self {
-            icon_size: default_icon_size(),
-            numeric_accelerators: true,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
-    #[serde(default)]
-    pub trigger: TriggerSettings,
-    #[serde(default)]
-    pub menu: MenuSettings,
     #[serde(default)]
     pub quick_launch: QuickLaunchSettings,
     #[serde(default)]
@@ -215,11 +172,6 @@ fn default_true() -> bool {
 fn default_version() -> u32 {
     1
 }
-/// QAP の既定と同じ 32px。16px はメニューが窮屈で視認性が落ちる
-fn default_icon_size() -> u32 {
-    32
-}
-
 fn default_quick_launch_hotkey() -> String {
     "Alt+Space".to_string()
 }
@@ -227,23 +179,6 @@ fn default_quick_launch_hotkey() -> String {
 fn default_visible_results() -> usize {
     12
 }
-/// 既定のホットキー。
-///
-/// 仕様書 (`docs/spec.md` FR-1.2) 通り `Win+W`。ただし Windows 11 では
-/// Widgets が予約済みで `RegisterHotKey` が「既に登録されています」で
-/// 失敗する環境がある (`Win+Q` も検索に予約済み、実測で確認済み)。
-/// その場合は低レベルキーボードフックで横取りする (FR-1.2.1)。
-fn default_hotkey() -> String {
-    "Win+W".to_string()
-}
-fn default_excluded() -> Vec<String> {
-    vec![
-        "chrome.exe".to_string(),
-        "msedge.exe".to_string(),
-        "firefox.exe".to_string(),
-    ]
-}
-
 /// 設定ファイルのパス。`%APPDATA%\waypoint\config.json`
 pub fn config_path() -> Option<PathBuf> {
     dirs::config_dir().map(|d| d.join("waypoint").join("config.json"))
@@ -518,30 +453,30 @@ mod tests {
     }
 
     #[test]
-    fn shared_settings_override_hotkey_from_config() {
+    fn shared_settings_override_quick_launch_hotkey_from_config() {
         let mut cfg = Config::default();
-        assert_eq!(cfg.settings.trigger.hotkey, "Win+W");
+        assert_eq!(cfg.settings.quick_launch.hotkey, "Alt+Space");
 
         let shared_text = serde_json::to_string(&{
             let mut settings = cfg.settings.clone();
-            settings.trigger.hotkey = "Ctrl+Alt+Space".to_string();
+            settings.quick_launch.hotkey = "Ctrl+Alt+Space".to_string();
             settings
         })
         .unwrap();
 
         merge_shared_settings_text(&mut cfg, &shared_text);
 
-        assert_eq!(cfg.settings.trigger.hotkey, "Ctrl+Alt+Space");
+        assert_eq!(cfg.settings.quick_launch.hotkey, "Ctrl+Alt+Space");
     }
 
     #[test]
     fn invalid_shared_settings_text_leaves_config_untouched() {
         let mut cfg = Config::default();
-        let original_hotkey = cfg.settings.trigger.hotkey.clone();
+        let original_hotkey = cfg.settings.quick_launch.hotkey.clone();
 
         merge_shared_settings_text(&mut cfg, "not valid json");
 
-        assert_eq!(cfg.settings.trigger.hotkey, original_hotkey);
+        assert_eq!(cfg.settings.quick_launch.hotkey, original_hotkey);
     }
 
     #[test]

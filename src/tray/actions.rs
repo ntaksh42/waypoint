@@ -1,6 +1,6 @@
 //! メニュー選択後のアクション実行と、トレイ右クリックメニュー (FR-8.2) 。
 
-use windows::Win32::Foundation::{HWND, POINT};
+use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, DestroyMenu, DestroyWindow, HMENU, MENUITEMINFOW, MF_CHECKED,
     MF_SEPARATOR, MF_STRING, MIIM_BITMAP, SetForegroundWindow, SetMenuItemInfoW, TPM_BOTTOMALIGN,
@@ -8,10 +8,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
-use crate::menu::{Action, Selection};
 use crate::quick_launch;
 use crate::quick_launch_window;
-use crate::shell;
 
 use super::window::cursor_pos;
 use super::{
@@ -19,63 +17,15 @@ use super::{
     WM_DYNAMIC_REFRESHED, refresh_azure_devops, reload, with_state,
 };
 
-pub(crate) fn show_launcher_at_cursor(hwnd: HWND) {
-    // ホットキー経由では元ウィンドウ = 現在の最前面
+pub(crate) fn show_quick_launch(hwnd: HWND) {
     let origin = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
-    show_launcher(hwnd, cursor_pos(), Some(origin));
-}
-
-/// ランチャーのメニューを表示し、選ばれた項目を実行する。
-pub(crate) fn show_launcher(hwnd: HWND, at: POINT, origin: Option<HWND>) {
-    // `TrackPopupMenuEx` はメニューが閉じるまでモーダルにメッセージを
-    // 汲み続ける。表示中に配送された別メッセージ (WM_DYNAMIC_REFRESHED /
-    // WM_RELOAD_CONFIG 等) が STATE を borrow_mut() できるよう、表示
-    // そのものは borrow を解放してから行う (crate::menu::BuiltMenu::show
-    // 参照)。ID → 動作の対応表もここで複製しておく。表示中に設定が
-    // リロードされ state.menu が別インスタンスへ差し替わっても、実際に
-    // 表示したメニューの対応表で解決できるようにするため。
-    let snapshot = with_state(|s| {
-        let state = s.borrow();
-        let state = state.as_ref()?;
-        let menu = state.menu.as_ref()?;
-        Some((menu.handle(), menu.actions_snapshot()))
-    });
-    let selection = snapshot.and_then(|(handle, actions)| {
-        let id = crate::menu::BuiltMenu::show(handle, hwnd, at)?;
-        crate::menu::BuiltMenu::resolve_from(&actions, id)
-    });
-
-    match selection {
-        Some(Selection::Action(Action::Open { path, open })) => {
-            let _ = shell::open(&path, open, origin);
-            refresh_dynamic(hwnd);
+    with_state(|state| {
+        let state = state.borrow();
+        if let Some(state) = state.as_ref() {
+            quick_launch_window::configure_config_items(&state.config, &state.dynamic);
         }
-        Some(Selection::Action(Action::ActivateWindow { hwnd: target })) => {
-            shell::activate_window(HWND(target as *mut _));
-            refresh_dynamic(hwnd);
-        }
-        Some(Selection::Action(Action::OpenShell { target })) => {
-            let _ = shell::open_shell_item(&target);
-            refresh_dynamic(hwnd);
-        }
-        Some(Selection::Settings) => open_config_in_editor(),
-        Some(Selection::Reload) => reload(hwnd),
-        Some(Selection::Close) | None => refresh_dynamic(hwnd),
-    }
-}
-
-/// 保持済みの設定と動的データのままメニューだけ組み直す。
-///
-/// テーマ変更のようにアイコンだけ作り直したい場合に使う。
-/// Recent / Frequent の再列挙は不要なので `refresh_dynamic` は呼ばない。
-pub(crate) fn rebuild_menu() {
-    with_state(|s| {
-        let mut state = s.borrow_mut();
-        let Some(state) = state.as_mut() else {
-            return;
-        };
-        state.menu = crate::menu::build(&state.config, &state.dynamic).ok();
     });
+    let _ = quick_launch_window::show(hwnd, Some(origin));
 }
 
 /// Quick Launch の `Ctrl+Shift+Enter` で選択した候補を config の
@@ -96,7 +46,6 @@ pub(crate) fn add_entry_to_favorites(entry: quick_launch::Entry) {
             crate::panic_log::record(&format!("failed to save added favorite: {e}"));
             return None;
         }
-        state.menu = crate::menu::build(&state.config, &state.dynamic).ok();
         Some(state.dynamic.clone())
     });
     if let Some(dynamic) = dynamic {
@@ -120,9 +69,9 @@ pub(crate) fn refresh_dynamic(hwnd: HWND) {
     crate::dynamic::refresh_async(hwnd, WM_DYNAMIC_REFRESHED);
 }
 
-/// `WM_DYNAMIC_REFRESHED` を受けて、列挙結果をメニューと Quick Launch へ反映する。
+/// `WM_DYNAMIC_REFRESHED` を受けて、列挙結果を Quick Launch へ反映する。
 ///
-/// Quick Launch 側は `configure_dynamic` (Recent/Frequent Folders と開いている
+/// `configure_dynamic` (Recent/Frequent Folders と開いている
 /// ウィンドウだけを差し替える軽量版) を使う。`configure` (フル `Index::build`)
 /// を使うと、ここで毎回 apps/bookmarks/history の再スキャンが道連れになる。
 pub(crate) fn handle_dynamic_refreshed() {
@@ -134,7 +83,6 @@ pub(crate) fn handle_dynamic_refreshed() {
         let Some(state) = state.as_mut() else {
             return;
         };
-        state.menu = crate::menu::build(&state.config, &dynamic).ok();
         quick_launch_window::configure_dynamic(&state.config, &dynamic);
         state.dynamic = dynamic;
     });
@@ -210,14 +158,6 @@ unsafe fn build_tray_items(menu: HMENU) -> Result<()> {
                 if let Some(e) = &st.load_error {
                     warnings.push(e.clone());
                 }
-                if st.hotkey_failed {
-                    // 他アプリに取られただけならフックで横取りする (FR-1.2.1) 。
-                    // ここまで来るのは指定が不正な場合。無言で効かないと原因が分からない
-                    warnings.push(format!(
-                        "hotkey \"{}\" could not be registered",
-                        st.config.settings.trigger.hotkey
-                    ));
-                }
                 if st.quick_launch_hotkey_failed {
                     warnings.push(format!(
                         "Quick Launch hotkey \"{}\" could not be registered",
@@ -254,8 +194,7 @@ unsafe fn build_tray_items(menu: HMENU) -> Result<()> {
         }
 
         AppendMenuW(menu, MF_STRING, ID_SETTINGS, w!("Settings..."))?;
-        // ランチャーメニュー側と同じ歯車で揃える
-        if let Some(bitmap) = crate::icon::bitmap_for_settings() {
+        if let Some(bitmap) = crate::icon::bitmap_for_settings_sized(16) {
             set_tray_bitmap(menu, ID_SETTINGS, bitmap);
         }
         AppendMenuW(menu, MF_STRING, ID_RELOAD, w!("Reload config"))?;
@@ -279,7 +218,7 @@ unsafe fn build_tray_items(menu: HMENU) -> Result<()> {
             w!("Start with Windows"),
         )?;
         if let Ok(exe) = std::env::current_exe()
-            && let Some(bitmap) = crate::icon::bitmap_for(exe.to_string_lossy().as_ref())
+            && let Some(bitmap) = crate::icon::bitmap_for_sized(exe.to_string_lossy().as_ref(), 16)
         {
             set_tray_bitmap(menu, ID_AUTOSTART, bitmap);
         }
@@ -293,7 +232,7 @@ unsafe fn build_tray_items(menu: HMENU) -> Result<()> {
 
 unsafe fn set_tray_item_icon(menu: HMENU, id: usize, key: &str, png: &[u8]) {
     unsafe {
-        let Some(bitmap) = crate::icon::bitmap_for_asset(key, png) else {
+        let Some(bitmap) = crate::icon::bitmap_for_asset_sized(key, png, 16) else {
             return;
         };
         set_tray_bitmap(menu, id, bitmap);

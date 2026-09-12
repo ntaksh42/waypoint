@@ -313,7 +313,7 @@ fn terminal_folder_entries(entries: &[Entry]) -> (Vec<Entry>, Vec<super::search:
 
 /// `inherited_show_branch` は祖先 Submenu の showBranch が真だったか。
 /// 真なら配下の Folder は自身の showBranch を問わずブランチ名を持たせる
-/// (FR-2.14、menu.rs の build_level と同じ継承規則) 。
+/// 設定した `showBranch` の継承規則に従う。
 fn collect_items(
     items: &[Item],
     variables: &std::collections::BTreeMap<String, String>,
@@ -331,7 +331,7 @@ fn collect_items(
                 ..
             } => {
                 if let Some(path) = crate::config::expand(path, variables) {
-                    // ブランチ名の付与は構築時に済ませる。表示経路では読まない (FR-2.15)
+                    // ブランチ名の付与は構築時に済ませる。表示経路では読まない。
                     let branch = (inherited_show_branch || *show_branch)
                         .then(|| crate::git::branch_of(&path))
                         .flatten();

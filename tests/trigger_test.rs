@@ -1,6 +1,5 @@
-//! ホットキー文字列の解析と除外リスト判定のテスト。
+//! Quick Launch ホットキー文字列の解析テスト。
 
-use waypoint::process::is_excluded;
 use waypoint::trigger::{format_hotkey, parse_hotkey};
 
 use windows::Win32::UI::Input::KeyboardAndMouse::{MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN};
@@ -79,24 +78,4 @@ fn format_orders_modifiers_consistently() {
 fn format_rejects_keys_the_parser_cannot_read() {
     // VK_OEM_1 (`;`)。ホットキーには使えないので記録も拒否する
     assert!(format_hotkey(MOD_CONTROL, 0xBA).is_none());
-}
-
-#[test]
-fn excluded_match_ignores_case() {
-    let list = vec!["chrome.exe".to_string(), "msedge.exe".to_string()];
-    assert!(is_excluded("chrome.exe", &list));
-    assert!(is_excluded("CHROME.EXE", &list));
-    assert!(is_excluded("Chrome.Exe", &list));
-}
-
-#[test]
-fn non_excluded_process_passes() {
-    let list = vec!["chrome.exe".to_string()];
-    assert!(!is_excluded("explorer.exe", &list));
-    assert!(!is_excluded("", &list));
-}
-
-#[test]
-fn empty_exclusion_list_excludes_nothing() {
-    assert!(!is_excluded("chrome.exe", &[]));
 }

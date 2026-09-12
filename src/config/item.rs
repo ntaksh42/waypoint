@@ -22,7 +22,7 @@ pub enum Item {
         open: Option<OpenMode>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         icon: Option<String>,
-        /// Git ブランチ名を表示するか (FR-2.14) 。
+        /// Git ブランチ名を表示するか。
         /// 項目ごとのオプトイン。既定の偽では `.git` を一切読まない。
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         show_branch: bool,
@@ -50,7 +50,7 @@ pub enum Item {
         name: String,
         #[serde(default)]
         items: Vec<Item>,
-        /// 配下の Folder 項目すべてに showBranch を継承させる (FR-2.14) 。
+        /// 配下の Folder 項目すべてに showBranch を継承させる。
         /// 個々の Folder 側の showBranch との OR。既定は偽
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         show_branch: bool,

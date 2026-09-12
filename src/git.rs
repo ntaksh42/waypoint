@@ -1,4 +1,4 @@
-//! Git のブランチ名を取得する (FR-2.14 / FR-2.15) 。
+//! Git のブランチ名を Quick Launch の候補表示用に取得する。
 //!
 //! `git` コマンドは起動しない。プロセス生成は数十 ms かかり、
 //! メニュー構築のたびに項目数だけ積み上がるため、表示遅延の目標
@@ -21,7 +21,7 @@ pub fn branch_of(path: &str) -> Option<String> {
     parse_head(&head)
 }
 
-/// ブランチ名があれば項目名の後ろに `[名前]` を付す (FR-2.14) 。
+/// ブランチ名があれば候補名の後ろに `[名前]` を付す。
 /// リポジトリでない項目は名前のみ。
 pub fn with_branch(name: &str, branch: Option<&str>) -> String {
     match branch {

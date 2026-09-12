@@ -3,7 +3,7 @@
 // コンソールウィンドウを出さない
 #![windows_subsystem = "windows"]
 
-use waypoint::{autostart, panic_log, shell, single, theme, tray, trigger};
+use waypoint::{autostart, panic_log, shell, single, tray, trigger};
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::HiDpi::{
@@ -38,8 +38,6 @@ fn main() {
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
-    theme::enable_dark_menus();
-
     // 二重起動なら既存プロセスにメニューを出させて終わる (FR-8.3)
     let _instance = match single::acquire() {
         Ok(guard) => guard,
@@ -73,19 +71,16 @@ fn main() {
 
     tray::load_state();
 
-    let hotkey = tray::register_hotkey_from_config(hwnd);
     let quick_launch_hotkey = tray::register_quick_launch_hotkey_from_config(hwnd);
-    tray::set_hotkey_failed(!hotkey.is_active());
     tray::set_quick_launch_hotkey_failed(!quick_launch_hotkey.is_active());
-    let hook = trigger::install_mouse_hook(hwnd).ok();
 
     if !selftest && tray::show_icon(hwnd).is_err() {
         return;
     }
 
     if selftest {
-        write_selftest_result(&selftest_report(hwnd, hotkey, hook.is_some()));
-        cleanup(hwnd, hook);
+        write_selftest_result(&selftest_report(hwnd, quick_launch_hotkey));
+        cleanup(hwnd);
         return;
     }
 
@@ -94,13 +89,10 @@ fn main() {
 
     run_message_loop();
 
-    cleanup(hwnd, hook);
+    cleanup(hwnd);
 }
 
-fn cleanup(hwnd: HWND, hook: Option<windows::Win32::UI::WindowsAndMessaging::HHOOK>) {
-    if let Some(h) = hook {
-        trigger::remove_mouse_hook(h);
-    }
+fn cleanup(hwnd: HWND) {
     trigger::unregister_hotkeys(hwnd);
     tray::remove(hwnd);
 }
@@ -120,41 +112,20 @@ fn run_message_loop() {
 
 /// GUI サブシステムのためコンソールに出力できない。
 /// 常駐せずに結果をファイルへ書いて終了する自己診断モード。
-fn selftest_report(hwnd: HWND, hotkey: trigger::Registration, hook_ok: bool) -> String {
+fn selftest_report(hwnd: HWND, quick_launch_hotkey: trigger::Registration) -> String {
     let items = tray::item_count();
-    let actions = tray::action_count();
-    let spec = tray::hotkey_spec();
-    // メニューが組み立てられ、トリガーが両方張れていれば PASS。
+    let spec = tray::quick_launch_hotkey_spec();
     // ホットキーは native (RegisterHotKey) と hook (横取り) のどちらでも可
-    let all_ok = hotkey.is_active() && hook_ok && actions > 0;
-    let mut out = format!(
-        "{}: window={:?} items={} actions={} hotkey=\"{}\":{} mouse_hook={} autostart={}",
+    let all_ok = quick_launch_hotkey.is_active();
+    format!(
+        "{}: window={:?} items={} quick_launch_hotkey=\"{}\":{} autostart={}",
         if all_ok { "PASS" } else { "FAIL" },
         hwnd.0,
         items,
-        actions,
         spec,
-        hotkey.label(),
-        hook_ok,
+        quick_launch_hotkey.label(),
         autostart::is_enabled(),
-    );
-
-    // 各項目が実際にどのパスへ解決されたか。
-    // 存在しないパスはメニューで選んでも何も起きないので、ここで分かるようにする。
-    out.push_str("\n\n-- menu items --\n");
-    for (id, mode, path) in tray::dump_actions() {
-        let status = if mode == "activateWindow" {
-            "WINDOW "
-        } else if mode == "openShell" {
-            "SHELL  "
-        } else if std::path::Path::new(&path).exists() {
-            "OK     "
-        } else {
-            "MISSING"
-        };
-        out.push_str(&format!("  [{id}] {mode:<9} {} {path}\n", status));
-    }
-    out
+    )
 }
 
 fn write_selftest_result(text: &str) {

@@ -1,5 +1,7 @@
 # Build output
 /target
+/settings/bin
+/settings/obj
 # インストーラの成果物 (MSI / wixpdb)
 /dist
 

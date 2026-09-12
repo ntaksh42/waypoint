@@ -146,7 +146,7 @@ pub struct Entry {
     pub breadcrumb: String,
     pub path: String,
     pub action: Action,
-    /// showBranch が真の Folder 項目のみ。構築時にまとめて読む (FR-2.15) 。
+    /// showBranch が真の Folder 項目のみ。構築時にまとめて読む。
     pub branch: Option<String>,
 }
 

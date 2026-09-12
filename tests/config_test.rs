@@ -66,9 +66,7 @@ fn parses_spec_example() {
       "version": 1,
       "variables": { "Proj": "D:\\work" },
       "settings": {
-        "trigger": { "middleClick": true, "hotkey": "Win+W",
-                     "excludedProcesses": ["chrome.exe"] },
-        "menu": { "iconSize": 16, "numericAccelerators": true },
+        "quickLaunch": { "hotkey": "Alt+Space" },
         "startWithWindows": false
       },
       "items": [
@@ -83,7 +81,6 @@ fn parses_spec_example() {
     let cfg: Config = serde_json::from_str(json).unwrap();
     assert_eq!(cfg.version, 1);
     assert_eq!(cfg.items.len(), 4);
-    assert_eq!(cfg.settings.trigger.hotkey, "Win+W");
 
     match &cfg.items[0] {
         Item::Folder { name, open, .. } => {
@@ -122,18 +119,6 @@ fn missing_optional_fields_use_defaults() {
     // 最小限の JSON でも既定値で埋まること
     let cfg: Config = serde_json::from_str(r#"{ "items": [] }"#).unwrap();
     assert_eq!(cfg.version, 1);
-    assert!(cfg.settings.trigger.middle_click);
-    // 仕様書 (FR-1.2) 通り既定は Win+W。Windows 11 の Widgets が予約済みの
-    // 環境では RegisterHotKey が失敗しうるが、その場合はトレイに警告が出る
-    assert_eq!(cfg.settings.trigger.hotkey, "Win+W");
-    assert!(
-        cfg.settings
-            .trigger
-            .excluded_processes
-            .contains(&"chrome.exe".to_string())
-    );
-    // QAP の既定と同じ 32px (FR-2.3)
-    assert_eq!(cfg.settings.menu.icon_size, 32);
     assert_eq!(cfg.settings.quick_launch.hotkey, "Alt+Space");
     assert!(cfg.settings.quick_launch.include_recent_folders);
     assert!(cfg.settings.quick_launch.include_frequent_folders);
@@ -142,6 +127,26 @@ fn missing_optional_fields_use_defaults() {
     assert!(cfg.settings.quick_launch.azure_devops.projects.is_empty());
     assert!(!cfg.settings.quick_launch.search_paths);
     assert_eq!(cfg.settings.quick_launch.visible_results, 12);
+}
+
+#[test]
+fn legacy_popup_settings_are_ignored_and_not_saved() {
+    let cfg: Config = serde_json::from_str(
+        r#"{
+            "settings": {
+                "trigger": { "hotkey": "Win+W" },
+                "menu": { "iconSize": 32, "numericAccelerators": true },
+                "quickLaunch": { "hotkey": "Alt+Space" }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    assert_eq!(cfg.settings.quick_launch.hotkey, "Alt+Space");
+    let saved = serde_json::to_value(cfg).unwrap();
+    assert!(saved["settings"]["trigger"].get("hotkey").is_none());
+    assert!(saved["settings"].get("trigger").is_none());
+    assert!(saved["settings"].get("menu").is_none());
 }
 
 #[test]
