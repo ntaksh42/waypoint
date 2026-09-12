@@ -64,7 +64,8 @@ fn key_kind(action: &Action) -> Option<&'static str> {
         | Action::AzureLiveWorkItemSearch(_)
         | Action::AzureLivePullRequestSearch { .. }
         | Action::AzureLivePipelineSearch { .. }
-        | Action::AzureOptimize => None,
+        | Action::AzureOptimize
+        | Action::OpenSettings => None,
     }
 }
 

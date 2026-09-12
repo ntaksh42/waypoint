@@ -74,6 +74,9 @@ cargo clippy --all-targets -- -D warnings    # CI と同じ静的検査
 cargo fmt --all                              # 整形
 cargo run                                    # 起動(トレイ常駐)
 
+# 設定画面 (FR-6) は C# + WPF の別プロジェクト。cargo では一切ビルドされない
+dotnet build settings\Waypoint.Settings.csproj -c Release
+
 # GUI サブシステムのため stdout に出せない。自己診断は結果をファイルに書く
 cargo run -- --selftest
 Get-Content "$env:TEMP\waypoint_selftest.txt"
@@ -83,9 +86,9 @@ Get-Content "$env:TEMP\waypoint_selftest.txt"
 .\installer\build.ps1 -SkipBuild   # ビルド済みバイナリを使う
 ```
 
-- **リビルド前に実行中の `waypoint` を必ず終了する。** 実行中の exe は出力をロックし、ビルドが「アクセスが拒否されました (os error 5)」で落ちる。ビルドエラーに見えるが原因は別。
+- **リビルド前に実行中の `waypoint` を必ず終了する。** 実行中の exe は出力をロックし、ビルドが「アクセスが拒否されました (os error 5)」で落ちる。ビルドエラーに見えるが原因は別。設定画面を開いたままだと `waypoint-settings.exe` も同じ理由でロックする。
   ```powershell
-  Get-Process waypoint -ErrorAction SilentlyContinue | Stop-Process -Force
+  Get-Process waypoint, waypoint-settings -ErrorAction SilentlyContinue | Stop-Process -Force
   ```
 - **警告 0 を維持する。** CI が `-D warnings` で強制する。
 
@@ -125,6 +128,22 @@ minor/major を上げる場合は以下の手順を使う。
 ## Known pitfalls
 
 実装前に把握しておくべき落とし穴。上ほど早期に踏む。
+
+### 出力ディレクトリが 2 つある — 設定画面と組み合わせるときは `--target` を付ける
+
+`installer/build.ps1` は `--target x86_64-pc-windows-msvc` 付きでビルドし、
+`dotnet publish` の出力先も同じ `target\x86_64-pc-windows-msvc\release` にする。
+一方 `cargo build --release` (target 指定なし) は `target\release` へ吐く。
+**この 2 つは別物で、後者には .NET 版の設定画面が入らない。**
+
+実際に踏んだ: `target\release` に古い Rust/egui 時代の `waypoint-settings.exe`
+(v0.3.10) が残っており、そこから常駐部を起動したため "Settings" を選ぶと
+2 世代前の設定画面が立ち上がっていた。exe 名が同じなので気づきにくい。
+
+→ 設定画面まで通しで動作確認するときは `--target x86_64-pc-windows-msvc` を
+付けてビルドし、`target\x86_64-pc-windows-msvc\release\waypoint.exe` の方を
+起動する。`(Get-Item <exe>).VersionInfo` の `ProductName` が `waypoint-settings`
+なら .NET 版、`waypoint` なら古い Rust 版。
 
 ### 低レベルフックはタイムアウトすると黙って外される
 `WH_MOUSE_LL` のコールバック応答がレジストリの `LowLevelHooksTimeout`（既定 300ms）を超えると、Windows はフックを**通知なく解除する**。以後トリガーが効かなくなり、再現しづらい不具合になる。
@@ -256,7 +275,6 @@ FR-2.7 に反する (実測でメニューが白背景になった) 。
 - ネットワークパスの存在確認はメニュー表示を固めうる。非同期にし、結果が返るまでは通常表示。
 - COM (エクスプローラー操作) は `CoInitializeEx(COINIT_APARTMENTTHREADED)` が必要。UI スレッドから呼ぶ。
 - フックプロシージャは `unsafe extern "system"`。`LPARAM` → `MSLLHOOKSTRUCT` は生ポインタ参照になるので `unsafe` の範囲を最小に閉じる。
-- `eframe`/`egui` の既定フォント (Hack / Ubuntu-Light) は CJK グリフを持たない。設定画面 (FR-6) でフォントを未設定のまま使うと、項目名やパスの日本語が豆腐 (□) になり文字化けして見える。`settings_main.rs` の `configure_fonts` で Windows 同梱の CJK フォント (Yu Gothic / Meiryo / MS Gothic) をフォールバックとして末尾に追加している。
 
 ## Reference implementations
 
@@ -307,7 +325,7 @@ Recent/Frequent Folders・Open Windows (`w `) ・ブックマーク (`b `) ・�
 | バイナリ | エントリポイント | 役割 |
 |---|---|---|
 | `waypoint.exe` | `src/main.rs` | 常駐本体。トレイ・トリガー・メニュー表示・Quick Launch 検索・全 IPC の受け口 |
-| `waypoint-settings.exe` | `src/settings_main/main.rs` | 設定エディター (FR-6)。egui/eframe、保存後に `PostMessage` で常駐部へ通知 |
+| `waypoint-settings.exe` | `settings/Waypoint.Settings.csproj` | 設定エディター (FR-6)。C# + WPF (.NET 8)、保存後に `PostMessage` で常駐部へ通知 |
 | tab host | `src/tab_host_main.rs` | Chrome / Edge Native Messaging host。stdin/stdout を常駐部の `WM_COPYDATA` へ中継するだけ |
 
 `src/lib.rs` が公開する主なモジュール (Win32 に触らない純ロジックはここに集約し、統合テストから叩けるようにしてある):
@@ -332,25 +350,30 @@ Recent/Frequent Folders・Open Windows (`w `) ・ブックマーク (`b `) ・�
 | `hotkey_capture.rs` / `trigger.rs` | ホットキー登録・`WH_KEYBOARD_LL` / `WH_MOUSE_LL` フック |
 | `tray/` | トレイアイコン・トレイメニュー |
 | `icon/` | アイコン取得・拡縮 (`SHIL_*` の選び分け) |
-| `settings_main/` | 設定エディター (egui) の画面別モジュール群 |
 
 新しい検索プレフィックスやデータソースを追加するときは、`docs/spec.md` の FR-9 を
 先に更新してから `quick_launch/mod.rs` のプレフィックス表 (`prefix_badge`) に合わせる。
 
 ### FR-6 管理画面の構成
 
-`waypoint-settings.exe` を Rust + `egui/eframe` の別プロセスとして実装している。
-トレイメニューの "Settings..." から必要時のみ起動し、保存後は `PostMessage` で
-常駐部へ再読み込みを通知する。常駐部の起動時間・メモリ・メッセージループには
-GUI フレームワークを持ち込まない。
+`waypoint-settings.exe` は **C# + WPF (.NET 8) の別プロジェクト** (`settings/`) で、
+Rust のワークスペースには含まれない。`AssemblyName` が `waypoint-settings` なので
+出力される exe 名は常駐部から見て変わらない (`tray/actions.rs::open_settings` は
+exe 名だけで解決する)。トレイメニューの "Settings..." と Quick Launch の
+`Settings` 候補 (FR-9.20) から必要時のみ起動し、保存後は常駐部のメッセージ
+ウィンドウ (`WaypointMessageWindow`) を `FindWindow` で捕まえて `PostMessage` で
+再読み込みを通知する (`settings/ConfigStore.cs`)。常駐部の起動時間・メモリ・
+メッセージループには GUI フレームワークを持ち込まない、という原則は変わらない。
 
-`docs/settings_ui.rs.wip` は `native-windows-gui` で試作した旧実装として残してある。
-同方式はリンク後の通常起動で次のローダエラーになるため採用しない:
+- **`cargo build` では設定画面はビルドされない。** `dotnet` 側は独立しており、
+  `installer/build.ps1` が `dotnet publish -c Release -r win-x64 --self-contained`
+  で常駐部と同じ出力ディレクトリへ吐く。設定画面を触ったら
+  `dotnet build settings\Waypoint.Settings.csproj -c Release` で確認する
+  (CI の `ci.yml` も同じことをする)
+- 配布は self-contained の単一ファイル。利用者に .NET ランタイムを要求しない
+  代わりに MSI が太る (実測で MSI 全体が約 60MB)
 
-```
-プロシージャ エントリ ポイント GetWindowSubclass が
-ダイナミック リンク ライブラリ waypoint.exe から見つかりませんでした
-```
-
-**マニフェスト自体は残してある** — Per-Monitor V2 / longPathAware /
-Visual Styles はこのアプリに必要で、GUI とは独立に効く。
+GUI フレームワークは `native-windows-gui` → `egui/eframe` → WPF と 2 度乗り換えて
+いる。前者 2 つの実装と、採用を見送った理由の記録は git 履歴にのみ残す
+(`39d3a76` 以前)。**マニフェスト自体は残してある** — Per-Monitor V2 /
+longPathAware / Visual Styles はこのアプリに必要で、GUI とは独立に効く。

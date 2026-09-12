@@ -60,6 +60,22 @@ impl LowerKeys {
     pub(crate) fn build_for(entries: &[Entry]) -> Vec<Self> {
         entries.iter().map(Self::new).collect()
     }
+
+    /// 名前だけをマッチ対象にする検索キー。固定のコマンド候補 (FR-9.20)
+    /// 向け。breadcrumb は説明文なので、そのまま検索対象にすると
+    /// "Open waypoint settings" が `waypoint` や `open` のような普通の
+    /// 検索語に tier4 / tier7 で一致し、無関係な検索へ割り込んでしまう
+    /// (実測でフォルダ検索の結果に混ざった)。表示には使うのでキーだけ空にする。
+    pub(crate) fn build_for_names(entries: &[Entry]) -> Vec<Self> {
+        entries
+            .iter()
+            .map(|entry| Self {
+                name: entry.name.to_lowercase(),
+                breadcrumb: String::new(),
+                path: String::new(),
+            })
+            .collect()
+    }
 }
 
 impl Index {
@@ -163,12 +179,14 @@ impl Index {
                 | AzureCommand::Suggest => Vec::new(),
             };
         }
+        let (builtins, builtins_lower) = super::builtin_command_entries();
         search_entries_cached_multi(
             &[
                 (&self.entries, &self.entries_lower),
                 (&self.windows, &self.windows_lower),
                 (&self.bookmarks, &self.bookmarks_lower),
                 (&self.apps, &self.apps_lower),
+                (builtins, builtins_lower),
             ],
             query,
             self.search_paths,

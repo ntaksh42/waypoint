@@ -96,6 +96,26 @@ pub fn effective_search_term(query: &str) -> &str {
     query
 }
 
+/// waypoint 自身の操作を通常検索へ載せる固定候補 (FR-9.20)。
+///
+/// config や外部データに依存しない静的な一覧なので、`Index` の
+/// 構築・更新経路には乗せず `azure_command_entries` と同じ形で
+/// 静的に持つ。`LowerKeys` も一度だけ作って使い回す。
+pub(crate) fn builtin_command_entries() -> (&'static [Entry], &'static [search::LowerKeys]) {
+    static ENTRIES: std::sync::LazyLock<Vec<Entry>> = std::sync::LazyLock::new(|| {
+        vec![Entry {
+            name: "Settings".to_string(),
+            breadcrumb: "Open waypoint settings".to_string(),
+            path: String::new(),
+            action: Action::OpenSettings,
+            branch: None,
+        }]
+    });
+    static LOWER: std::sync::LazyLock<Vec<search::LowerKeys>> =
+        std::sync::LazyLock::new(|| search::LowerKeys::build_for_names(&ENTRIES));
+    (&ENTRIES, &LOWER)
+}
+
 /// 検索結果を選んだときに行うアクション。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -138,6 +158,8 @@ pub enum Action {
     /// `az optimize`（`suggest` / `rank` でも入れる）— 直近アクティビティから
     /// 優先 Project / Iteration を自動更新する。
     AzureOptimize,
+    /// waypoint 自身の設定画面 (`waypoint-settings.exe`) を開く (FR-9.20)。
+    OpenSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -188,7 +210,8 @@ impl Entry {
             | Action::AzureLiveWorkItemSearch(_)
             | Action::AzureLivePullRequestSearch { .. }
             | Action::AzureLivePipelineSearch { .. }
-            | Action::AzureOptimize => None,
+            | Action::AzureOptimize
+            | Action::OpenSettings => None,
         }
     }
 }

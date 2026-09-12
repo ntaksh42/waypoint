@@ -13,8 +13,8 @@ use crate::shell;
 use crate::trigger;
 
 use super::actions::{
-    add_entry_to_favorites, handle_dynamic_refreshed, refresh_dynamic, show_quick_launch,
-    show_tray_menu,
+    add_entry_to_favorites, handle_dynamic_refreshed, open_settings, refresh_dynamic,
+    show_quick_launch, show_tray_menu,
 };
 use super::{
     AZURE_FULL_REFRESH_TIMER_ID, WM_AZURE_DEVOPS_REFRESHED, WM_DYNAMIC_REFRESHED,
@@ -94,6 +94,9 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                     | quick_launch::Action::AzureLiveWorkItemSearch(_)
                     | quick_launch::Action::AzureLivePullRequestSearch { .. }
                     | quick_launch::Action::AzureLivePipelineSearch { .. } => {}
+                    quick_launch::Action::OpenSettings => {
+                        open_settings(None);
+                    }
                     quick_launch::Action::AzureOptimize => {
                         let settings = with_state(|state| {
                             state.borrow().as_ref().map(|state| {

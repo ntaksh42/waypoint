@@ -33,7 +33,8 @@ pub(super) fn action_color(action: &Action) -> COLORREF {
         | Action::AzureLiveWorkItemSearch(_)
         | Action::AzureLivePullRequestSearch { .. }
         | Action::AzureLivePipelineSearch { .. }
-        | Action::AzureOptimize => ACCENT,
+        | Action::AzureOptimize
+        | Action::OpenSettings => ACCENT,
     }
 }
 
