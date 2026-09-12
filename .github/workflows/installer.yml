@@ -61,6 +61,10 @@ jobs:
       # タグを打ったときだけ Release に添付する。Release がまだ無ければ
       # (`gh release upload` は既存 Release への追加専用で「release not found」
       # になるため) 先に作成してからアップロードする。
+      #
+      # このジョブは成果物を取るだけで checkout しないので、`gh` が対象
+      # リポジトリを git から判別できず "not a git repository" で落ちる。
+      # GH_REPO で明示する (checkout を足すより速い)。
       - name: Attach to release
         run: |
           gh release view "${{ github.ref_name }}" 2>$null
@@ -71,3 +75,4 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
