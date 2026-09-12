@@ -39,8 +39,17 @@ Get-Process waypoint, waypoint-settings -ErrorAction SilentlyContinue | ForEach-
 }
 
 if (-not $SkipBuild) {
+    # 設定画面は build.rs も同じ内容で publish するが、あちらは失敗しても
+    # 警告どまり (設定画面が無くても常駐部は動くため)。配布物では欠落を
+    # 許さないので、ここは明示的に publish して失敗を throw する。
+    # 同じ publish を 2 度走らせないよう cargo 側は環境変数で抑止する。
     Write-Host "cargo build --release --target $target"
-    cargo build --release --target $target
+    $env:WAYPOINT_SKIP_SETTINGS_BUILD = '1'
+    try {
+        cargo build --release --target $target
+    } finally {
+        Remove-Item Env:\WAYPOINT_SKIP_SETTINGS_BUILD -ErrorAction SilentlyContinue
+    }
     if ($LASTEXITCODE -ne 0) { throw "cargo build に失敗しました" }
 
     Write-Host "dotnet publish settings (self-contained x64)"

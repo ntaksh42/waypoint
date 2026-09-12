@@ -74,7 +74,9 @@ cargo clippy --all-targets -- -D warnings    # CI と同じ静的検査
 cargo fmt --all                              # 整形
 cargo run                                    # 起動(トレイ常駐)
 
-# 設定画面 (FR-6) は C# + WPF の別プロジェクト。cargo では一切ビルドされない
+# 設定画面 (FR-6) は C# + WPF の別プロジェクト。build.rs が cargo ビルドに
+# 巻き込んで exe の隣へ置くので、通常は個別に叩かなくてよい。
+# 設定画面だけを速く回したいときや、cargo を通さず確認したいときに使う
 dotnet build settings\Waypoint.Settings.csproj -c Release
 
 # GUI サブシステムのため stdout に出せない。自己診断は結果をファイルに書く
@@ -129,21 +131,26 @@ minor/major を上げる場合は以下の手順を使う。
 
 実装前に把握しておくべき落とし穴。上ほど早期に踏む。
 
-### 出力ディレクトリが 2 つある — 設定画面と組み合わせるときは `--target` を付ける
+### 設定画面の exe は常駐部と同じディレクトリにしか無い
 
-`installer/build.ps1` は `--target x86_64-pc-windows-msvc` 付きでビルドし、
-`dotnet publish` の出力先も同じ `target\x86_64-pc-windows-msvc\release` にする。
-一方 `cargo build --release` (target 指定なし) は `target\release` へ吐く。
-**この 2 つは別物で、後者には .NET 版の設定画面が入らない。**
+常駐部は `waypoint-settings.exe` を **自分と同じディレクトリ** からしか探さない
+(`tray/actions.rs::open_settings`)。cargo の出力先は `target\debug` /
+`target\release` / `target\<triple>\release` に分かれるため、配置を忘れると
+そこに残っていた古い exe をそのまま掴む。
 
-実際に踏んだ: `target\release` に古い Rust/egui 時代の `waypoint-settings.exe`
-(v0.3.10) が残っており、そこから常駐部を起動したため "Settings" を選ぶと
-2 世代前の設定画面が立ち上がっていた。exe 名が同じなので気づきにくい。
+実際に踏んだ: `target\debug` に v0.3.13 時代の Rust/egui 版が、`target\release`
+に v0.3.10 版が残っており、"Settings" を選ぶと 2 世代前の設定画面が立ち上がって
+いた。exe 名が同じなので気づきにくい。
 
-→ 設定画面まで通しで動作確認するときは `--target x86_64-pc-windows-msvc` を
-付けてビルドし、`target\x86_64-pc-windows-msvc\release\waypoint.exe` の方を
-起動する。`(Get-Item <exe>).VersionInfo` の `ProductName` が `waypoint-settings`
-なら .NET 版、`waypoint` なら古い Rust 版。
+→ **`build.rs` が cargo ビルドのたびに `dotnet` を呼び、出力先の隣へ置く**ように
+したので通常は意識しなくてよい (debug は framework-dependent、release は配布物と
+同じ self-contained 単一ファイル)。判別したいときは
+`(Get-Item <exe>).VersionInfo.ProductName` が `waypoint-settings` なら .NET 版、
+`waypoint` なら古い Rust 版。
+
+`WAYPOINT_SKIP_SETTINGS_BUILD=1` を立てると build.rs はこれを飛ばす。exe を
+使わない `cargo clippy` / `cargo test` (CI) と、自前で publish する
+`installer/build.ps1` が使っている。
 
 ### 低レベルフックはタイムアウトすると黙って外される
 `WH_MOUSE_LL` のコールバック応答がレジストリの `LowLevelHooksTimeout`（既定 300ms）を超えると、Windows はフックを**通知なく解除する**。以後トリガーが効かなくなり、再現しづらい不具合になる。
@@ -365,11 +372,12 @@ exe 名だけで解決する)。トレイメニューの "Settings..." と Quick
 再読み込みを通知する (`settings/ConfigStore.cs`)。常駐部の起動時間・メモリ・
 メッセージループには GUI フレームワークを持ち込まない、という原則は変わらない。
 
-- **`cargo build` では設定画面はビルドされない。** `dotnet` 側は独立しており、
-  `installer/build.ps1` が `dotnet publish -c Release -r win-x64 --self-contained`
-  で常駐部と同じ出力ディレクトリへ吐く。設定画面を触ったら
-  `dotnet build settings\Waypoint.Settings.csproj -c Release` で確認する
-  (CI の `ci.yml` も同じことをする)
+- **`build.rs` が cargo ビルドに巻き込んでビルドする。** 常駐部が exe の隣しか
+  見ないため (上の落とし穴参照)、出力先へ都度配置する必要がある。debug は
+  `dotnet build`、release は配布物と同じ `dotnet publish --self-contained` で
+  単一ファイルにする。`dotnet` が無い / 失敗しても警告どまりで Rust 側は通す
+  (設定画面が無くても常駐部は動くため)。配布物で欠落を許さない
+  `installer/build.ps1` だけは明示的に publish して失敗を throw する
 - 配布は self-contained の単一ファイル。利用者に .NET ランタイムを要求しない
   代わりに MSI が太る (実測で MSI 全体が約 60MB)
 

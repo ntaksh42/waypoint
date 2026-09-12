@@ -29,8 +29,14 @@ jobs:
       - name: Build Settings
         run: dotnet build settings\Waypoint.Settings.csproj -c Release
 
+      # build.rs が設定画面を巻き込んでビルドする (exe の隣に置くため)。
+      # ここでは 1 つ上で単体ビルド済みなので、二重に走らせない。
       - name: Clippy (warnings as errors)
         run: cargo clippy --all-targets -- -D warnings
+        env:
+          WAYPOINT_SKIP_SETTINGS_BUILD: '1'
 
       - name: Test
         run: cargo test
+        env:
+          WAYPOINT_SKIP_SETTINGS_BUILD: '1'
