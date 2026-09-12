@@ -152,6 +152,32 @@ minor/major を上げる場合は以下の手順を使う。
 使わない `cargo clippy` / `cargo test` (CI) と、自前で publish する
 `installer/build.ps1` が使っている。
 
+### WPF のネイティブ DLL は PublishSingleFile だけでは埋め込まれない
+
+`PublishSingleFile=true` を立てても、WPF のネイティブ DLL は単一ファイルに
+入らず **exe の隣へ別ファイルとして出る**:
+
+```
+PresentationNative_cor3.dll / wpfgfx_cor3.dll / D3DCompiler_47_cor3.dll
+PenImc_cor3.dll / vcruntime140_cor3.dll
+```
+
+MSI は `waypoint-settings.exe` 単体しか入れないため、インストール環境では
+この 5 個が欠落し、WPF がウィンドウハンドルを掴む時点で落ちる:
+
+```
+Unhandled exception. System.DllNotFoundException: Dll was not found.
+   at MS.Internal.WindowsBase.NativeMethodsSetLastError.SetWindowLongPtrWndProc
+```
+
+→ csproj に `IncludeNativeLibrariesForSelfExtract=true` を入れる。
+
+**開発ビルドでは再現しない。** `target\release` には publish の副産物として
+この 5 個が同居しているため、"Settings" は正常に開く。MSI で配ったときだけ
+表面化する。切り分けの際は **exe 単体を空のディレクトリへコピーして起動する**
+こと。実際、`target\release` で動いたのを見て「インストール先の権限や場所の
+問題」と誤診した (ACL も展開先も無関係だった)。
+
 ### 低レベルフックはタイムアウトすると黙って外される
 `WH_MOUSE_LL` のコールバック応答がレジストリの `LowLevelHooksTimeout`（既定 300ms）を超えると、Windows はフックを**通知なく解除する**。以後トリガーが効かなくなり、再現しづらい不具合になる。
 

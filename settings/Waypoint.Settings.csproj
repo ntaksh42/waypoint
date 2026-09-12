@@ -8,6 +8,12 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <PublishSingleFile>true</PublishSingleFile>
+    <!--
+      WPF のネイティブ DLL (PresentationNative_cor3 / wpfgfx_cor3 など) は
+      既定では単一ファイルに含まれず exe の隣へ出る。MSI は exe しか入れない
+      ため、インストール環境で DllNotFoundException になる。埋め込ませる。
+    -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
