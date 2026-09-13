@@ -65,7 +65,9 @@ fn key_kind(action: &Action) -> Option<&'static str> {
         | Action::AzureLivePullRequestSearch { .. }
         | Action::AzureLivePipelineSearch { .. }
         | Action::AzureOptimize
-        | Action::OpenSettings => None,
+        | Action::OpenSettings
+        // 検索語は毎回異なりうるので記録しない (FR-9.21)
+        | Action::WebSearch => None,
     }
 }
 

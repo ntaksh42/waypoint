@@ -49,6 +49,12 @@ const APPS_PREFIX: &str = "a ";
 const TABS_PREFIX: &str = "t ";
 /// フォルダをターミナルで開く検索モードに入るプレフィックス (末尾の半角スペース込み)。
 const TERMINAL_PREFIX: &str = "ps ";
+/// Web 検索モードに入るプレフィックス (FR-9.21)。
+///
+/// 他と違って末尾に半角スペースを含めない。`?? rust` と `??rust` の
+/// どちらでも同じ検索語になるよう、残りを `trim` して扱うため
+/// (PowerToys Run の `??` と同じ打ち心地に合わせる)。
+pub const WEB_SEARCH_PREFIX: &str = "??";
 
 /// 入力がいずれかのプレフィックスモードに入っていれば、表示用の短いラベルを返す。
 /// 描画側 (`quick_launch_window.rs`) が検索窓にモードバッジを出すために使う。
@@ -69,6 +75,8 @@ pub fn prefix_badge(query: &str) -> Option<&'static str> {
         Some("TERMINAL")
     } else if query.starts_with(EVERYTHING_PREFIX) {
         Some("FILES")
+    } else if query.starts_with(WEB_SEARCH_PREFIX) {
+        Some("WEB")
     } else {
         None
     }
@@ -92,6 +100,9 @@ pub fn effective_search_term(query: &str) -> &str {
     }
     if let Some((_, rest)) = azure_command(query) {
         return rest;
+    }
+    if let Some(rest) = query.strip_prefix(WEB_SEARCH_PREFIX) {
+        return rest.trim();
     }
     query
 }
@@ -160,6 +171,9 @@ pub enum Action {
     AzureOptimize,
     /// waypoint 自身の設定画面 (`waypoint-settings.exe`) を開く (FR-9.20)。
     OpenSettings,
+    /// 設定した検索エンジンの検索 URL を既定ブラウザで開く
+    /// (`??` プレフィックス、FR-9.21)。URL は `path` に組み立て済み。
+    WebSearch,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,7 +225,9 @@ impl Entry {
             | Action::AzureLivePullRequestSearch { .. }
             | Action::AzureLivePipelineSearch { .. }
             | Action::AzureOptimize
-            | Action::OpenSettings => None,
+            | Action::OpenSettings
+            // 検索語は毎回異なりうるので永続化しない (FR-9.21)
+            | Action::WebSearch => None,
         }
     }
 }
@@ -242,5 +258,28 @@ pub struct Index {
     pub(crate) terminal_folders: Vec<Entry>,
     pub(crate) terminal_folders_lower: Vec<search::LowerKeys>,
     pub(crate) search_paths: bool,
+    /// Web 検索 (`??`、FR-9.21) で使うエンジン。無効化時は `None`。
+    /// 候補は入力から組み立てる 1 件だけなので、索引は持たない
+    /// (生成は `quick_launch_window::search`)。
+    pub(crate) web_search: Option<crate::web_search::Engine>,
     pub(crate) ranking: Ranking,
+}
+
+/// `??` の検索語から Web 検索の確定候補を 1 件作る (FR-9.21)。
+///
+/// 索引を引かず入力だけから組み立てるため、`Index` ではなく
+/// 呼び出し側 (`quick_launch_window::search`) が所有する。
+pub fn web_search_entry(engine: crate::web_search::Engine, query: &str) -> Entry {
+    let query = query.trim();
+    Entry {
+        name: if query.is_empty() {
+            engine.label().to_string()
+        } else {
+            query.to_string()
+        },
+        breadcrumb: format!("Search with {}", engine.label()),
+        path: engine.url_for(query),
+        action: Action::WebSearch,
+        branch: None,
+    }
 }

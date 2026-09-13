@@ -123,6 +123,12 @@ impl Index {
                 &self.ranking,
             );
         }
+        // `??` は索引を引かず入力から候補を組み立てるため、ここでは
+        // 何も返さない (FR-9.21)。実体の生成は Azure のライブ検索と同じく
+        // `quick_launch_window::search` が行う。
+        if query.starts_with(super::WEB_SEARCH_PREFIX) {
+            return Vec::new();
+        }
         if query == AZURE_DEVOPS_PREFIX {
             return Vec::new();
         }

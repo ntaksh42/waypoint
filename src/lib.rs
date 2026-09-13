@@ -30,3 +30,4 @@ pub mod shell;
 pub mod single;
 pub mod tray;
 pub mod trigger;
+pub mod web_search;

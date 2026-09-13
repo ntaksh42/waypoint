@@ -96,6 +96,9 @@ impl Index {
             terminal_folders,
             terminal_folders_lower,
             search_paths: settings.search_paths,
+            web_search: settings
+                .include_web_search
+                .then_some(settings.web_search_engine),
             ranking: Ranking::load(),
         }
     }
@@ -138,7 +141,11 @@ impl Index {
             &mut config_entries,
         );
         self.config_entries = config_entries;
-        self.search_paths = config.settings.quick_launch.search_paths;
+        let settings = &config.settings.quick_launch;
+        self.search_paths = settings.search_paths;
+        self.web_search = settings
+            .include_web_search
+            .then_some(settings.web_search_engine);
         self.refresh_dynamic(config, dynamic);
     }
 

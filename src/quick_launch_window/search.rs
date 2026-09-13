@@ -296,6 +296,15 @@ pub(super) fn update_results(state: &RefCell<State>) {
             {
                 state.results.push(live_pipeline_search_entry(filter, rest));
             }
+            // `??` は索引を持たないため、`Index::search` は常に 0 件を返す。
+            // 入力から確定候補 1 件をここで組み立てる (FR-9.21)。
+            if let Some(engine) = state.index.web_search
+                && let Some(rest) = query.strip_prefix(crate::quick_launch::WEB_SEARCH_PREFIX)
+            {
+                state
+                    .results
+                    .push(crate::quick_launch::web_search_entry(engine, rest));
+            }
             Vec::new()
         };
         state.previous_query = Some(query);

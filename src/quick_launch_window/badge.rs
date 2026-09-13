@@ -10,7 +10,7 @@ use crate::quick_launch::Action;
 pub(super) fn badge_color(badge: &str) -> COLORREF {
     match badge {
         "WINDOWS" | "APPS" | "TERMINAL" => rgb(143, 168, 118), // 緑寄りの寒色
-        "BOOKMARKS" | "HISTORY" | "FILES" | "TABS" | "AZURE DEVOPS" => rgb(95, 157, 176), // 青寄りの寒色
+        "BOOKMARKS" | "HISTORY" | "FILES" | "TABS" | "AZURE DEVOPS" | "WEB" => rgb(95, 157, 176), // 青寄りの寒色
         _ => ACCENT,
     }
 }
@@ -34,7 +34,8 @@ pub(super) fn action_color(action: &Action) -> COLORREF {
         | Action::AzureLivePullRequestSearch { .. }
         | Action::AzureLivePipelineSearch { .. }
         | Action::AzureOptimize
-        | Action::OpenSettings => ACCENT,
+        | Action::OpenSettings
+        | Action::WebSearch => ACCENT,
     }
 }
 

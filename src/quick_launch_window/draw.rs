@@ -436,7 +436,8 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
                 | Action::AzureLivePullRequestSearch { .. }
                 | Action::AzureLivePipelineSearch { .. }
                 | Action::AzureOptimize
-                | Action::OpenSettings => draw_command_icon(draw.hDC, draw.rcItem, dpi, name_font),
+                | Action::OpenSettings
+                | Action::WebSearch => draw_command_icon(draw.hDC, draw.rcItem, dpi, name_font),
             }
         }
         SetBkMode(draw.hDC, TRANSPARENT);

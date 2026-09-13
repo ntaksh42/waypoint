@@ -46,6 +46,11 @@ public partial class MainWindow : Window
         => source[name]?.GetValue<bool?>() ?? fallback;
     private static string Text(JsonObject source, string name, string fallback = "")
         => source[name]?.GetValue<string>() ?? fallback;
+    private static void SelectByTag(ComboBox box, string tag)
+        => box.SelectedIndex = Math.Max(0, box.Items.OfType<ComboBoxItem>().ToList()
+            .FindIndex(item => string.Equals((string?)item.Tag, tag, StringComparison.OrdinalIgnoreCase)));
+    private static string TagOf(ComboBox box, string fallback)
+        => (box.SelectedItem as ComboBoxItem)?.Tag as string ?? fallback;
 
     private void LoadControls()
     {
@@ -61,6 +66,8 @@ public partial class MainWindow : Window
         Apps.IsChecked = Bool(quick, "includeApps", true);
         Everything.IsChecked = Bool(quick, "includeEverything", true);
         SearchPaths.IsChecked = Bool(quick, "searchPaths");
+        WebSearch.IsChecked = Bool(quick, "includeWebSearch", true);
+        SelectByTag(WebSearchEngine, Text(quick, "webSearchEngine", "google"));
         VisibleResults.Text = (quick["visibleResults"]?.GetValue<int?>() ?? 12).ToString();
         AzureEnabled.IsChecked = Bool(AzureSettings(), "enabled");
         LoadAzureProjects();
@@ -73,7 +80,8 @@ public partial class MainWindow : Window
     {
         foreach (var box in new[] { QuickLaunchHotkey, VisibleResults, AzureOrganization, AzureProject, AzureAliases, AzurePriority, AzureRepositories, AzureAreas, AzureIterations })
             box.TextChanged += (_, _) => Changed();
-        foreach (var box in new[] { RecentFolders, FrequentFolders, OpenWindows, Bookmarks, BrowserHistory, Apps, Everything, SearchPaths, AzureEnabled, AzurePullRequests, AzurePipelines, AzureWorkItems })
+        WebSearchEngine.SelectionChanged += (_, _) => Changed();
+        foreach (var box in new[] { RecentFolders, FrequentFolders, OpenWindows, Bookmarks, BrowserHistory, Apps, Everything, SearchPaths, WebSearch, AzureEnabled, AzurePullRequests, AzurePipelines, AzureWorkItems })
         {
             box.Checked += (_, _) => Changed();
             box.Unchecked += (_, _) => Changed();
@@ -311,6 +319,8 @@ public partial class MainWindow : Window
         quick["includeApps"] = Apps.IsChecked == true;
         quick["includeEverything"] = Everything.IsChecked == true;
         quick["searchPaths"] = SearchPaths.IsChecked == true;
+        quick["includeWebSearch"] = WebSearch.IsChecked == true;
+        quick["webSearchEngine"] = TagOf(WebSearchEngine, "google");
         quick["visibleResults"] = visible;
         AzureSettings()["enabled"] = AzureEnabled.IsChecked == true;
         var variables = _store.Variables;

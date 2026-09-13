@@ -39,6 +39,12 @@ pub struct QuickLaunchSettings {
     pub include_everything: bool,
     #[serde(default)]
     pub search_paths: bool,
+    /// Web 検索 (`??` プレフィックス、FR-9.21)。サジェストを取得せず
+    /// ネットワークにも触れないため、既定はオン
+    #[serde(default = "default_true")]
+    pub include_web_search: bool,
+    #[serde(default)]
+    pub web_search_engine: crate::web_search::Engine,
     #[serde(default = "default_visible_results")]
     pub visible_results: usize,
 }
@@ -56,6 +62,8 @@ impl Default for QuickLaunchSettings {
             azure_devops: AzureDevOpsSettings::default(),
             include_everything: true,
             search_paths: false,
+            include_web_search: true,
+            web_search_engine: crate::web_search::Engine::default(),
             visible_results: default_visible_results(),
         }
     }

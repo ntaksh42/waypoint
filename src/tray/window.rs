@@ -97,6 +97,10 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                     quick_launch::Action::OpenSettings => {
                         open_settings(None);
                     }
+                    // URL は候補の組み立て時に確定済み (FR-9.21)
+                    quick_launch::Action::WebSearch => {
+                        let _ = shell::open_shell_item(&entry.path);
+                    }
                     quick_launch::Action::AzureOptimize => {
                         let settings = with_state(|state| {
                             state.borrow().as_ref().map(|state| {

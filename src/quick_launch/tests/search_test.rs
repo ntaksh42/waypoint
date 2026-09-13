@@ -442,8 +442,45 @@ fn prefix_badge_identifies_each_mode() {
     assert_eq!(prefix_badge("t waypoint"), Some("TABS"));
     assert_eq!(prefix_badge("ps waypoint"), Some("TERMINAL"));
     assert_eq!(prefix_badge("f cargo.toml"), Some("FILES"));
+    // `??` だけ末尾スペースを含まない (FR-9.21)
+    assert_eq!(prefix_badge("?? rust lifetime"), Some("WEB"));
+    assert_eq!(prefix_badge("??rust"), Some("WEB"));
+    assert_eq!(prefix_badge("??"), Some("WEB"));
     assert_eq!(prefix_badge("plain query"), None);
     assert_eq!(prefix_badge(""), None);
+}
+
+#[test]
+fn web_search_term_ignores_space_after_marks() {
+    assert_eq!(effective_search_term("?? rust lifetime"), "rust lifetime");
+    assert_eq!(effective_search_term("??rust lifetime"), "rust lifetime");
+    assert_eq!(effective_search_term("??"), "");
+}
+
+#[test]
+fn web_search_entry_builds_single_candidate() {
+    let entry = web_search_entry(crate::web_search::Engine::Google, " rust lifetime ");
+    assert_eq!(entry.name, "rust lifetime");
+    assert_eq!(entry.breadcrumb, "Search with Google");
+    assert_eq!(
+        entry.path,
+        "https://www.google.com/search?q=rust%20lifetime"
+    );
+    assert_eq!(entry.action, Action::WebSearch);
+}
+
+#[test]
+fn web_search_entry_without_term_opens_engine_home() {
+    let entry = web_search_entry(crate::web_search::Engine::DuckDuckGo, "");
+    assert_eq!(entry.name, "DuckDuckGo");
+    assert_eq!(entry.path, "https://duckduckgo.com/");
+}
+
+#[test]
+fn web_search_candidate_is_not_persisted_as_favorite() {
+    // 検索語は毎回異なりうるので、お気に入り昇格の対象にしない (FR-9.21)
+    let entry = web_search_entry(crate::web_search::Engine::Google, "rust");
+    assert!(entry.to_item().is_none());
 }
 
 #[test]
