@@ -213,16 +213,16 @@ pub(super) fn queue_selected() {
             }
         }
         Some(Selected::LiveWorkItemSearch(query)) => {
-            STATE.with(|state| super::search::start_azure_work_item_live_search(state, &query));
+            STATE.with(|state| super::azure_live::start_azure_work_item_live_search(state, &query));
         }
         Some(Selected::LivePullRequestSearch(filter, query)) => {
             STATE.with(|state| {
-                super::search::start_azure_pull_request_live_search(state, filter, &query)
+                super::azure_live::start_azure_pull_request_live_search(state, filter, &query)
             });
         }
         Some(Selected::LivePipelineSearch(filter, query)) => {
             STATE.with(|state| {
-                super::search::start_azure_pipeline_live_search(state, filter, &query)
+                super::azure_live::start_azure_pipeline_live_search(state, filter, &query)
             });
         }
         None => {}

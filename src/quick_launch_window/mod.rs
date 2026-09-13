@@ -1,5 +1,6 @@
 //! 標準 Win32 コントロールだけで構成する Quick Launch 画面。
 
+mod azure_live;
 mod badge;
 mod dispatch;
 mod draw;
@@ -36,7 +37,8 @@ use input::{
     select_at,
 };
 use layout::{apply_dpi, apply_window_chrome, primary_monitor_dpi};
-use search::{AzureLiveSearchStart, start_azure_live_search_for_query, update_results};
+use azure_live::{AzureLiveSearchStart, start_azure_live_search_for_query};
+use search::update_results;
 
 const EDIT_ID: isize = 1001;
 const LIST_ID: isize = 1002;
@@ -182,11 +184,11 @@ struct State {
     /// たびにこの経路を通る (PR/Work Item と違いキャッシュ検索を挟まない)。
     azure_pipelines_live_active: bool,
     azure_pipeline_reply_id: u32,
-    azure_live_search_gate: search::LiveSearchGate,
+    azure_live_search_gate: azure_live::LiveSearchGate,
     /// `az <query>` (サブコマンド無し) の `Ctrl+Enter` で 3 種の Live 検索を
     /// 同時に投げたときだけ `Some`。到着順に結果をここへ積み、都度リストを
     /// 組み直す (単独種別の検索は従来どおり `results` を丸ごと置き換える)。
-    azure_live_combined: Option<search::CombinedLiveSearch>,
+    azure_live_combined: Option<azure_live::CombinedLiveSearch>,
     /// 非同期検索中・0 件時に結果一覧へ出す説明。実行対象にはしない。
     empty_message: Option<String>,
     /// 現在の入力が `b `/`w `/`a `/`f ` のいずれかに入っていれば

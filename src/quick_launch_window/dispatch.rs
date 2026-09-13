@@ -12,10 +12,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use super::draw::{draw_list_item, paint_window};
 use super::input::{hide_window, queue_selected};
 use super::layout::scale;
-use super::search::{
+use super::azure_live::{
     handle_azure_pipeline_results, handle_azure_pull_request_results,
-    handle_azure_work_item_results, handle_everything_results, update_results,
+    handle_azure_work_item_results,
 };
+use super::search::{handle_everything_results, update_results};
 use super::{
     BACKGROUND, BADGE_WIDTH, EDIT_HEIGHT, HEADER_HEIGHT, PADDING, ROW_HEIGHT, RowKind, STATE,
     SURFACE, TEXT_PRIMARY, WM_QUICK_LAUNCH_AZURE_RESULTS,

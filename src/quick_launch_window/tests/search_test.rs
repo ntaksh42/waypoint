@@ -1,7 +1,8 @@
+use super::super::azure_live::{
+    accepts_azure_work_item_reply, invalidate_azure_live_searches, start_azure_work_item_query,
+};
 use super::super::search::{
-    accepts_azure_work_item_reply, accepts_everything_reply, build_rows,
-    invalidate_azure_live_searches, next_everything_reply_id, refinable_search_term,
-    start_azure_work_item_query,
+    accepts_everything_reply, build_rows, next_everything_reply_id, refinable_search_term,
 };
 use super::super::{RowKind, STATE, State};
 use crate::config::OpenMode;
@@ -151,9 +152,9 @@ fn build_rows_inserts_a_header_row_before_each_section_start() {
 
 #[test]
 fn live_search_gate_blocks_overlap_and_recent_duplicate_but_allows_other_query() {
-    use super::super::search::LiveSearchKind::WorkItems;
+    use super::super::azure_live::LiveSearchKind::WorkItems;
     let now = Instant::now();
-    let mut gate = super::super::search::LiveSearchGate::default();
+    let mut gate = super::super::azure_live::LiveSearchGate::default();
 
     assert!(gate.try_start(WorkItems, "wit:one", now));
     assert!(!gate.try_start(WorkItems, "wit:two", now));
@@ -169,9 +170,9 @@ fn live_search_gate_blocks_overlap_and_recent_duplicate_but_allows_other_query()
 /// 弾かれて Live 検索が 1 種しか走らなかった。
 #[test]
 fn live_search_gate_allows_all_kinds_at_once() {
-    use super::super::search::LiveSearchKind::{Pipelines, PullRequests, WorkItems};
+    use super::super::azure_live::LiveSearchKind::{Pipelines, PullRequests, WorkItems};
     let now = Instant::now();
-    let mut gate = super::super::search::LiveSearchGate::default();
+    let mut gate = super::super::azure_live::LiveSearchGate::default();
 
     assert!(gate.try_start(PullRequests, "pr:x", now));
     assert!(gate.try_start(WorkItems, "wit:x", now));
@@ -182,7 +183,7 @@ fn live_search_gate_allows_all_kinds_at_once() {
 /// 最後の応答で確定する。PR → Work Item → Pipeline の順に並べる。
 #[test]
 fn combined_live_search_merges_results_as_they_arrive() {
-    use super::super::search::{CombinedLiveSearch, LiveSearchKind};
+    use super::super::azure_live::{CombinedLiveSearch, LiveSearchKind};
     use crate::quick_launch::{Action, Entry};
 
     fn entry(name: &str) -> Entry {
@@ -229,7 +230,7 @@ fn combined_live_search_merges_results_as_they_arrive() {
 /// 全種が 0 件だったときだけ「見つからない」を出す。
 #[test]
 fn combined_live_search_reports_empty_only_when_all_kinds_finish() {
-    use super::super::search::{CombinedLiveSearch, LiveSearchKind};
+    use super::super::azure_live::{CombinedLiveSearch, LiveSearchKind};
 
     let mut combined = CombinedLiveSearch::new(2);
     let (_, message) = combined.absorb(LiveSearchKind::PullRequests, Vec::new(), None);
