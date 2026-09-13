@@ -21,8 +21,8 @@ pub use azure::{
     AzureCommand, AzureLiveRequest, PipelineFilter, PullRequestFilter, azure_command,
     azure_live_request,
 };
-pub(crate) use scoring::highlight_ranges;
 pub(crate) use rank::search_entries;
+pub(crate) use scoring::highlight_ranges;
 
 use azure::AzureIndexed;
 

@@ -398,4 +398,3 @@ pub(crate) fn encode_segment(value: &str) -> String {
         })
         .collect()
 }
-

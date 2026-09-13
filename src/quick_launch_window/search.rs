@@ -412,7 +412,7 @@ pub(super) fn build_rows(
         labels.push(HSTRING::from(format!(
             "{}    {}",
             entry.name,
-            super::draw::entry_context(entry)
+            super::draw_row::entry_context(entry)
         )));
         rows.push(RowKind::Item(index));
     }

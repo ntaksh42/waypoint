@@ -40,7 +40,8 @@ pub(in crate::quick_launch_window) struct State {
     pub(in crate::quick_launch_window) index: Index,
     /// 拡張から受け取った現在のブラウザタブ。Index を再構築しても失わないよう、
     /// 検索インデックスとは別にメモリ上で保持する。
-    pub(in crate::quick_launch_window) browser_tabs: Vec<(crate::browser_tabs::Browser, crate::browser_tabs::Tab)>,
+    pub(in crate::quick_launch_window) browser_tabs:
+        Vec<(crate::browser_tabs::Browser, crate::browser_tabs::Tab)>,
     pub(in crate::quick_launch_window) results: Vec<Entry>,
     /// 直前に同期検索した入力。末尾への文字追加だけなら、前回の候補を
     /// 起点に再検索して全索引の走査を避けるために使う。

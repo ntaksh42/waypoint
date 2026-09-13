@@ -9,13 +9,14 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_PAINT, WM_SIZE,
 };
 
-use super::draw::{draw_list_item, paint_window};
-use super::input::{hide_window, queue_selected};
-use super::layout::scale;
 use super::azure_live::{
     handle_azure_pipeline_results, handle_azure_pull_request_results,
     handle_azure_work_item_results,
 };
+use super::draw::paint_window;
+use super::draw_row::draw_list_item;
+use super::input::{hide_window, queue_selected};
+use super::layout::scale;
 use super::search::{handle_everything_results, update_results};
 use super::{
     BACKGROUND, BADGE_WIDTH, EDIT_HEIGHT, HEADER_HEIGHT, PADDING, ROW_HEIGHT, RowKind, STATE,

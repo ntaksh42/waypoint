@@ -14,8 +14,7 @@ use crate::quick_launch_window;
 use super::window::cursor_pos;
 use super::{
     ICON_CLOSE, ICON_RELOAD, ID_AUTOSTART, ID_AZURE_REFRESH, ID_EXIT, ID_OPEN_LOG, ID_RELOAD,
-    ID_SETTINGS,
-    WM_DYNAMIC_REFRESHED, refresh_azure_devops, reload, with_state,
+    ID_SETTINGS, WM_DYNAMIC_REFRESHED, refresh_azure_devops, reload, with_state,
 };
 
 pub(crate) fn show_quick_launch(hwnd: HWND) {

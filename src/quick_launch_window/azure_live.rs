@@ -145,7 +145,6 @@ impl CombinedLiveSearch {
     }
 }
 
-
 /// `az wit ` に入った。SQLite キャッシュ (バックグラウンド定期同期が
 /// 埋める「最近更新された Work Item」) だけをローカル検索する。API は
 /// 自動では呼ばない — 検索語があってキャッシュに無ければ、末尾に
@@ -781,4 +780,3 @@ pub(super) fn handle_azure_pipeline_results(reply_id: u32) {
         }
     }
 }
-

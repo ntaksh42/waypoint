@@ -5,6 +5,7 @@ mod badge;
 mod dispatch;
 mod draw;
 mod draw_icons;
+mod draw_row;
 mod highlight;
 mod input;
 mod layout;
@@ -30,6 +31,7 @@ use windows::core::{PCWSTR, Result, w};
 use crate::config::Config;
 use crate::dynamic::Menus;
 use crate::quick_launch::{Entry, Index};
+use azure_live::{AzureLiveSearchStart, start_azure_live_search_for_query};
 use dispatch::dispatch;
 use input::{
     add_selected_to_favorites, copy_selected_path, delete_word_before_cursor, first_selectable_row,
@@ -37,7 +39,6 @@ use input::{
     select_at,
 };
 use layout::{apply_dpi, apply_window_chrome, primary_monitor_dpi};
-use azure_live::{AzureLiveSearchStart, start_azure_live_search_for_query};
 use search::update_results;
 // 寸法・配色は theme.rs に置くが、参照側は従来どおり `super::BACKGROUND`
 // のように辿れるようにする (分割で呼び出し側を書き換えないため)。
@@ -53,7 +54,6 @@ pub const WM_QUICK_LAUNCH_EXECUTE: u32 = WM_APP + 4;
 pub const WM_QUICK_LAUNCH_ADD_TO_FAVORITES: u32 = WM_APP + 6;
 /// Azure DevOps の Work Item 検索スレッドが結果を返す通知。
 pub const WM_QUICK_LAUNCH_AZURE_RESULTS: u32 = WM_APP + 7;
-
 
 pub fn configure(config: &Config, dynamic: &Menus) {
     STATE.with(|state| {
