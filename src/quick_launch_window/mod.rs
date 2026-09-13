@@ -11,10 +11,11 @@ mod layout;
 mod search;
 #[cfg(test)]
 mod tests;
+mod theme;
 
 use std::cell::RefCell;
 
-use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{CreateSolidBrush, HBRUSH, HFONT};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::SetWindowTheme;
@@ -39,70 +40,17 @@ use input::{
 use layout::{apply_dpi, apply_window_chrome, primary_monitor_dpi};
 use azure_live::{AzureLiveSearchStart, start_azure_live_search_for_query};
 use search::update_results;
-
-const EDIT_ID: isize = 1001;
-const LIST_ID: isize = 1002;
-const WINDOW_WIDTH: i32 = 720;
-const PADDING: i32 = 10;
-const EDIT_HEIGHT: i32 = 34;
-const ROW_HEIGHT: i32 = 42;
-/// セクション見出し行の高さ。通常項目より詰めて、区切りだと分かる程度にする。
-const HEADER_HEIGHT: i32 = 26;
-/// モードバッジ ("BOOKMARKS" 等) 用に検索窓の右側へ確保する幅。
-const BADGE_WIDTH: i32 = 92;
-/// 候補行のアイコン一辺。行の左端からの余白と種別バッジの半径もこれを基準に決める。
-const ICON_SIZE: i32 = 26;
-/// アイコンの左端 (行の左端からの距離)。
-const ICON_LEFT: i32 = 8;
-/// アイコンからテキストまでの隙間。
-const ICON_TEXT_GAP: i32 = 10;
-/// テキストの開始位置 (行の左端からの距離)。
-const TEXT_LEFT: i32 = ICON_LEFT + ICON_SIZE + ICON_TEXT_GAP;
-
-const BACKGROUND: COLORREF = rgb(13, 13, 13);
-const SURFACE: COLORREF = rgb(32, 30, 28);
-const SURFACE_HOVER: COLORREF = rgb(44, 41, 38);
-/// 選択行カード専用の背景色。旧実装は `SURFACE_HOVER` を流用していたが、
-/// 背景 (BACKGROUND) とのコントラスト比が 1.34:1 しかなく、リスト内を
-/// キーボードで移動しても選択位置がほぼ同化して見えなかった (実測)。
-/// ACCENT と同系の寒色へ寄せつつ明度を上げ、2.7:1 まで引き上げてある。
-const SELECTED_BG: COLORREF = rgb(70, 90, 106);
-/// 選択カードの枠線。`SELECTED_BG` 自体が十分明るくなったため、枠は
-/// 主張しすぎない程度にアクセントへ寄せる。
-const SELECTED_BORDER: COLORREF = rgb(140, 186, 214);
-const ACCENT: COLORREF = rgb(111, 168, 201);
-const TEXT_PRIMARY: COLORREF = rgb(245, 245, 245);
-const TEXT_SECONDARY: COLORREF = rgb(190, 190, 190);
-/// detail 行の path (secondary) やセクション見出しなど、一段控えめにする
-/// 補助テキスト用。旧 rgb(117,112,106) は選択行の背景 (SURFACE_HOVER) に対する
-/// コントラスト比が約2.95:1しかなく視認性が低かった。rgb(148,142,134)・
-/// rgb(180,173,163) と段階的に上げてきたが、実機表示でなお他のテキストより
-/// 薄く感じるという指摘が続いたため、さらに明度を上げてある。
-const TEXT_MUTED: COLORREF = rgb(205, 199, 190);
+// 寸法・配色は theme.rs に置くが、参照側は従来どおり `super::BACKGROUND`
+// のように辿れるようにする (分割で呼び出し側を書き換えないため)。
+// 素の `use` だと mod.rs の中でしか見えず、兄弟モジュールの `super::X` が
+// 解決できない。再公開が要る。
+pub(crate) use theme::*;
 
 pub const WM_QUICK_LAUNCH_EXECUTE: u32 = WM_APP + 4;
-/// Everything からの検索結果を識別する `WM_COPYDATA` の `dwData` の初期値。
-/// クエリごとに増やし、入力前の古い応答を判別できるようにする。
-const EVERYTHING_REPLY_ID_START: u32 = WM_APP + 5;
 /// `Ctrl+Shift+Enter` で選択項目を config へ登録するよう常駐部へ依頼する。
 pub const WM_QUICK_LAUNCH_ADD_TO_FAVORITES: u32 = WM_APP + 6;
 /// Azure DevOps の Work Item 検索スレッドが結果を返す通知。
 pub const WM_QUICK_LAUNCH_AZURE_RESULTS: u32 = WM_APP + 7;
-/// Quick Launch が一度に Everything へ要求する最大件数。
-/// 全件表示はしない (`visible_results` の上限と同じ枠で足りる)。
-const EVERYTHING_MAX_RESULTS: u32 = 24;
-/// リストボックスへ流し込む候補の上限。
-///
-/// ウィンドウの高さは `visible_results` (12〜24) で決まるので、それを超える
-/// 行を作っても画面には出ない。にもかかわらず 1 キー入力ごとに
-/// `HSTRING` の生成 → `LB_ADDSTRING` の同期送信 → オーナードローの
-/// `WM_MEASUREITEM` 再入が候補数だけ走るため、母集団が大きいモードでは
-/// そのまま体感のカクつきになる (実測: `az wit` のキャッシュは 300 件規模で、
-/// 24 行しか見えないのに毎打鍵で全件ぶんを構築していた)。
-/// Everything が `EVERYTHING_MAX_RESULTS` で先に絞っているのと同じ理由・
-/// 同じ枠を、ローカル検索の結果にも適用する。
-const MAX_LIST_RESULTS: usize = 24;
-const CLASS_NAME: PCWSTR = w!("WaypointQuickLaunchWindow");
 
 thread_local! {
     static STATE: RefCell<State> = RefCell::new(State::default());
@@ -618,8 +566,4 @@ extern "system" fn window_proc(
             unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
         }
     }
-}
-
-const fn rgb(red: u8, green: u8, blue: u8) -> COLORREF {
-    COLORREF(red as u32 | ((green as u32) << 8) | ((blue as u32) << 16))
 }
