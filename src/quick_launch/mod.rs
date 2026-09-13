@@ -10,6 +10,7 @@ use crate::quick_launch_history::Ranking;
 mod azure;
 mod azure_search;
 mod index;
+mod rank;
 mod scoring;
 mod search;
 #[cfg(test)]
@@ -21,7 +22,7 @@ pub use azure::{
     azure_live_request,
 };
 pub(crate) use scoring::highlight_ranges;
-pub(crate) use search::search_entries;
+pub(crate) use rank::search_entries;
 
 use azure::AzureIndexed;
 

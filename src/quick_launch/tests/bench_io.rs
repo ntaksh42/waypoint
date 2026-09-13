@@ -31,7 +31,7 @@ fn bench_index_rebuild() {
 
     let start = Instant::now();
     for _ in 0..100 {
-        std::hint::black_box(super::super::search::bench_dedup(entries.clone()));
+        std::hint::black_box(super::super::rank::bench_dedup(entries.clone()));
     }
     let dedup = start.elapsed().as_secs_f64() * 1000.0 / 100.0;
     let start = Instant::now();

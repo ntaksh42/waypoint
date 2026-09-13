@@ -5,7 +5,7 @@ use crate::dynamic::Menus;
 use crate::quick_launch_history::Ranking;
 
 use super::azure::{AzureIndexed, azure_candidate_entry};
-use super::search::dedup_by_path;
+use super::rank::dedup_by_path;
 use super::{Action, Entry, Index};
 
 impl Index {

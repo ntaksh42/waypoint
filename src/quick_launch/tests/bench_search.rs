@@ -260,7 +260,7 @@ fn bench_sections_breakdown() {
             acc = acc.wrapping_add(
                 index
                     .ranking
-                    .rank_lower(e, super::super::search::keys_path(k))
+                    .rank_lower(e, super::super::rank::keys_path(k))
                     .0,
             );
         }

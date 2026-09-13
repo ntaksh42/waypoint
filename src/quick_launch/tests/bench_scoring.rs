@@ -240,7 +240,7 @@ fn bench_cheap_pass_cost() {
             let mut n = 0usize;
             for &(entries, lower) in sources {
                 for (entry, keys) in entries.iter().zip(lower) {
-                    if super::super::search::bench_score_cheap(
+                    if super::super::rank::bench_score_cheap(
                         entry,
                         keys,
                         true,

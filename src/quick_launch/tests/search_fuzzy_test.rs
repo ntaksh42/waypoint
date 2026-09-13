@@ -73,7 +73,7 @@ fn fuzzy_skip_does_not_change_results() {
         .filter(|entry| entry.name.to_lowercase().contains("project"))
         .count();
     assert!(
-        cheap_hits >= super::super::search::fuzzy_skip_threshold(),
+        cheap_hits >= super::super::rank::fuzzy_skip_threshold(),
         "枝刈り経路を通る前提が崩れている: cheap_hits={cheap_hits}"
     );
 }
@@ -96,5 +96,5 @@ fn search_entries_cached_multi_for_test<'a>(
     query: &str,
     ranking: &Ranking,
 ) -> Vec<&'a Entry> {
-    super::super::search::bench_cached_multi(&[(entries, lower)], query, true, ranking)
+    super::super::rank::bench_cached_multi(&[(entries, lower)], query, true, ranking)
 }

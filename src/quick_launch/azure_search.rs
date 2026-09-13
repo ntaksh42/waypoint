@@ -3,7 +3,8 @@
 use std::cmp::Reverse;
 
 use super::Entry;
-use super::search::{Fields, Fuzzy, LowerKeys, lower_terms, score_entry};
+use super::rank::{Fuzzy, lower_terms, score_entry};
+use super::search::{Fields, LowerKeys};
 use crate::quick_launch_history::Ranking;
 
 /// 語句一致と全語タイトル一致を breadcrumb / URL の一致より優先し、
