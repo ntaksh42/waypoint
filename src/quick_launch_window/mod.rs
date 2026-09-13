@@ -9,14 +9,13 @@ mod highlight;
 mod input;
 mod layout;
 mod search;
+mod state;
 #[cfg(test)]
 mod tests;
 mod theme;
 
-use std::cell::RefCell;
-
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
-use windows::Win32::Graphics::Gdi::{CreateSolidBrush, HBRUSH, HFONT};
+use windows::Win32::Graphics::Gdi::CreateSolidBrush;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::SetWindowTheme;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_CONTROL, VK_SHIFT};
@@ -45,6 +44,9 @@ use search::update_results;
 // 素の `use` だと mod.rs の中でしか見えず、兄弟モジュールの `super::X` が
 // 解決できない。再公開が要る。
 pub(crate) use theme::*;
+// State / RowKind / STATE も同じ理由で再公開する。ただしこちらは
+// 可視性を広げたくないので、モジュール限定の再エクスポートにする。
+pub(in crate::quick_launch_window) use state::{RowKind, STATE, State};
 
 pub const WM_QUICK_LAUNCH_EXECUTE: u32 = WM_APP + 4;
 /// `Ctrl+Shift+Enter` で選択項目を config へ登録するよう常駐部へ依頼する。
@@ -52,106 +54,6 @@ pub const WM_QUICK_LAUNCH_ADD_TO_FAVORITES: u32 = WM_APP + 6;
 /// Azure DevOps の Work Item 検索スレッドが結果を返す通知。
 pub const WM_QUICK_LAUNCH_AZURE_RESULTS: u32 = WM_APP + 7;
 
-thread_local! {
-    static STATE: RefCell<State> = RefCell::new(State::default());
-}
-
-/// リストボックスの 1 行が何を表すか。`results` のインデックスと行番号の
-/// ずれを吸収するため、行番号から `results` を直接インデックス参照する
-/// 代わりに必ずこの配列 (`State::rows`) を経由する。
-#[derive(Debug, Clone, Copy)]
-enum RowKind {
-    /// `results[usize]` を表示する通常の項目行。選択・実行の対象。
-    Item(usize),
-    /// 絞り込みなし一覧の区分見出し。選択・実行の対象外。
-    Header(&'static str),
-    /// 検索中・0 件時の説明文 (`State::empty_message`)。選択・実行の対象外。
-    Message,
-}
-
-#[derive(Default)]
-struct State {
-    window: Option<HWND>,
-    edit: Option<HWND>,
-    list: Option<HWND>,
-    owner: Option<HWND>,
-    origin: Option<HWND>,
-    index: Index,
-    /// 拡張から受け取った現在のブラウザタブ。Index を再構築しても失わないよう、
-    /// 検索インデックスとは別にメモリ上で保持する。
-    browser_tabs: Vec<(crate::browser_tabs::Browser, crate::browser_tabs::Tab)>,
-    results: Vec<Entry>,
-    /// 直前に同期検索した入力。末尾への文字追加だけなら、前回の候補を
-    /// 起点に再検索して全索引の走査を避けるために使う。
-    previous_query: Option<String>,
-    /// リストボックスの行番号ごとの内訳。通常検索時は `Item(0), Item(1), ...`
-    /// のフラットな並び (見出しなし)。行番号と `results` の対応を一箇所の
-    /// 配列に固定することで、描画・選択移動・実行の各所で見出し行と項目行の
-    /// 変換ロジックを重複させない。
-    rows: Vec<RowKind>,
-    pending: Option<Entry>,
-    /// `Ctrl+Shift+Enter` で config への登録を要求された項目。
-    /// ウィンドウは閉じずに続けて検索できるようにするため、
-    /// `pending` (Enter で実行する項目) とは別に持つ。
-    pending_add: Option<Entry>,
-    /// `Ctrl+C` でパスをクリップボードへコピーした直後に立てる。
-    /// 検索窓のバッジを一時的に `COPIED` へ差し替えるのに使い、
-    /// 次のキー入力 (`update_results`) で通常のバッジへ戻る。
-    copy_feedback: bool,
-    visible_results: usize,
-    dpi: u32,
-    edit_font: Option<HFONT>,
-    name_font: Option<HFONT>,
-    detail_font: Option<HFONT>,
-    background_brush: Option<HBRUSH>,
-    surface_brush: Option<HBRUSH>,
-    everything_enabled: bool,
-    azure_devops: crate::config::AzureDevOpsSettings,
-    /// `f ` プレフィックスの間だけ立てる。プレフィックスを抜けた後に
-    /// 遅れて届く Everything の応答を、無関係な検索結果へ混ぜないための
-    /// ガード。
-    everything_active: bool,
-    /// 最後に送った Everything クエリの応答 ID。高速に入力したとき、
-    /// 先行クエリの応答が後から届いて現在の候補を上書きするのを防ぐ。
-    everything_reply_id: u32,
-    /// `f ` モード中に有効な Everything 検索フラグ
-    /// (`everything::MATCH_CASE` 等の OR 合成)。モードを抜けても値は保持し、
-    /// 次に `f ` へ入ったときも同じ絞り込みを引き継ぐ。
-    everything_flags: u32,
-    /// `az wit ` 中だけ立てる。古い検索スレッドの結果を捨てるために使う。
-    azure_work_items_active: bool,
-    azure_work_item_reply_id: u32,
-    azure_work_item_query: String,
-    /// PR のライブ検索 (`AzureLivePullRequestSearch`) 中だけ立てる。
-    /// `azure_work_item_*` と同じ役割だが、Work Item のライブ検索と
-    /// reply_id の名前空間を分けるために独立させている。
-    azure_pull_requests_live_active: bool,
-    azure_pull_request_reply_id: u32,
-    /// Pipeline のライブ検索 (`AzureLivePipelineSearch`) 中だけ立てる。
-    /// Pipeline は永続キャッシュを持たないので、`az pipeline ` に入る
-    /// たびにこの経路を通る (PR/Work Item と違いキャッシュ検索を挟まない)。
-    azure_pipelines_live_active: bool,
-    azure_pipeline_reply_id: u32,
-    azure_live_search_gate: azure_live::LiveSearchGate,
-    /// `az <query>` (サブコマンド無し) の `Ctrl+Enter` で 3 種の Live 検索を
-    /// 同時に投げたときだけ `Some`。到着順に結果をここへ積み、都度リストを
-    /// 組み直す (単独種別の検索は従来どおり `results` を丸ごと置き換える)。
-    azure_live_combined: Option<azure_live::CombinedLiveSearch>,
-    /// 非同期検索中・0 件時に結果一覧へ出す説明。実行対象にはしない。
-    empty_message: Option<String>,
-    /// 現在の入力が `b `/`w `/`a `/`f ` のいずれかに入っていれば
-    /// そのモード名。検索窓のバッジ表示に使う。
-    badge: Option<&'static str>,
-    /// 現在の入力で `Ctrl+Enter` の Live 検索が実際に成立するか。
-    /// `az project` / `az optimize` のように検索対象を持たないコマンドでは
-    /// 立たない。描画のたびに入力を読み直さずに済むよう、バッジと同じく
-    /// 入力が変わった時点 (`update_badge`) で確定させる。
-    live_search_hint: bool,
-    /// モードプレフィックス除去済みの検索語。空なら一覧の候補名を
-    /// ハイライトしない (絞り込みなし一覧や Everything / Azure の
-    /// 非同期検索など、一致箇所が `name` に対応しない場合)。
-    highlight_term: String,
-}
 
 pub fn configure(config: &Config, dynamic: &Menus) {
     STATE.with(|state| {
