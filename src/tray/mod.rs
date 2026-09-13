@@ -50,6 +50,7 @@ pub(crate) const ID_RELOAD: usize = 9002;
 pub(crate) const ID_AUTOSTART: usize = 9003;
 pub(crate) const ID_EXIT: usize = 9004;
 pub(crate) const ID_AZURE_REFRESH: usize = 9005;
+pub(crate) const ID_OPEN_LOG: usize = 9006;
 pub(crate) const ICON_RELOAD: &[u8] = include_bytes!("../../assets/menu/reload.png");
 pub(crate) const ICON_CLOSE: &[u8] = include_bytes!("../../assets/menu/close.png");
 

@@ -359,6 +359,24 @@ pub fn show(owner: HWND, origin: Option<HWND>) -> Result<()> {
     Ok(())
 }
 
+/// `--selftest` 用の索引の内訳。候補が 0 件のとき、どの取り込みが
+/// 効いていないかを 1 行で切り分けられるようにする。
+pub fn index_counts() -> Vec<(&'static str, usize)> {
+    STATE.with(|state| {
+        let state = state.borrow();
+        let index = &state.index;
+        vec![
+            ("entries", index.entries.len()),
+            ("bookmarks", index.bookmarks.len()),
+            ("history", index.history.len()),
+            ("apps", index.apps.len()),
+            ("windows", index.windows.len()),
+            ("tabs", index.tabs.len()),
+            ("azure", index.azure.len()),
+        ]
+    })
+}
+
 pub fn take_pending() -> Option<(Entry, Option<HWND>)> {
     STATE.with(|state| {
         let mut state = state.borrow_mut();

@@ -117,14 +117,34 @@ fn selftest_report(hwnd: HWND, quick_launch_hotkey: trigger::Registration) -> St
     let spec = tray::quick_launch_hotkey_spec();
     // ホットキーは native (RegisterHotKey) と hook (横取り) のどちらでも可
     let all_ok = quick_launch_hotkey.is_active();
+    // 候補が出ないときに、どの取り込みが効いていないかを切り分ける。
+    // GUI サブシステムで stdout が無く、不調の原因を追える経路がここしかない
+    let counts = waypoint::quick_launch_window::index_counts()
+        .into_iter()
+        .map(|(name, count)| format!("{name}={count}"))
+        .collect::<Vec<_>>()
+        .join(" ");
     format!(
-        "{}: window={:?} items={} quick_launch_hotkey=\"{}\":{} autostart={}",
+        "{}: version={} window={:?} items={} quick_launch_hotkey=\"{}\":{} autostart={}\n\
+         index: {}\n\
+         everything={} log={}",
         if all_ok { "PASS" } else { "FAIL" },
+        env!("CARGO_PKG_VERSION"),
         hwnd.0,
         items,
         spec,
         quick_launch_hotkey.label(),
         autostart::is_enabled(),
+        counts,
+        // Everything は未起動でも 0 件扱いで正常。起動有無だけ出す
+        if waypoint::everything::is_running() {
+            "running"
+        } else {
+            "not running"
+        },
+        waypoint::panic_log::log_path()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "unavailable".to_string()),
     )
 }
 

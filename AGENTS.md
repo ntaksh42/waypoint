@@ -35,7 +35,6 @@ The goal is to be the most capable general launcher on Windows — broader than 
 | 表示直後の一覧 (`sections`) | 0.157 ms | 予算の 0.31% |
 | `Index::build` (フル) | 91 ms / 35 ms | **UI スレッドで呼ばないこと** |
 | `Index::refresh_*` (軽量版) | 0.001 ms | 4 桁以上の差 |
-| `menu::build` (アイコン未キャッシュ) | 90 ms | キャッシュ温なら 0.81 ms |
 | `apps::scan` | 30 ms | 9 割が `.lnk` の COM 実体解決 |
 | `dynamic::refresh` | 44 ms | バックグラウンドスレッドなので可 |
 | 使用履歴の保存 | 18.8 ms | `record_async` で UI スレッド外へ |
@@ -230,71 +229,6 @@ Windows 11 では Widgets が予約済みで `RegisterHotKey` が「既に登録
 - 同じキーをフックで奪い合う常駐アプリ (QAP など) が居る場合、**後から
   フックを張った側が勝つ**。実測で waypoint が QAP より優先されることを確認済み
 
-### メニューの行高はアイコンサイズでは変わらない
-`MIIM_BITMAP` で 32px のアイコンを付けても、`TrackPopupMenuEx` の行高は
-システムの `SM_CYMENU` のまま。**アイコンだけが大きくなり行は詰まったまま**になる。
-実測で確認済み。
-
-行の高さを制御する手段はオーナードローしかない (`src/menu_draw.rs`) 。
-`MFT_OWNERDRAW` で追加し、`WM_MEASUREITEM` で高さを返し `WM_DRAWITEM` で描く。
-フォントは `SPI_GETNONCLIENTMETRICS` の `lfMenuFont` をそのまま使うので
-文字サイズは変わらない (QAP も同じ方針で、メニューフォントは変更できない) 。
-
-- **`itemData` は `MIIM_DATA` でしか渡せない。** `AppendMenuW` の `lpnewitem` に
-  入れても文字列として解釈される。`InsertMenuItemW` + `MENUITEMINFOW` を使う
-- **オーナードローでは `&` を自分で解釈しない。** `&1` のアクセラレータ装飾は
-  描画前に落とす (`strip_accelerator`) 。`&&` はリテラルの `&` へ戻す
-
-### オーナードローにするとダークメニューが白くなる
-`theme::enable_dark_menus()` は uxtheme にダーク描画を指示するもので、
-**`GetSysColor` の戻り値は変えない**。オーナードローで背景と文字色を
-`COLOR_MENU` / `COLOR_MENUTEXT` から取ると、ライトの色で塗ってしまい
-FR-2.7 に反する (実測でメニューが白背景になった) 。
-
-色は uxtheme のメニューテーマから引く:
-`OpenThemeData(None, w!("Menu"))` → `DrawThemeBackground` (背景) /
-`GetThemeColor(..., TMT_TEXTCOLOR)` (文字色) 。ダーク指定がそのまま乗る。
-
-- `MENU_POPUPBACKGROUND` で地を敷いてから `MENU_POPUPITEM` を状態付きで重ねる
-- 状態は `MPI_NORMAL` / `MPI_HOT` / `MPI_DISABLED` を項目の状態に対応させる
-- **`DrawFrameControl` はシステム色固定。** サブメニュー矢印に使うと
-  ダークで沈んで見えない。設定済みの文字色で `▶` を描く
-- **`MF_SEPARATOR` も残さない。** 項目だけオーナードローにすると、
-  区切り線は Windows がシステム色で描き**白い線として浮く**(実測)。
-  `MFT_OWNERDRAW | MFT_SEPARATOR` にして自前で引く
-- **通常項目の背景色はテーマから取れない。** 実測で
-  `MENU_POPUPBACKGROUND` と `MPI_NORMAL` の `TMT_FILLCOLOR` は
-  `0x80070490` (要素なし) を返し、`MPI_NORMAL` の項目自体も透明。
-  `DrawThemeBackground` に任せると明るい地が出る。地は自前で塗り、
-  ダーク判定は `MPI_NORMAL` の**文字色**が明るいか (白=ダーク) で行う
-- テーマハンドルは掴んだままにせず、`WM_THEMECHANGED` で捨てて開き直す
-
-### ポップアップの外枠は暗くできない (未解決・対応しない)
-
-項目と区切り線をダークにしても、**ポップアップを囲む 1 px の外枠だけは
-明るいまま残る**。ここは非クライアント領域でオーナードローが届かない。
-三手試して全て駄目だったので、**v1.0 では受け入れる**。再挑戦するなら
-以下は試済みなので繰り返さないこと:
-
-| 試した手 | 結果 |
-|---|---|
-| `DWMWA_BORDER_COLOR` を設定 | `Ok(())` が返るのに色が変わらない。メニュー (`#32768`) は DWM の枠管理外 |
-| `GWLP_WNDPROC` を差し替えて `WM_NCPAINT` で塗り直す | 差し替えは成功する (戻り値が非ゼロ) のに、以後の `WM_NCPAINT` が届かない。描画ログが 1 回しか出ない |
-| `SetWindowRgn` で領域を 1 px 内側へ縮める | 見た目が変わらない |
-
-途中で分かった周辺事実:
-
-- `WindowFromDC` は 0 を返す。`WM_DRAWITEM` の DC はウィンドウに
-  紐づかないメモリ DC なので、そこからハンドルは辿れない
-- `WM_DRAWITEM` の時点ではポップアップがまだ非表示。項目を測って
-  描いてから表示される順序なので `IsWindowVisible` では拾えない
-- `FrameRect` は right / bottom を含まない。幅・高さをそのまま渡すと
-  右辺と下辺が 1 px 残る
-
-**判定には等倍のスクリーンショットを使うこと。** 全画面を縮小した画像では
-1 px の枠が潰れて周囲に溶け、直っていないのに直ったように見える。
-実際にこれで何度も誤認した。
-
 ### アイコンは要求寸法以上のイメージリストから引く
 `SHGFI_SMALLICON` / `SHIL_SMALL` は 16px を返す。これを 32px へ引き伸ばすと
 輪郭がにじむ。**QAP のアイコンがきれいなのは最初から必要な解像度で取っているから。**
@@ -366,8 +300,6 @@ Recent/Frequent Folders・Open Windows (`w `) ・ブックマーク (`b `) ・�
 | モジュール | 内容 |
 |---|---|
 | `config/` | 設定のパース・`Item` 型・変数展開 (FR-5, FR-7) |
-| `menu/` | メニュー構築・ラベル整形 (FR-2) |
-| `menu_draw.rs` / `theme.rs` | オーナードローとダークテーマ (行高・色の落とし穴は下記参照) |
 | `quick_launch/` | Quick Launch の検索インデックスと順位付け (`index.rs` / `search.rs` / `azure.rs`)。プレフィックス判定 (`mod.rs`) |
 | `quick_launch_window/` | Quick Launch の Win32 ウィンドウ・入力・描画 (`layout.rs` / `draw.rs` / `input.rs` / `dispatch.rs`) |
 | `quick_launch_history.rs` | Quick Launch で選んだ項目の使用頻度履歴 (`dynamic.rs` の Recent/Frequent とは別データ) |

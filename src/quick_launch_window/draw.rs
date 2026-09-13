@@ -431,13 +431,19 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
                     dpi,
                     FaviconFallback::Tab,
                 ),
+                Action::WebSearch => draw_favicon_icon(
+                    draw.hDC,
+                    &entry.path,
+                    draw.rcItem,
+                    dpi,
+                    FaviconFallback::Web,
+                ),
                 Action::ReplaceQuery(_)
                 | Action::AzureLiveWorkItemSearch(_)
                 | Action::AzureLivePullRequestSearch { .. }
                 | Action::AzureLivePipelineSearch { .. }
                 | Action::AzureOptimize
-                | Action::OpenSettings
-                | Action::WebSearch => draw_command_icon(draw.hDC, draw.rcItem, dpi, name_font),
+                | Action::OpenSettings => draw_command_icon(draw.hDC, draw.rcItem, dpi, name_font),
             }
         }
         SetBkMode(draw.hDC, TRANSPARENT);

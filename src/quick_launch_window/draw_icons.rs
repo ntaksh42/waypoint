@@ -122,6 +122,9 @@ const ICON_TAB: &[u8] = include_bytes!("../../assets/menu/tab.png");
 pub(super) enum FaviconFallback {
     Bookmark,
     Tab,
+    /// Web 検索 (`??`、FR-9.21)。検索エンジンの favicon が
+    /// ブラウザの DB にあればそれを使う。
+    Web,
 }
 
 /// URL 系候補の favicon を描く。Chrome/Edge の `Favicons` DB に
@@ -139,6 +142,12 @@ pub(super) unsafe fn draw_favicon_icon(
             crate::icon::bitmap_for_asset_sized("bookmark", ICON_BOOKMARK, size)
         }
         FaviconFallback::Tab => crate::icon::bitmap_for_asset_sized("tab", ICON_TAB, size),
+        // 検索エンジンの favicon がブラウザの DB に無いときの代替。
+        // Web 検索専用のアセットは持たず、URL を開く点で最も近い
+        // ブックマークのアイコンを共用する
+        FaviconFallback::Web => {
+            crate::icon::bitmap_for_asset_sized("bookmark", ICON_BOOKMARK, size)
+        }
     });
     let Some(bitmap) = bitmap else {
         return;

@@ -13,7 +13,8 @@ use crate::quick_launch_window;
 
 use super::window::cursor_pos;
 use super::{
-    ICON_CLOSE, ICON_RELOAD, ID_AUTOSTART, ID_AZURE_REFRESH, ID_EXIT, ID_RELOAD, ID_SETTINGS,
+    ICON_CLOSE, ICON_RELOAD, ID_AUTOSTART, ID_AZURE_REFRESH, ID_EXIT, ID_OPEN_LOG, ID_RELOAD,
+    ID_SETTINGS,
     WM_DYNAMIC_REFRESHED, refresh_azure_devops, reload, with_state,
 };
 
@@ -95,6 +96,13 @@ pub(crate) fn show_tray_menu(hwnd: HWND) {
         ID_SETTINGS => open_config_in_editor(),
         ID_RELOAD => reload(hwnd),
         ID_AZURE_REFRESH => refresh_azure_devops(hwnd),
+        // GUI サブシステムでは panic の出力先が無く、ログが唯一の手がかり。
+        // 場所を覚えなくても開けるようにする
+        ID_OPEN_LOG => {
+            if let Some(path) = crate::panic_log::log_path() {
+                let _ = crate::shell::open_shell_item(&path.to_string_lossy());
+            }
+        }
         ID_AUTOSTART => {
             let now = crate::autostart::is_enabled();
             let _ = crate::autostart::set_enabled(!now);
@@ -223,7 +231,19 @@ unsafe fn build_tray_items(menu: HMENU) -> Result<()> {
             set_tray_bitmap(menu, ID_AUTOSTART, bitmap);
         }
 
+        AppendMenuW(menu, MF_STRING, ID_OPEN_LOG, w!("Open log"))?;
+
         AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
+        // バージョンはクリックできる操作ではないので選択不可にする
+        let version = HSTRING::from(format!("waypoint {}", env!("CARGO_PKG_VERSION")));
+        AppendMenuW(
+            menu,
+            MF_STRING
+                | windows::Win32::UI::WindowsAndMessaging::MF_DISABLED
+                | windows::Win32::UI::WindowsAndMessaging::MF_GRAYED,
+            0,
+            PCWSTR(version.as_ptr()),
+        )?;
         AppendMenuW(menu, MF_STRING, ID_EXIT, w!("Exit"))?;
         set_tray_item_icon(menu, ID_EXIT, "close", ICON_CLOSE);
         Ok(())
