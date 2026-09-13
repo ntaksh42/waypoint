@@ -17,6 +17,8 @@ mod auth_cache;
 mod cache;
 mod candidate_cache;
 mod convert;
+#[cfg(test)]
+mod convert_test;
 mod credential;
 mod shared_cache;
 mod sync;
