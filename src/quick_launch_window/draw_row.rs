@@ -212,6 +212,7 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
                 | Action::AzureLivePipelineSearch { .. }
                 | Action::AzureOptimize
                 | Action::OpenSettings
+                | Action::OpenHelp
                 | Action::KillProcess(_) => {
                     draw_command_icon(draw.hDC, draw.rcItem, dpi, name_font)
                 }

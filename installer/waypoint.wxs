@@ -95,6 +95,14 @@
             </Component>
           </Directory>
 
+          <!-- 機能一覧の Help ページ (FR-9.22)。トレイメニューと Quick Launch の
+               "Help" 内部コマンドから開く。 -->
+          <Directory Id="HelpFolder" Name="help">
+            <Component Id="HelpPage" Guid="*">
+              <File Id="HelpIndexHtml" Source="help\index.html" KeyPath="yes" />
+            </Component>
+          </Directory>
+
         </Directory>
       </Directory>
     </StandardDirectory>
@@ -156,6 +164,7 @@
       <ComponentRef Id="TabBridgeManifestComponent" />
       <ComponentRef Id="TabBridgeBackgroundComponent" />
       <ComponentRef Id="TabBridgeSetupGuide" />
+      <ComponentRef Id="HelpPage" />
       <ComponentRef Id="StartMenuShortcut" />
     </Feature>
 

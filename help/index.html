@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Waypoint Help</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #171717;
+    --panel: #202020;
+    --border: #333;
+    --text: #f2f2f2;
+    --muted: #9aa4b2;
+    --accent: #4d8fd6;
+    --badge-bg: #292929;
+    --kill: #c45c50;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.55 "Yu Gothic UI", "Segoe UI", sans-serif;
+    margin: 0 auto;
+    max-width: 920px;
+    padding: 40px 24px 80px;
+  }
+  h1 { margin: 0 0 4px; font-size: 26px; }
+  .subtitle { color: var(--muted); margin: 0 0 28px; }
+  #search {
+    width: 100%;
+    font-size: 16px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    outline: none;
+  }
+  #search:focus { border-color: var(--accent); }
+  .count { color: var(--muted); font-size: 13px; margin: 10px 2px 20px; }
+  .group { margin-bottom: 28px; }
+  .group-title {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin: 0 0 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+  }
+  .card-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .card-title { font-weight: 600; }
+  .prefix {
+    font-family: Consolas, monospace;
+    background: var(--badge-bg);
+    color: var(--accent);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 13px;
+  }
+  .prefix.kill { color: var(--kill); }
+  .card-desc { color: var(--muted); margin-top: 4px; }
+  kbd {
+    font-family: Consolas, monospace;
+    background: var(--badge-bg);
+    border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 12.5px;
+  }
+  .hidden { display: none !important; }
+  .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+</style>
+</head>
+<body>
+  <h1>Waypoint Help</h1>
+  <p class="subtitle">機能を検索してください。プレフィックス・ショートカットは Quick Launch の検索窓 (既定 <kbd>Alt+Space</kbd>) で使います。</p>
+  <input id="search" type="text" placeholder="機能名・プレフィックス・キーで検索 (例: bookmark, az, Ctrl+E)" autofocus>
+  <p class="count" id="count"></p>
+  <div id="groups"></div>
+  <p class="empty hidden" id="empty">一致する機能がありません。</p>
+
+<script>
+const DATA = [
+  {
+    group: "トリガー",
+    items: [
+      { title: "Quick Launch を開く", prefix: "", keys: "Alt+Space (設定可能)", desc: "設定したグローバルホットキーで検索画面を開く。RegisterHotKey が使えない環境では低レベルキーボードフックで同じキーを横取りする。" },
+      { title: "中ボタン / トレイ左クリック", prefix: "", keys: "", desc: "マウス中ボタン、またはトレイアイコンの左クリックでも Quick Launch を開ける。除外プロセス一覧とドラッグ判定により、ブラウザのオートスクロール等は妨げない。" },
+    ],
+  },
+  {
+    group: "Quick Launch 検索プレフィックス",
+    items: [
+      { title: "通常検索", prefix: "(なし)", keys: "", desc: "フォルダ・ファイル・特殊フォルダ・Recent/Frequent Folders・Current Windows・アプリを横断検索する。" },
+      { title: "ブックマーク検索", prefix: "b ", keys: "", desc: "Chrome / Edge のブックマークを検索する。選択すると既定ブラウザで開く。" },
+      { title: "ブラウザ履歴検索", prefix: "h ", keys: "", desc: "Chrome / Edge の閲覧履歴を検索する。件数が多いため通常検索には含まれず、このプレフィックス限定。" },
+      { title: "開いているウィンドウ", prefix: "w ", keys: "", desc: "現在開いている Explorer / アプリのウィンドウへ切り替える。ウィンドウタイトルと実行ファイル名の両方で検索できる。" },
+      { title: "アプリ検索", prefix: "a ", keys: "", desc: "スタートメニューのショートカット (.lnk) を検索して起動する。" },
+      { title: "開いているブラウザタブ", prefix: "t ", keys: "", desc: "Chrome / Edge 拡張 (Native Messaging) 経由で現在開いているタブを検索し、選択すると前面化する。" },
+      { title: "ターミナルでフォルダを開く", prefix: "ps ", keys: "", desc: "フォルダ候補 (config 登録 + Recent/Frequent) だけを検索し、選択すると Windows Terminal + PowerShell 7 でそのフォルダを開く (wt.exe -d <path> pwsh)。" },
+      { title: "プロセス Kill", prefix: "k ", keys: "", desc: "実行中プロセスを名前で検索し、選択すると確認なしで即座に終了する (TerminateProcess)。waypoint 自身は候補から除外される。" },
+      { title: "Everything 全文検索", prefix: "f ", keys: "", desc: "常駐中の Everything (voidtools) へ IPC で問い合わせて PC 全体のファイル名を検索する。設定で既定オフ。" },
+      { title: "Azure DevOps 検索", prefix: "az ", keys: "", desc: "設定したプロジェクトの PR / Pipeline / Work Item を検索する (az pr / az wit / az pipeline / az project / az optimize)。" },
+      { title: "Web 検索", prefix: "??", keys: "", desc: "設定した検索エンジン (既定 Google) でその場の語句を検索する。既定オン。" },
+    ],
+  },
+  {
+    group: "Quick Launch 内部コマンド",
+    items: [
+      { title: "Settings", prefix: "", keys: "", desc: "通常検索の固定候補として \"Settings\" が出る。選択すると waypoint-settings.exe (管理画面) を開く。" },
+      { title: "Help", prefix: "", keys: "", desc: "通常検索の固定候補として \"Help\" が出る。選択するとこのページを開く。" },
+    ],
+  },
+  {
+    group: "Quick Launch キーボード操作",
+    items: [
+      { title: "候補の移動", prefix: "", keys: "Up / Down / Home / End / PageUp / PageDown", desc: "候補リスト内を移動する。" },
+      { title: "実行", prefix: "", keys: "Enter", desc: "選択中の候補を実行する。" },
+      { title: "閉じる", prefix: "", keys: "Esc", desc: "Quick Launch を閉じる。フォーカスを失った場合も自動で閉じる。" },
+      { title: "常に新規ウィンドウで開く", prefix: "", keys: "Shift+Enter", desc: "フォルダ候補を newWindow で開く (設定を無視)。" },
+      { title: "常に既存ウィンドウを再利用", prefix: "", keys: "Ctrl+Enter", desc: "フォルダ候補を reuse で開く (元ウィンドウが Explorer の場合のみ有効)。az モード中は Live 検索の実行に割り当てられる。" },
+      { title: "お気に入り昇格", prefix: "", keys: "Ctrl+Shift+Enter", desc: "選択中の候補 (フォルダ・ファイル・Everything 結果・アプリ) を設定のルートメニュー末尾へ追加登録する。" },
+      { title: "パスをコピー", prefix: "", keys: "Ctrl+C", desc: "選択中候補のパスをクリップボードへコピーする (リストにフォーカスがある場合)。" },
+      { title: "エクスプローラーで選択表示", prefix: "", keys: "Ctrl+E", desc: "選択中候補をエクスプローラーで開き、対象自体を選択状態にする。" },
+      { title: "管理者として実行", prefix: "", keys: "Ctrl+Alt+Enter", desc: "選択中候補 (アプリ・既定ハンドラーで開く候補) を管理者権限で実行する。" },
+      { title: "Everything 検索フラグ切替", prefix: "f ", keys: "Alt+C / Alt+W / Alt+R", desc: "f モード中、Match Case / Match Whole Word / Regex をトグルして同じクエリを再送する。" },
+    ],
+  },
+  {
+    group: "フォルダの開き方 (FR-4)",
+    items: [
+      { title: "New window", prefix: "", keys: "", desc: "既定のフォルダーハンドラーで新規ウィンドウとして開く (既定の動作)。" },
+      { title: "Reuse", prefix: "", keys: "", desc: "元ウィンドウ (トリガー時に最前面だった Explorer) のフォルダを変更する。Explorer 以外なら New window にフォールバックする。" },
+    ],
+  },
+  {
+    group: "項目の型 (FR-3)",
+    items: [
+      { title: "folder", prefix: "", keys: "", desc: "指定パスを既定のフォルダーハンドラーで開く。newWindow/reuse と Git ブランチ表示を持つ。" },
+      { title: "file", prefix: "", keys: "", desc: "指定ファイルを既定の関連付けアプリで開く。" },
+      { title: "specialFolder", prefix: "", keys: "", desc: "既知フォルダ ID (KNOWNFOLDERID) を解決して開く。" },
+      { title: "submenu", prefix: "", keys: "", desc: "子項目をまとめる階層。Quick Launch ではパンくずとして候補名に付く。" },
+      { title: "separator", prefix: "", keys: "", desc: "区切り。Quick Launch の検索対象にはならない。" },
+    ],
+  },
+  {
+    group: "変数展開 (FR-5)",
+    items: [
+      { title: "環境変数", prefix: "", keys: "%NAME%", desc: "Windows 環境変数を展開する。" },
+      { title: "ユーザー変数", prefix: "", keys: "{NAME}", desc: "設定ファイル内で定義したユーザー変数を展開する。設定読み込み時に一度だけ解決する。" },
+    ],
+  },
+  {
+    group: "管理画面 (FR-6, waypoint-settings.exe)",
+    items: [
+      { title: "項目の追加・編集・削除・複製", prefix: "", keys: "", desc: "エクスプローラー型レイアウトで候補グループと項目を編集する。フォルダ/ファイル選択ダイアログ、エクスプローラーからのドラッグ&ドロップにも対応。" },
+      { title: "並べ替え", prefix: "", keys: "", desc: "上下ボタンまたはドラッグ&ドロップで項目の順序を変更する。" },
+      { title: "複数選択操作", prefix: "", keys: "Ctrl+クリック / Shift+クリック / Ctrl+A", desc: "複数選択した項目へ削除・上下移動・複製・コピー&ペースト・一括プロパティ編集 (Open mode / Show Git branch name) をまとめて適用する。" },
+      { title: "Move...", prefix: "", keys: "", desc: "選択中の項目を別のサブメニューの末尾へまとめて移動する。" },
+      { title: "全グループ横断検索", prefix: "", keys: "Ctrl+F", desc: "名前またはパスの部分一致で全グループを再帰的に検索する。" },
+      { title: "ユーザー変数の編集", prefix: "", keys: "", desc: "{NAME} で使うユーザー変数を専用タブで編集する。" },
+      { title: "ホットキーの設定", prefix: "", keys: "", desc: "Quick Launch のホットキーを文字列入力または実際のキー入力から設定する。Esc で取り消せる。" },
+      { title: "フォルダ構造の一括取り込み", prefix: "", keys: "", desc: "起点フォルダと探索深度 (0〜10) を指定してサブフォルダ構造を候補グループとして一括生成する。取り込みは確定時の一度だけで自動同期はしない。" },
+    ],
+  },
+  {
+    group: "設定の永続化 (FR-7)",
+    items: [
+      { title: "config.json", prefix: "", keys: "", desc: "%APPDATA%\\waypoint\\config.json に保存する。手編集を想定し、インデント2桁・日本語非エスケープ・項目順を保持する。" },
+      { title: "shared.json (マシン間持ち出し)", prefix: "", keys: "", desc: "環境非依存な設定 (Quick Launch のフラグ・Azure DevOps プロジェクト一覧等) を %APPDATA%\\waypoint\\shared.json へ複製書き出しする。Git やクラウド同期フォルダ経由で複数マシンへ持ち出せる。" },
+    ],
+  },
+  {
+    group: "常駐とトレイ (FR-8)",
+    items: [
+      { title: "トレイ右クリックメニュー", prefix: "", keys: "", desc: "Settings... / Reload config / Refresh Azure DevOps / Start with Windows / Open log / Help / Exit。" },
+      { title: "二重起動抑止", prefix: "", keys: "", desc: "2つ目のプロセスは既存プロセスに Quick Launch 表示を要求して終了する。" },
+    ],
+  },
+];
+
+const groupsEl = document.getElementById("groups");
+const searchEl = document.getElementById("search");
+const countEl = document.getElementById("count");
+const emptyEl = document.getElementById("empty");
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function render(filter) {
+  const term = filter.trim().toLowerCase();
+  groupsEl.innerHTML = "";
+  let total = 0;
+
+  for (const group of DATA) {
+    const matched = term
+      ? group.items.filter((item) =>
+          (item.title + " " + item.prefix + " " + item.keys + " " + item.desc).toLowerCase().includes(term)
+        )
+      : group.items;
+    if (matched.length === 0) continue;
+    total += matched.length;
+
+    const groupDiv = document.createElement("div");
+    groupDiv.className = "group";
+
+    const titleDiv = document.createElement("div");
+    titleDiv.className = "group-title";
+    titleDiv.textContent = group.group;
+    groupDiv.appendChild(titleDiv);
+
+    for (const item of matched) {
+      const card = document.createElement("div");
+      card.className = "card";
+      const prefixHtml = item.prefix
+        ? `<span class="prefix${item.prefix === "k " ? " kill" : ""}">${escapeHtml(item.prefix)}</span>`
+        : "";
+      const keysHtml = item.keys
+        ? `<kbd>${escapeHtml(item.keys)}</kbd>`
+        : "";
+      card.innerHTML = `
+        <div class="card-head">
+          <span class="card-title">${escapeHtml(item.title)}</span>
+          ${prefixHtml}
+          ${keysHtml}
+        </div>
+        <div class="card-desc">${escapeHtml(item.desc)}</div>
+      `;
+      groupDiv.appendChild(card);
+    }
+    groupsEl.appendChild(groupDiv);
+  }
+
+  countEl.textContent = term ? `${total} 件一致` : `全 ${DATA.reduce((n, g) => n + g.items.length, 0)} 件`;
+  emptyEl.classList.toggle("hidden", total > 0);
+}
+
+searchEl.addEventListener("input", () => render(searchEl.value));
+render("");
+</script>
+</body>
+</html>

@@ -13,8 +13,8 @@ use crate::quick_launch_window;
 
 use super::window::cursor_pos;
 use super::{
-    ICON_CLOSE, ICON_RELOAD, ID_AUTOSTART, ID_AZURE_REFRESH, ID_EXIT, ID_OPEN_LOG, ID_RELOAD,
-    ID_SETTINGS, WM_DYNAMIC_REFRESHED, refresh_azure_devops, reload, with_state,
+    ICON_CLOSE, ICON_RELOAD, ID_AUTOSTART, ID_AZURE_REFRESH, ID_EXIT, ID_HELP, ID_OPEN_LOG,
+    ID_RELOAD, ID_SETTINGS, WM_DYNAMIC_REFRESHED, refresh_azure_devops, reload, with_state,
 };
 
 pub(crate) fn show_quick_launch(hwnd: HWND) {
@@ -95,6 +95,9 @@ pub(crate) fn show_tray_menu(hwnd: HWND) {
         ID_SETTINGS => open_config_in_editor(),
         ID_RELOAD => reload(hwnd),
         ID_AZURE_REFRESH => refresh_azure_devops(hwnd),
+        ID_HELP => {
+            let _ = crate::help::open();
+        }
         // GUI サブシステムでは panic の出力先が無く、ログが唯一の手がかり。
         // 場所を覚えなくても開けるようにする
         ID_OPEN_LOG => {
@@ -231,6 +234,7 @@ unsafe fn build_tray_items(menu: HMENU) -> Result<()> {
         }
 
         AppendMenuW(menu, MF_STRING, ID_OPEN_LOG, w!("Open log"))?;
+        AppendMenuW(menu, MF_STRING, ID_HELP, w!("Help"))?;
 
         AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
         // バージョンはクリックできる操作ではないので選択不可にする

@@ -38,6 +38,7 @@ pub(super) fn action_color(action: &Action) -> COLORREF {
         | Action::AzureLivePipelineSearch { .. }
         | Action::AzureOptimize
         | Action::OpenSettings
+        | Action::OpenHelp
         | Action::WebSearch => ACCENT,
         Action::KillProcess(_) => badge_color("KILL"),
     }

@@ -103,6 +103,9 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                     quick_launch::Action::OpenSettings => {
                         open_settings(None);
                     }
+                    quick_launch::Action::OpenHelp => {
+                        let _ = crate::help::open();
+                    }
                     // URL は候補の組み立て時に確定済み (FR-9.21)
                     quick_launch::Action::WebSearch => {
                         let _ = shell::open_shell_item(&entry.path);

@@ -120,13 +120,22 @@ pub fn effective_search_term(query: &str) -> &str {
 /// 静的に持つ。`LowerKeys` も一度だけ作って使い回す。
 pub(crate) fn builtin_command_entries() -> (&'static [Entry], &'static [search::LowerKeys]) {
     static ENTRIES: std::sync::LazyLock<Vec<Entry>> = std::sync::LazyLock::new(|| {
-        vec![Entry {
-            name: "Settings".to_string(),
-            breadcrumb: "Open waypoint settings".to_string(),
-            path: String::new(),
-            action: Action::OpenSettings,
-            branch: None,
-        }]
+        vec![
+            Entry {
+                name: "Settings".to_string(),
+                breadcrumb: "Open waypoint settings".to_string(),
+                path: String::new(),
+                action: Action::OpenSettings,
+                branch: None,
+            },
+            Entry {
+                name: "Help".to_string(),
+                breadcrumb: "Open waypoint help".to_string(),
+                path: String::new(),
+                action: Action::OpenHelp,
+                branch: None,
+            },
+        ]
     });
     static LOWER: std::sync::LazyLock<Vec<search::LowerKeys>> =
         std::sync::LazyLock::new(|| search::LowerKeys::build_for_names(&ENTRIES));
@@ -177,6 +186,8 @@ pub enum Action {
     AzureOptimize,
     /// waypoint 自身の設定画面 (`waypoint-settings.exe`) を開く (FR-9.20)。
     OpenSettings,
+    /// waypoint の機能一覧ページ (`help\index.html`) を開く (FR-9.22)。
+    OpenHelp,
     /// 設定した検索エンジンの検索 URL を既定ブラウザで開く
     /// (`??` プレフィックス、FR-9.21)。URL は `path` に組み立て済み。
     WebSearch,
@@ -234,6 +245,7 @@ impl Entry {
             | Action::AzureLivePipelineSearch { .. }
             | Action::AzureOptimize
             | Action::OpenSettings
+            | Action::OpenHelp
             // 検索語は毎回異なりうるので永続化しない (FR-9.21)
             | Action::WebSearch
             // プロセスは永続化する対象ではない (PID は再起動のたびに変わる)

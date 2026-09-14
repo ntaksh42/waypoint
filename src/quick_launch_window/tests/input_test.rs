@@ -102,5 +102,6 @@ fn only_path_launching_candidates_can_be_elevated() {
     assert!(!is_elevatable(&Action::OpenUrl(String::new())));
     assert!(!is_elevatable(&Action::OpenInTerminal));
     assert!(!is_elevatable(&Action::OpenSettings));
+    assert!(!is_elevatable(&Action::OpenHelp));
     assert!(!is_elevatable(&Action::WebSearch));
 }

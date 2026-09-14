@@ -17,6 +17,7 @@ pub mod everything;
 pub mod favicons;
 pub mod folder_import;
 pub mod git;
+pub mod help;
 pub mod hotkey_capture;
 pub mod icon;
 pub mod known_folder;
