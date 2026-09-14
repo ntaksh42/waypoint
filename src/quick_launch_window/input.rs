@@ -229,6 +229,33 @@ pub(super) fn queue_selected() {
     }
 }
 
+/// 管理者として実行できる候補か (FR-9.8.4)。
+///
+/// パスを起動する 2 種だけ。フォルダは `Shift`/`Ctrl` を newWindow/reuse に
+/// 使っており修飾が衝突するため外し、昇格の概念を持たない候補
+/// (ウィンドウ・URL・内部コマンド) も外す。
+pub(super) fn is_elevatable(action: &Action) -> bool {
+    matches!(action, Action::LaunchApp | Action::OpenWithDefaultHandler)
+}
+
+/// `Ctrl+Alt+Enter`: 選択中の候補を管理者として実行する (FR-9.8.4)。
+/// 昇格できるのはパスを起動する候補だけ。それ以外は旗を立てず、
+/// 通常の Enter と同じ実行経路へ落とす。
+pub(super) fn queue_selected_elevated() {
+    let elevatable = STATE.with(|state| {
+        let state = state.borrow();
+        current_selection(state.list)
+            .and_then(|row| entry_at_row(&state, row))
+            .is_some_and(|entry| is_elevatable(&entry.action))
+    });
+    // 旗は必ずここで入れ替える。`queue_selected` は候補が無いときと
+    // ReplaceQuery / Azure ライブ検索のとき `pending` を立てずに戻るため、
+    // 立てたままだと `take_pending` に回収されず次の Enter まで残る。
+    // 昇格対象を将来広げてもこの関数だけで筋が通るようにしておく。
+    STATE.with(|state| state.borrow_mut().pending_elevated = elevatable);
+    queue_selected();
+}
+
 /// 現在選択中の候補を複製して返す。`SendMessageW` を挟むため、
 /// 呼び出し側は返り値を得てから STATE を再度借用すること。
 pub(super) fn selected_entry() -> Option<Entry> {

@@ -13,6 +13,7 @@ fn prefix_badge_identifies_each_mode() {
     assert_eq!(prefix_badge("t waypoint"), Some("TABS"));
     assert_eq!(prefix_badge("ps waypoint"), Some("TERMINAL"));
     assert_eq!(prefix_badge("f cargo.toml"), Some("FILES"));
+    assert_eq!(prefix_badge("k waypoint"), Some("KILL"));
     // `??` だけ末尾スペースを含まない (FR-9.21)
     assert_eq!(prefix_badge("?? rust lifetime"), Some("WEB"));
     assert_eq!(prefix_badge("??rust"), Some("WEB"));

@@ -63,7 +63,7 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
             LRESULT(0)
         }
         WM_QUICK_LAUNCH_EXECUTE => {
-            if let Some((entry, origin)) = quick_launch_window::take_pending() {
+            if let Some((entry, origin, elevated)) = quick_launch_window::take_pending() {
                 // 記録は次回以降の並び順にしか効かない。ディスク flush を待つと
                 // そのまま「選んでから開くまで」の遅延になる (実測 18.8ms)
                 quick_launch_history::record_async(&entry);
@@ -80,9 +80,15 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                     quick_launch::Action::OpenUrl(url) => {
                         let _ = shell::open_shell_item(&url);
                     }
+                    // 昇格要求 (Ctrl+Alt+Enter) が立つのはこの 2 種だけ
+                    // (queue_selected_elevated で絞っている、FR-9.8.4)
                     quick_launch::Action::OpenWithDefaultHandler
                     | quick_launch::Action::LaunchApp => {
-                        let _ = shell::open_shell_item(&entry.path);
+                        let _ = if elevated {
+                            shell::run_as_admin(&entry.path)
+                        } else {
+                            shell::open_shell_item(&entry.path)
+                        };
                     }
                     quick_launch::Action::OpenInTerminal => {
                         let _ = shell::open_terminal(&entry.path);
@@ -114,6 +120,11 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                                 WM_RELOAD_CONFIG,
                             );
                         }
+                    }
+                    // 確認なしで即時終了する (FR-9.15.2)。失敗 (UIPI 等) は
+                    // FR-9.4 のネットワークパス確認と同じく黙って無視する
+                    quick_launch::Action::KillProcess(pid) => {
+                        crate::process::kill(pid);
                     }
                 }
                 refresh_dynamic(hwnd);

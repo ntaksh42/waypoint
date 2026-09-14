@@ -31,7 +31,8 @@ windows = { version = "0.62", features = [
   "Win32_System_Com",                # エクスプローラー操作 (IShellWindows)
   "Win32_System_Ole",                # COM の VARIANT 操作
   "Win32_System_Variant",            # IShellWindows::Item の引数
-  "Win32_System_Threading",          # プロセス名の取得 / 二重起動抑止の Mutex
+  "Win32_System_Threading",          # プロセス名の取得 / 二重起動抑止の Mutex / TerminateProcess
+  "Win32_System_Diagnostics_ToolHelp", # プロセス一覧の列挙 (`k ` プレフィックス)
   "Win32_Security",                  # CreateMutexW の引数型
   "Win32_System_ProcessStatus",      # 同上
   "Win32_System_Registry",           # 自動起動 (FR-8.4)

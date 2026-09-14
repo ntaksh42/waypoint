@@ -1,5 +1,7 @@
 use super::super::RowKind;
-use super::super::input::{first_selectable_row, last_selectable_row, word_start_before};
+use super::super::input::{
+    first_selectable_row, is_elevatable, last_selectable_row, word_start_before,
+};
 
 fn to_utf16(s: &str) -> Vec<u16> {
     s.encode_utf16().collect()
@@ -81,4 +83,24 @@ fn home_and_end_on_a_flat_list_without_headers() {
     let rows = [RowKind::Item(0), RowKind::Item(1), RowKind::Item(2)];
     assert_eq!(first_selectable_row(&rows), Some(0));
     assert_eq!(last_selectable_row(&rows), Some(2));
+}
+
+/// `Ctrl+Alt+Enter` (FR-9.8.4) が昇格するのはパスを起動する候補だけ。
+/// フォルダを含めると Shift/Ctrl の newWindow/reuse 修飾と衝突し、
+/// ウィンドウ・URL・内部コマンドは昇格の概念を持たない。
+#[test]
+fn only_path_launching_candidates_can_be_elevated() {
+    use crate::config::OpenMode;
+    use crate::quick_launch::Action;
+
+    assert!(is_elevatable(&Action::LaunchApp));
+    assert!(is_elevatable(&Action::OpenWithDefaultHandler));
+
+    assert!(!is_elevatable(&Action::OpenFolder(OpenMode::NewWindow)));
+    assert!(!is_elevatable(&Action::OpenFolder(OpenMode::Reuse)));
+    assert!(!is_elevatable(&Action::FocusWindow(0)));
+    assert!(!is_elevatable(&Action::OpenUrl(String::new())));
+    assert!(!is_elevatable(&Action::OpenInTerminal));
+    assert!(!is_elevatable(&Action::OpenSettings));
+    assert!(!is_elevatable(&Action::WebSearch));
 }

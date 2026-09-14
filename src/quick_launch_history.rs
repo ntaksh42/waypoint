@@ -67,7 +67,9 @@ fn key_kind(action: &Action) -> Option<&'static str> {
         | Action::AzureOptimize
         | Action::OpenSettings
         // 検索語は毎回異なりうるので記録しない (FR-9.21)
-        | Action::WebSearch => None,
+        | Action::WebSearch
+        // PID はプロセス再起動のたびに変わるため FocusWindow と同様に対象外
+        | Action::KillProcess(_) => None,
     }
 }
 

@@ -52,6 +52,11 @@ pub(in crate::quick_launch_window) struct State {
     /// 変換ロジックを重複させない。
     pub(in crate::quick_launch_window) rows: Vec<RowKind>,
     pub(in crate::quick_launch_window) pending: Option<Entry>,
+    /// `Ctrl+Alt+Enter` で管理者実行を要求されたときに立てる (FR-9.8.4)。
+    /// `Action` の変種を増やすと履歴・バッジ・to_item の各 match に
+    /// 昇格の有無が漏れ出すため、実行経路だけに効く旗として `pending`
+    /// と対で持つ。
+    pub(in crate::quick_launch_window) pending_elevated: bool,
     /// `Ctrl+Shift+Enter` で config への登録を要求された項目。
     /// ウィンドウは閉じずに続けて検索できるようにするため、
     /// `pending` (Enter で実行する項目) とは別に持つ。

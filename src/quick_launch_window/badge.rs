@@ -11,6 +11,9 @@ pub(super) fn badge_color(badge: &str) -> COLORREF {
     match badge {
         "WINDOWS" | "APPS" | "TERMINAL" => rgb(143, 168, 118), // 緑寄りの寒色
         "BOOKMARKS" | "HISTORY" | "FILES" | "TABS" | "AZURE DEVOPS" | "WEB" => rgb(95, 157, 176), // 青寄りの寒色
+        // kill は確認なしの即時破壊操作 (FR-9.15.2) なので、誤入力に気付けるよう
+        // 他プレフィックスの寒色2トーンと区別できる警告色にする
+        "KILL" => rgb(196, 92, 80),
         _ => ACCENT,
     }
 }
@@ -36,6 +39,7 @@ pub(super) fn action_color(action: &Action) -> COLORREF {
         | Action::AzureOptimize
         | Action::OpenSettings
         | Action::WebSearch => ACCENT,
+        Action::KillProcess(_) => badge_color("KILL"),
     }
 }
 

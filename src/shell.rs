@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{ERROR_CANCELLED, HWND};
 use windows::Win32::System::Com::{
     CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
 };
@@ -14,7 +14,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic, IsWindow,
     SW_RESTORE, SetForegroundWindow, ShowWindow,
 };
-use windows::core::{BSTR, HSTRING, Interface};
+use windows::core::{BSTR, HSTRING, Interface, w};
 
 use crate::config::OpenMode;
 
@@ -198,6 +198,26 @@ pub fn reveal_in_explorer(path: &str) -> std::io::Result<()> {
             "ShellExecuteW failed with code {code}"
         )))
     }
+}
+
+/// 管理者として実行する (Quick Launch の `Ctrl+Alt+Enter`、FR-9.8.4)。
+/// verb に `runas` を渡すと UAC の同意ダイアログは Windows が出すため、
+/// waypoint 側では確認を挟まない。
+pub fn run_as_admin(path: &str) -> std::io::Result<()> {
+    let target = HSTRING::from(path);
+    let result = unsafe { ShellExecuteW(None, w!("runas"), &target, None, None, SW_SHOWNORMAL) };
+    let code = result.0 as isize;
+    if code > 32 {
+        return Ok(());
+    }
+    // 同意を拒否されただけなら失敗として扱わない。呼び出し側が
+    // エラー表示しないための区別 (ERROR_CANCELLED = 1223)
+    if code == ERROR_CANCELLED.0 as isize {
+        return Ok(());
+    }
+    Err(std::io::Error::other(format!(
+        "ShellExecuteW runas failed with code {code}"
+    )))
 }
 
 /// `This PC` など、ファイルシステム上のパスを持たないシェル項目を開く。

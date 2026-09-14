@@ -19,7 +19,9 @@ use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::CreateSolidBrush;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::SetWindowTheme;
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_CONTROL, VK_SHIFT};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetKeyState, SetFocus, VK_CONTROL, VK_MENU, VK_SHIFT,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, HMENU, LBS_HASSTRINGS, LBS_NOTIFY, LBS_OWNERDRAWVARIABLE,
     RegisterClassW, SW_SHOW, SetForegroundWindow, SetWindowTextW, ShowWindow, WINDOW_STYLE, WM_APP,
@@ -35,8 +37,8 @@ use azure_live::{AzureLiveSearchStart, start_azure_live_search_for_query};
 use dispatch::dispatch;
 use input::{
     add_selected_to_favorites, copy_selected_path, delete_word_before_cursor, first_selectable_row,
-    hide_window, last_selectable_row, move_selection, queue_selected, reveal_selected_in_explorer,
-    select_at,
+    hide_window, last_selectable_row, move_selection, queue_selected, queue_selected_elevated,
+    reveal_selected_in_explorer, select_at,
 };
 use layout::{apply_dpi, apply_window_chrome, primary_monitor_dpi};
 use search::update_results;
@@ -229,11 +231,13 @@ pub fn index_counts() -> Vec<(&'static str, usize)> {
     })
 }
 
-pub fn take_pending() -> Option<(Entry, Option<HWND>)> {
+/// 実行対象の候補・元ウィンドウ・管理者実行の要求 (FR-9.8.4) を取り出す。
+pub fn take_pending() -> Option<(Entry, Option<HWND>, bool)> {
     STATE.with(|state| {
         let mut state = state.borrow_mut();
         let origin = state.origin;
-        state.pending.take().map(|entry| (entry, origin))
+        let elevated = std::mem::take(&mut state.pending_elevated);
+        state.pending.take().map(|entry| (entry, origin, elevated))
     })
 }
 
@@ -294,6 +298,14 @@ pub fn handle_message(message: &windows::Win32::UI::WindowsAndMessaging::MSG) ->
         }
         0x21 => move_selection(-10),
         0x22 => move_selection(10),
+        // Ctrl+Alt+Enter: 管理者として実行する (FR-9.8.4)。Ctrl+Shift+Enter
+        // (お気に入り昇格) と Ctrl+Enter (Azure ライブ検索) より先に判定する。
+        // 後ろに置くと Ctrl 単独の条件に食われて到達しない
+        0x0d if unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0
+            && unsafe { GetKeyState(VK_MENU.0 as i32) } < 0 =>
+        {
+            queue_selected_elevated();
+        }
         0x0d if unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0
             && unsafe { GetKeyState(VK_SHIFT.0 as i32) } < 0 =>
         {

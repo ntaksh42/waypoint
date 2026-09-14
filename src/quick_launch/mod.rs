@@ -50,6 +50,8 @@ const APPS_PREFIX: &str = "a ";
 const TABS_PREFIX: &str = "t ";
 /// フォルダをターミナルで開く検索モードに入るプレフィックス (末尾の半角スペース込み)。
 const TERMINAL_PREFIX: &str = "ps ";
+/// プロセス Kill 検索モードに入るプレフィックス (末尾の半角スペース込み、FR-9.15.2)。
+pub const KILL_PROCESS_PREFIX: &str = "k ";
 /// Web 検索モードに入るプレフィックス (FR-9.21)。
 ///
 /// 他と違って末尾に半角スペースを含めない。`?? rust` と `??rust` の
@@ -76,6 +78,8 @@ pub fn prefix_badge(query: &str) -> Option<&'static str> {
         Some("TERMINAL")
     } else if query.starts_with(EVERYTHING_PREFIX) {
         Some("FILES")
+    } else if query.starts_with(KILL_PROCESS_PREFIX) {
+        Some("KILL")
     } else if query.starts_with(WEB_SEARCH_PREFIX) {
         Some("WEB")
     } else {
@@ -94,6 +98,7 @@ pub fn effective_search_term(query: &str) -> &str {
         WINDOW_PREFIX,
         APPS_PREFIX,
         TABS_PREFIX,
+        KILL_PROCESS_PREFIX,
     ] {
         if let Some(rest) = query.strip_prefix(prefix) {
             return rest;
@@ -175,6 +180,8 @@ pub enum Action {
     /// 設定した検索エンジンの検索 URL を既定ブラウザで開く
     /// (`??` プレフィックス、FR-9.21)。URL は `path` に組み立て済み。
     WebSearch,
+    /// 選択したプロセスを確認なしで即時終了する (`k ` プレフィックス、FR-9.15.2)。
+    KillProcess(u32),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -228,7 +235,9 @@ impl Entry {
             | Action::AzureOptimize
             | Action::OpenSettings
             // 検索語は毎回異なりうるので永続化しない (FR-9.21)
-            | Action::WebSearch => None,
+            | Action::WebSearch
+            // プロセスは永続化する対象ではない (PID は再起動のたびに変わる)
+            | Action::KillProcess(_) => None,
         }
     }
 }
@@ -264,6 +273,25 @@ pub struct Index {
     /// (生成は `quick_launch_window::search`)。
     pub(crate) web_search: Option<crate::web_search::Engine>,
     pub(crate) ranking: Ranking,
+}
+
+/// 実行中プロセスのスナップショットから `k ` の検索候補を作る (FR-9.15.2)。
+///
+/// キー入力のたびに `crate::process::list_processes()` を都度呼んで組み立てる
+/// ため、`Index` にはキャッシュを持たせない (kill 直後の一覧を古いままに
+/// しないため)。呼び出し側 (`quick_launch_window::search`) が生成し、
+/// 検索は通常の `search_entries` に乗せる。
+pub fn kill_process_entries() -> Vec<Entry> {
+    crate::process::list_processes()
+        .into_iter()
+        .map(|process| Entry {
+            name: process.name,
+            breadcrumb: format!("Kill Process — PID {}", process.pid),
+            path: String::new(),
+            action: Action::KillProcess(process.pid),
+            branch: None,
+        })
+        .collect()
 }
 
 /// `??` の検索語から Web 検索の確定候補を 1 件作る (FR-9.21)。
