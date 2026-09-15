@@ -211,7 +211,7 @@ public partial class MainWindow
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (Keyboard.FocusedElement is TextBox && e.Key != Key.Escape) return;
+        if (Keyboard.FocusedElement is TextBox or PasswordBox && e.Key != Key.Escape) return;
         if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.F) { RootTabs.SelectedIndex = 0; ItemSearch.Focus(); e.Handled = true; }
         else if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.A
             && RootTabs.SelectedIndex == 0 && string.IsNullOrWhiteSpace(ItemSearch.Text))
