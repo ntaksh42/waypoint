@@ -306,6 +306,12 @@ public partial class MainWindow : Window
         var settings = _store.Settings;
         var quick = Object(settings, "quickLaunch");
         CommitAzureProject();
+        if (AzurePat.Password.Length > 0)
+        {
+            CredentialStore.Save(AzureConnectionOrganization.Text, AzurePat.Password);
+            AzurePat.Clear();
+            AzureConnectionStatus.Text = "PAT saved to Credential Manager.";
+        }
         if (string.IsNullOrWhiteSpace(QuickLaunchHotkey.Text)) throw new InvalidDataException("Quick Launch hotkey is required.");
         if (!int.TryParse(VisibleResults.Text, out var visible) || visible is < 12 or > 24) throw new InvalidDataException("Visible results must be between 12 and 24.");
         settings.Remove("trigger");
