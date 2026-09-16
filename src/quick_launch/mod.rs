@@ -50,6 +50,8 @@ const APPS_PREFIX: &str = "a ";
 const TABS_PREFIX: &str = "t ";
 /// フォルダをターミナルで開く検索モードに入るプレフィックス (末尾の半角スペース込み)。
 const TERMINAL_PREFIX: &str = "ps ";
+/// フォルダを設定済みエディターで開く検索モードに入るプレフィックス (末尾の半角スペース込み)。
+const EDITOR_PREFIX: &str = "ed ";
 /// プロセス Kill 検索モードに入るプレフィックス (末尾の半角スペース込み、FR-9.15.2)。
 pub const KILL_PROCESS_PREFIX: &str = "k ";
 /// Web 検索モードに入るプレフィックス (FR-9.21)。
@@ -76,6 +78,8 @@ pub fn prefix_badge(query: &str) -> Option<&'static str> {
         Some("TABS")
     } else if query.starts_with(TERMINAL_PREFIX) {
         Some("TERMINAL")
+    } else if query.starts_with(EDITOR_PREFIX) {
+        Some("EDITOR")
     } else if query.starts_with(EVERYTHING_PREFIX) {
         Some("FILES")
     } else if query.starts_with(KILL_PROCESS_PREFIX) {
@@ -98,6 +102,8 @@ pub fn effective_search_term(query: &str) -> &str {
         WINDOW_PREFIX,
         APPS_PREFIX,
         TABS_PREFIX,
+        TERMINAL_PREFIX,
+        EDITOR_PREFIX,
         KILL_PROCESS_PREFIX,
     ] {
         if let Some(rest) = query.strip_prefix(prefix) {
@@ -161,6 +167,8 @@ pub enum Action {
     /// フォルダを Windows Terminal (PowerShell 7) でカレントディレクトリとして開く
     /// (`ps ` プレフィックス、FR-9.15.1)。newWindow / reuse の区別は持たない。
     OpenInTerminal,
+    /// フォルダを設定済みエディターで開く (`ed ` プレフィックス)。
+    OpenInEditor(String),
     /// 検索欄へコマンドを補完する。候補の選択時に外部操作は行わない。
     ReplaceQuery(String),
     /// `az wit` のローカルキャッシュ検索で見つからなかったとき、明示的な
@@ -239,6 +247,7 @@ impl Entry {
             | Action::FocusBrowserTab(_)
             | Action::OpenUrl(_)
             | Action::OpenInTerminal
+            | Action::OpenInEditor(_)
             | Action::ReplaceQuery(_)
             | Action::AzureLiveWorkItemSearch(_)
             | Action::AzureLivePullRequestSearch { .. }
@@ -279,6 +288,9 @@ pub struct Index {
     /// 持たず、`entries` の更新のたびに組み直す。
     pub(crate) terminal_folders: Vec<Entry>,
     pub(crate) terminal_folders_lower: Vec<search::LowerKeys>,
+    /// `entries` のフォルダを設定済みエディターで開く候補へ差し替えた索引。
+    pub(crate) editor_folders: Vec<Entry>,
+    pub(crate) editor_folders_lower: Vec<search::LowerKeys>,
     pub(crate) search_paths: bool,
     /// Web 検索 (`??`、FR-9.21) で使うエンジン。無効化時は `None`。
     /// 候補は入力から組み立てる 1 件だけなので、索引は持たない

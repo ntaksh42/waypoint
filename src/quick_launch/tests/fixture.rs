@@ -119,5 +119,15 @@ pub(super) fn index() -> Index {
         .collect();
     index.terminal_folders_lower =
         super::super::search::LowerKeys::build_for(&index.terminal_folders);
+    index.editor_folders = index
+        .entries
+        .iter()
+        .filter(|entry| matches!(entry.action, Action::OpenFolder(_)))
+        .map(|entry| Entry {
+            action: Action::OpenInEditor("code".into()),
+            ..entry.clone()
+        })
+        .collect();
+    index.editor_folders_lower = super::super::search::LowerKeys::build_for(&index.editor_folders);
     index
 }

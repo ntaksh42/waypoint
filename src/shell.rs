@@ -150,6 +150,20 @@ pub fn open_terminal(path: &str) -> std::io::Result<()> {
         .map(|_| ())
 }
 
+/// フォルダを指定されたエディターで開く (`ed ` プレフィックス)。
+pub fn open_editor(command: &str, path: &str) -> std::io::Result<()> {
+    if !Path::new(path).is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("folder not found: {path}"),
+        ));
+    }
+    std::process::Command::new(command)
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+}
+
 /// PowerShell 7 (`pwsh.exe`) のフルパスを探す。既定のインストール先を先に見て、
 /// 無ければ `PATH` から探す (winget/MSI どちらでインストールしても既定は前者)。
 fn find_pwsh() -> Option<PathBuf> {

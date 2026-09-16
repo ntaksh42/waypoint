@@ -113,6 +113,40 @@ fn terminal_prefix_excludes_non_folder_candidates() {
     assert!(found.is_empty());
 }
 
+/// `ed ` はフォルダだけを設定済みエディターで開く候補へ差し替える。
+#[test]
+fn editor_prefix_switches_to_folder_only_search_with_editor_action() {
+    let index = index();
+    let found = index.search("ed waypoint docs");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].action, Action::OpenInEditor("code".into()));
+    assert_eq!(found[0].path, r"E:\waypoint\docs");
+}
+
+#[test]
+fn editor_prefix_uses_the_configured_command() {
+    let mut config = config_without_live_scans();
+    config.settings.quick_launch.editor_command = "idea64.exe".into();
+    config.items = vec![crate::config::Item::Folder {
+        name: "Waypoint".into(),
+        path: r"E:\waypoint".into(),
+        open: None,
+        icon: None,
+        show_branch: false,
+    }];
+    let index = Index::build(&config, &Menus::default());
+
+    let found = index.search("ed waypoint");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].action, Action::OpenInEditor("idea64.exe".into()));
+}
+
+#[test]
+fn editor_prefix_excludes_non_folder_candidates() {
+    let index = index();
+    assert!(index.search("ed github").is_empty());
+}
+
 /// タイトルにアプリ名が出ないウィンドウも、所有プロセス名で
 /// 見つけられる (`w chrome` のような検索)。
 #[test]

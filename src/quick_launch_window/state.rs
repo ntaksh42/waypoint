@@ -66,6 +66,8 @@ pub(in crate::quick_launch_window) struct State {
     /// 次のキー入力 (`update_results`) で通常のバッジへ戻る。
     pub(in crate::quick_launch_window) copy_feedback: bool,
     pub(in crate::quick_launch_window) visible_results: usize,
+    /// 検索画面を出すモニター (FR-9.12.1)。`layout::target_monitor` が読む
+    pub(in crate::quick_launch_window) monitor: crate::config::MonitorChoice,
     pub(in crate::quick_launch_window) dpi: u32,
     pub(in crate::quick_launch_window) edit_font: Option<HFONT>,
     pub(in crate::quick_launch_window) name_font: Option<HFONT>,

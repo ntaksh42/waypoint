@@ -75,6 +75,8 @@ impl Index {
         let (entries, entries_lower, windows, windows_lower) =
             dynamic_entries(&config_entries, settings, dynamic);
         let (terminal_folders, terminal_folders_lower) = terminal_folder_entries(&entries);
+        let (editor_folders, editor_folders_lower) =
+            editor_folder_entries(&entries, &settings.editor_command);
 
         Self {
             config_entries,
@@ -95,6 +97,8 @@ impl Index {
             tabs_lower: Vec::new(),
             terminal_folders,
             terminal_folders_lower,
+            editor_folders,
+            editor_folders_lower,
             search_paths: settings.search_paths,
             web_search: settings
                 .include_web_search
@@ -116,12 +120,16 @@ impl Index {
         let (entries, entries_lower, windows, windows_lower) =
             dynamic_entries(&self.config_entries, settings, dynamic);
         let (terminal_folders, terminal_folders_lower) = terminal_folder_entries(&entries);
+        let (editor_folders, editor_folders_lower) =
+            editor_folder_entries(&entries, &settings.editor_command);
         self.entries = entries;
         self.entries_lower = entries_lower;
         self.windows = windows;
         self.windows_lower = windows_lower;
         self.terminal_folders = terminal_folders;
         self.terminal_folders_lower = terminal_folders_lower;
+        self.editor_folders = editor_folders;
+        self.editor_folders_lower = editor_folders_lower;
     }
 
     /// config 由来の候補 (`config_entries`) と、それを含む `entries` /
@@ -316,6 +324,27 @@ fn terminal_folder_entries(entries: &[Entry]) -> (Vec<Entry>, Vec<super::search:
         .collect();
     let terminal_folders_lower = super::search::LowerKeys::build_for(&terminal_folders);
     (terminal_folders, terminal_folders_lower)
+}
+
+/// `entries` のうちフォルダだけを `Action::OpenInEditor` に差し替えた索引を作る。
+/// 新規データソースは持たず、`ed ` プレフィックスでの絞り込みだけに使う。
+fn editor_folder_entries(
+    entries: &[Entry],
+    editor_command: &str,
+) -> (Vec<Entry>, Vec<super::search::LowerKeys>) {
+    let editor_folders: Vec<Entry> = entries
+        .iter()
+        .filter(|entry| matches!(entry.action, Action::OpenFolder(_)))
+        .map(|entry| Entry {
+            name: entry.name.clone(),
+            breadcrumb: entry.breadcrumb.clone(),
+            path: entry.path.clone(),
+            action: Action::OpenInEditor(editor_command.to_string()),
+            branch: entry.branch.clone(),
+        })
+        .collect();
+    let editor_folders_lower = super::search::LowerKeys::build_for(&editor_folders);
+    (editor_folders, editor_folders_lower)
 }
 
 /// `inherited_show_branch` は祖先 Submenu の showBranch が真だったか。

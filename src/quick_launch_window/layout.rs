@@ -11,8 +11,12 @@ use windows::Win32::Graphics::Gdi::{
     MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint, OUT_DEFAULT_PRECIS,
 };
 use windows::Win32::UI::Controls::EM_SETMARGINS;
-use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, MoveWindow, WM_SETFONT};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetClientRect, GetCursorPos, MoveWindow, WM_SETFONT,
+};
 use windows::core::w;
+
+use crate::config::MonitorChoice;
 
 use super::{EDIT_HEIGHT, HEADER_HEIGHT, PADDING, ROW_HEIGHT, RowKind, STATE, WINDOW_WIDTH};
 
@@ -34,18 +38,36 @@ pub(super) fn rows_height(rows: &[RowKind], max_rows: usize) -> i32 {
     height.max(ROW_HEIGHT)
 }
 
-/// 常にプライマリモニターを返す。Quick Launch はトリガー元のウィンドウや
-/// マウス位置に関わらず、常にプライマリモニター中央へ表示する仕様のため。
-fn primary_monitor() -> windows::Win32::Graphics::Gdi::HMONITOR {
-    unsafe { MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) }
+/// 表示先のモニターを返す (FR-9.12.1)。設定が `Cursor` ならマウスカーソル
+/// のあるモニター、`Primary` ならプライマリモニター。カーソル位置が取れない
+/// 場合はプライマリへ落とす。
+///
+/// DPI 取得 (`target_monitor_dpi`) と配置 (`position_window`) が別々に
+/// モニターを選ぶと、寸法と表示先がずれうるので経路を 1 本にまとめてある。
+fn target_monitor() -> windows::Win32::Graphics::Gdi::HMONITOR {
+    let choice = STATE.with(|state| state.borrow().monitor);
+    let point = match choice {
+        MonitorChoice::Primary => POINT { x: 0, y: 0 },
+        MonitorChoice::Cursor => {
+            let mut cursor = POINT::default();
+            if unsafe { GetCursorPos(&mut cursor) }.is_ok() {
+                cursor
+            } else {
+                POINT { x: 0, y: 0 }
+            }
+        }
+    };
+    // MONITOR_DEFAULTTOPRIMARY: カーソルがどのモニターにも属さない座標に
+    // ある場合 (モニター切断直後など) もプライマリへ落ちる
+    unsafe { MonitorFromPoint(point, MONITOR_DEFAULTTOPRIMARY) }
 }
 
-pub(super) fn primary_monitor_dpi() -> u32 {
+pub(super) fn target_monitor_dpi() -> u32 {
     let mut dpi_x = 0u32;
     let mut dpi_y = 0u32;
     let result = unsafe {
         windows::Win32::UI::HiDpi::GetDpiForMonitor(
-            primary_monitor(),
+            target_monitor(),
             windows::Win32::UI::HiDpi::MDT_EFFECTIVE_DPI,
             &mut dpi_x,
             &mut dpi_y,
@@ -56,7 +78,7 @@ pub(super) fn primary_monitor_dpi() -> u32 {
 
 pub(super) fn position_window(window: HWND, rows_height: i32, dpi: u32) {
     unsafe {
-        let monitor = primary_monitor();
+        let monitor = target_monitor();
         let mut info = MONITORINFO {
             cbSize: size_of::<MONITORINFO>() as u32,
             ..Default::default()

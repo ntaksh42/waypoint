@@ -16,6 +16,16 @@ use serde::{Deserialize, Serialize};
 pub use expand::expand;
 pub use item::{Item, OpenMode};
 
+/// 検索画面を出すモニター (FR-9.12.1)。モニター内の位置は常に中央で、
+/// 絶対座標は持たない (解像度・モニター構成の変更で画面外へ出るため)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum MonitorChoice {
+    #[default]
+    Primary,
+    Cursor,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuickLaunchSettings {
@@ -47,8 +57,14 @@ pub struct QuickLaunchSettings {
     pub include_web_search: bool,
     #[serde(default)]
     pub web_search_engine: crate::web_search::Engine,
+    /// `ed ` プレフィックスでフォルダを開くエディターの実行ファイル。
+    #[serde(default = "default_editor_command")]
+    pub editor_command: String,
     #[serde(default = "default_visible_results")]
     pub visible_results: usize,
+    /// 検索画面を出すモニター (FR-9.12.1)
+    #[serde(default)]
+    pub monitor: MonitorChoice,
 }
 
 impl Default for QuickLaunchSettings {
@@ -66,7 +82,9 @@ impl Default for QuickLaunchSettings {
             search_paths: false,
             include_web_search: true,
             web_search_engine: crate::web_search::Engine::default(),
+            editor_command: default_editor_command(),
             visible_results: default_visible_results(),
+            monitor: MonitorChoice::default(),
         }
     }
 }
@@ -184,6 +202,10 @@ fn default_version() -> u32 {
 }
 fn default_quick_launch_hotkey() -> String {
     "Alt+Space".to_string()
+}
+
+fn default_editor_command() -> String {
+    "code".to_string()
 }
 
 fn default_visible_results() -> usize {

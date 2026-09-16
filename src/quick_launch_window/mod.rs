@@ -40,7 +40,7 @@ use input::{
     hide_window, last_selectable_row, move_selection, queue_selected, queue_selected_elevated,
     reveal_selected_in_explorer, select_at,
 };
-use layout::{apply_dpi, apply_window_chrome, primary_monitor_dpi};
+use layout::{apply_dpi, apply_window_chrome, target_monitor_dpi};
 use search::update_results;
 // 寸法・配色は theme.rs に置くが、参照側は従来どおり `super::BACKGROUND`
 // のように辿れるようにする (分割で呼び出し側を書き換えないため)。
@@ -71,6 +71,7 @@ pub fn configure(config: &Config, dynamic: &Menus) {
                 .quick_launch
                 .visible_results
                 .clamp(12, MAX_LIST_RESULTS);
+            state.monitor = config.settings.quick_launch.monitor;
             state.everything_enabled = config.settings.quick_launch.include_everything;
             state.azure_devops = config.settings.quick_launch.azure_devops.clone();
             state.window.is_some()
@@ -195,7 +196,7 @@ pub fn show(owner: HWND, origin: Option<HWND>) -> Result<()> {
     let (Some(window), Some(edit)) = (window, edit) else {
         return Ok(());
     };
-    let dpi = primary_monitor_dpi();
+    let dpi = target_monitor_dpi();
     apply_dpi(window, dpi);
     unsafe {
         // SetWindowTextW は前回と同じ空文字列だと EN_CHANGE を送らないことが
@@ -245,6 +246,21 @@ pub fn take_pending_add() -> Option<Entry> {
     STATE.with(|state| state.borrow_mut().pending_add.take())
 }
 
+/// `Ctrl+C` を候補パスのコピーとして扱ってよいか。
+///
+/// リスト側なら常に扱う。Edit 側は検索語を選択していないときだけ扱い、
+/// 選択があるときは Edit 本来のテキストコピーへ譲る。
+fn copy_path_shortcut_applies(hwnd: HWND) -> bool {
+    let (edit, list) = STATE.with(|state| {
+        let state = state.borrow();
+        (state.edit, state.list)
+    });
+    if Some(hwnd) == list {
+        return true;
+    }
+    Some(hwnd) == edit && !input::edit_has_selection(hwnd)
+}
+
 /// Quick Launch の子コントロール宛てキーを通常の DispatchMessage より先に扱う。
 pub fn handle_message(message: &windows::Win32::UI::WindowsAndMessaging::MSG) -> bool {
     let belongs_to_quick_launch = STATE.with(|state| {
@@ -277,7 +293,7 @@ pub fn handle_message(message: &windows::Win32::UI::WindowsAndMessaging::MSG) ->
         // 手前に着地した)。first/last_selectable_row で行番号ベースに揃える。
         //
         // Edit にフォーカスがある間はネイティブの行頭/行末カーソル移動を
-        // 奪わないよう、Ctrl+C と同様リスト側で押されたときだけ扱う。
+        // 奪わないよう、リスト側で押されたときだけ扱う。
         0x24 if Some(message.hwnd) == STATE.with(|state| state.borrow().list) => {
             let (list, rows) = STATE.with(|state| {
                 let state = state.borrow();
@@ -326,10 +342,11 @@ pub fn handle_message(message: &windows::Win32::UI::WindowsAndMessaging::MSG) ->
         }
         0x0d => queue_selected(),
         // Ctrl+C: 選択中候補のパスをクリップボードへコピーする。
-        // Edit にフォーカスがある間は通常のテキストコピーを奪わないよう、
-        // リスト側で押されたときだけ扱う。
-        0x43 if Some(message.hwnd) == STATE.with(|state| state.borrow().list)
-            && unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0 =>
+        // 通常は Edit にフォーカスを置いたまま上下キーで候補を選ぶため、
+        // リスト側限定にすると事実上到達しない。Edit 側でも扱うが、
+        // テキストが選択されているときは通常のコピーへ譲る。
+        0x43 if unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0
+            && copy_path_shortcut_applies(message.hwnd) =>
         {
             copy_selected_path();
         }
@@ -449,7 +466,7 @@ fn ensure_window(owner: HWND) -> Result<()> {
             state.background_brush = Some(background_brush);
             state.surface_brush = Some(surface_brush);
         });
-        apply_dpi(window, primary_monitor_dpi());
+        apply_dpi(window, target_monitor_dpi());
         apply_window_chrome(window);
     }
     Ok(())

@@ -32,6 +32,7 @@ pub(super) fn action_color(action: &Action) -> COLORREF {
         | Action::FocusBrowserTab(_)
         | Action::OpenWithDefaultHandler
         | Action::OpenInTerminal
+        | Action::OpenInEditor(_)
         | Action::ReplaceQuery(_)
         | Action::AzureLiveWorkItemSearch(_)
         | Action::AzureLivePullRequestSearch { .. }

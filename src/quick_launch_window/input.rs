@@ -36,9 +36,8 @@ pub(super) fn word_start_before(text: &[u16], cursor: usize) -> usize {
     start
 }
 
-/// Ctrl+Backspace: カーソル直前の単語を削除する。
-pub(super) fn delete_word_before_cursor(edit: HWND) {
-    let text: Vec<u16> = read_text(edit).encode_utf16().collect();
+/// Edit の選択範囲 (開始, 終了) を文字単位で返す。
+fn selection_range(edit: HWND) -> (u32, u32) {
     let mut sel_start = 0u32;
     let mut sel_end = 0u32;
     unsafe {
@@ -49,6 +48,22 @@ pub(super) fn delete_word_before_cursor(edit: HWND) {
             Some(LPARAM(&mut sel_end as *mut u32 as isize)),
         );
     }
+    (sel_start, sel_end)
+}
+
+/// 検索ボックスでテキストが選択されているか。
+///
+/// 選択が無ければ `Ctrl+C` を候補パスのコピーへ回してよい (FR-9)。
+/// 選択があるときに奪うと、打った検索語をコピーする通常操作が壊れる。
+pub(super) fn edit_has_selection(edit: HWND) -> bool {
+    let (start, end) = selection_range(edit);
+    start != end
+}
+
+/// Ctrl+Backspace: カーソル直前の単語を削除する。
+pub(super) fn delete_word_before_cursor(edit: HWND) {
+    let text: Vec<u16> = read_text(edit).encode_utf16().collect();
+    let (sel_start, sel_end) = selection_range(edit);
     let cursor = sel_start.min(sel_end) as usize;
     if cursor == 0 {
         return;

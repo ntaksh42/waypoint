@@ -68,7 +68,9 @@ public partial class MainWindow : Window
         SearchPaths.IsChecked = Bool(quick, "searchPaths");
         WebSearch.IsChecked = Bool(quick, "includeWebSearch", true);
         SelectByTag(WebSearchEngine, Text(quick, "webSearchEngine", "google"));
+        EditorCommand.Text = Text(quick, "editorCommand", "code");
         VisibleResults.Text = (quick["visibleResults"]?.GetValue<int?>() ?? 12).ToString();
+        SelectByTag(MonitorChoice, Text(quick, "monitor", "primary"));
         AzureEnabled.IsChecked = Bool(AzureSettings(), "enabled");
         LoadAzureProjects();
         _variables.Clear();
@@ -78,9 +80,10 @@ public partial class MainWindow : Window
 
     private void TrackPersistentControls()
     {
-        foreach (var box in new[] { QuickLaunchHotkey, VisibleResults, AzureOrganization, AzureProject, AzureAliases, AzurePriority, AzureRepositories, AzureAreas, AzureIterations })
+        foreach (var box in new[] { QuickLaunchHotkey, EditorCommand, VisibleResults, AzureOrganization, AzureProject, AzureAliases, AzurePriority, AzureRepositories, AzureAreas, AzureIterations })
             box.TextChanged += (_, _) => Changed();
         WebSearchEngine.SelectionChanged += (_, _) => Changed();
+        MonitorChoice.SelectionChanged += (_, _) => Changed();
         foreach (var box in new[] { RecentFolders, FrequentFolders, OpenWindows, Bookmarks, BrowserHistory, Apps, Everything, SearchPaths, WebSearch, AzureEnabled, AzurePullRequests, AzurePipelines, AzureWorkItems })
         {
             box.Checked += (_, _) => Changed();
@@ -313,6 +316,7 @@ public partial class MainWindow : Window
             AzureConnectionStatus.Text = "PAT saved to Credential Manager.";
         }
         if (string.IsNullOrWhiteSpace(QuickLaunchHotkey.Text)) throw new InvalidDataException("Quick Launch hotkey is required.");
+        if (string.IsNullOrWhiteSpace(EditorCommand.Text)) throw new InvalidDataException("Editor command is required.");
         if (!int.TryParse(VisibleResults.Text, out var visible) || visible is < 12 or > 24) throw new InvalidDataException("Visible results must be between 12 and 24.");
         settings.Remove("trigger");
         settings.Remove("menu");
@@ -327,7 +331,9 @@ public partial class MainWindow : Window
         quick["searchPaths"] = SearchPaths.IsChecked == true;
         quick["includeWebSearch"] = WebSearch.IsChecked == true;
         quick["webSearchEngine"] = TagOf(WebSearchEngine, "google");
+        quick["editorCommand"] = EditorCommand.Text.Trim();
         quick["visibleResults"] = visible;
+        quick["monitor"] = TagOf(MonitorChoice, "primary");
         AzureSettings()["enabled"] = AzureEnabled.IsChecked == true;
         var variables = _store.Variables;
         variables.Clear();

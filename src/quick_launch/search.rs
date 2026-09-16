@@ -3,8 +3,8 @@
 use super::azure::{AzureCommand, azure_command, azure_command_entries};
 use super::rank::{search_entries, search_entries_cached, search_entries_cached_multi};
 use super::{
-    APPS_PREFIX, AZURE_DEVOPS_PREFIX, BOOKMARK_PREFIX, Entry, HISTORY_PREFIX, Index, TABS_PREFIX,
-    TERMINAL_PREFIX, WINDOW_PREFIX,
+    APPS_PREFIX, AZURE_DEVOPS_PREFIX, BOOKMARK_PREFIX, EDITOR_PREFIX, Entry, HISTORY_PREFIX, Index,
+    TABS_PREFIX, TERMINAL_PREFIX, WINDOW_PREFIX,
 };
 
 /// `Entry::name` / `breadcrumb` / `path` の小文字化済みキャッシュ。
@@ -115,6 +115,15 @@ impl Index {
             return search_entries_cached(
                 &self.terminal_folders,
                 &self.terminal_folders_lower,
+                rest,
+                self.search_paths,
+                &self.ranking,
+            );
+        }
+        if let Some(rest) = query.strip_prefix(EDITOR_PREFIX) {
+            return search_entries_cached(
+                &self.editor_folders,
+                &self.editor_folders_lower,
                 rest,
                 self.search_paths,
                 &self.ranking,

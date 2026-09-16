@@ -12,6 +12,7 @@ fn prefix_badge_identifies_each_mode() {
     assert_eq!(prefix_badge("a code"), Some("APPS"));
     assert_eq!(prefix_badge("t waypoint"), Some("TABS"));
     assert_eq!(prefix_badge("ps waypoint"), Some("TERMINAL"));
+    assert_eq!(prefix_badge("ed waypoint"), Some("EDITOR"));
     assert_eq!(prefix_badge("f cargo.toml"), Some("FILES"));
     assert_eq!(prefix_badge("k waypoint"), Some("KILL"));
     // `??` だけ末尾スペースを含まない (FR-9.21)
@@ -72,7 +73,13 @@ fn settings_command_is_searchable_without_prefix() {
 fn settings_command_does_not_leak_into_prefix_modes() {
     // 固定候補は通常検索だけに載せる。プレフィックスモードは対象外。
     let index = index();
-    for query in ["b settings", "w settings", "a settings", "ps settings"] {
+    for query in [
+        "b settings",
+        "w settings",
+        "a settings",
+        "ps settings",
+        "ed settings",
+    ] {
         assert!(
             !index
                 .search(query)
@@ -100,7 +107,7 @@ fn help_command_is_searchable_without_prefix() {
 fn help_command_does_not_leak_into_prefix_modes() {
     // 固定候補は通常検索だけに載せる。プレフィックスモードは対象外。
     let index = index();
-    for query in ["b help", "w help", "a help", "ps help"] {
+    for query in ["b help", "w help", "a help", "ps help", "ed help"] {
         assert!(
             !index
                 .search(query)

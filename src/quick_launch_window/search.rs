@@ -335,7 +335,7 @@ pub(super) fn refinable_search_term<'a>(
 
 /// 前回の検索結果だけを対象にしても漏れがない場合の、今回の検索語を返す。
 ///
-/// 通常検索と `b ` / `h ` / `w ` / `a ` の同一モードでは、入力末尾への文字追加で
+/// 通常検索と `b ` / `h ` / `w ` / `a ` / `ps ` / `ed ` の同一モードでは、入力末尾への文字追加で
 /// 一致集合が広がらない。Everything と Azure DevOps は別経路なので対象外にする。
 fn refined_search_term<'a>(previous: &str, current: &'a str) -> Option<&'a str> {
     let (previous_scope, previous_term) = local_search_scope(previous)?;
@@ -366,6 +366,8 @@ fn local_search_scope(query: &str) -> Option<(&'static str, &str)> {
         Some(("tabs", term))
     } else if let Some(term) = query.strip_prefix("ps ") {
         Some(("terminal", term))
+    } else if let Some(term) = query.strip_prefix("ed ") {
+        Some(("editor", term))
     } else {
         Some(("normal", query))
     }
