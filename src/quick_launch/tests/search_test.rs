@@ -147,6 +147,36 @@ fn editor_prefix_excludes_non_folder_candidates() {
     assert!(index.search("ed github").is_empty());
 }
 
+/// FR-9.15.4: `cc ` はセッション名の入力に入るまでフォルダ候補だけに
+/// 絞り込み、選択時のアクションは検索欄を補完する `ReplaceQuery` にする。
+#[test]
+fn claude_code_prefix_switches_to_folder_only_search_with_replace_query_action() {
+    let index = index();
+    let found = index.search("cc waypoint docs");
+    assert_eq!(found.len(), 1);
+    assert_eq!(
+        found[0].action,
+        Action::ReplaceQuery(r#"cc E:\waypoint\docs ""#.into())
+    );
+    assert_eq!(found[0].path, r"E:\waypoint\docs");
+}
+
+/// `cc ` はブックマークやウィンドウなど、フォルダ以外の候補を含まない。
+#[test]
+fn claude_code_prefix_excludes_non_folder_candidates() {
+    let index = index();
+    assert!(index.search("cc github").is_empty());
+}
+
+/// セッション名部分 (` "`) まで入力が進んだら、フォルダ絞り込みではなく
+/// 確定候補 1 件の組み立てへ切り替わる (`claude_code_entry` が担当するため
+/// `Index::search` 自体は何も返さない)。
+#[test]
+fn claude_code_prefix_stops_narrowing_folders_once_session_name_starts() {
+    let index = index();
+    assert!(index.search(r#"cc E:\waypoint "review"#).is_empty());
+}
+
 /// タイトルにアプリ名が出ないウィンドウも、所有プロセス名で
 /// 見つけられる (`w chrome` のような検索)。
 #[test]

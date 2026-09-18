@@ -325,6 +325,10 @@ pub struct Index {
     /// `entries` のフォルダを設定済みエディターで開く候補へ差し替えた索引。
     pub(crate) editor_folders: Vec<Entry>,
     pub(crate) editor_folders_lower: Vec<search::LowerKeys>,
+    /// `entries` のうちフォルダだけを `cc ` 用の `ReplaceQuery` へ差し替えた索引
+    /// (FR-9.15.4)。選択するとセッション名の入力へ進めるよう検索欄を補完する。
+    pub(crate) claude_code_folders: Vec<Entry>,
+    pub(crate) claude_code_folders_lower: Vec<search::LowerKeys>,
     pub(crate) search_paths: bool,
     /// Web 検索 (`??`、FR-9.21) で使うエンジン。無効化時は `None`。
     /// 候補は入力から組み立てる 1 件だけなので、索引は持たない

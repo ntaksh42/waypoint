@@ -78,10 +78,20 @@ impl LowerKeys {
 impl Index {
     /// プレフィックス入力中は、対応する検索対象だけを検索する。
     pub fn search(&self, query: &str) -> Vec<&Entry> {
-        // `cc ` は入力文字列から確定候補を組み立てる。実体は
-        // `quick_launch_window::search` が追加するため、索引は引かない。
-        if query.starts_with(CLAUDE_CODE_PREFIX) {
-            return Vec::new();
+        // `cc ` はまずフォルダ候補を `ps `/`ed ` と同じく絞り込み表示する。
+        // セッション名部分 (` "`) まで入力が進んだら、確定候補 1 件の組み立てへ
+        // 切り替える (`quick_launch_window::search` の `claude_code_entry`)。
+        if let Some(rest) = query.strip_prefix(CLAUDE_CODE_PREFIX) {
+            if rest.contains(" \"") {
+                return Vec::new();
+            }
+            return search_entries_cached(
+                &self.claude_code_folders,
+                &self.claude_code_folders_lower,
+                rest,
+                self.search_paths,
+                &self.ranking,
+            );
         }
         if let Some(rest) = query.strip_prefix(BOOKMARK_PREFIX) {
             return search_entries_cached(
