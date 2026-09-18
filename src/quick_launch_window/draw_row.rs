@@ -14,8 +14,8 @@ use windows::Win32::UI::Controls::{DRAWITEMSTRUCT, ODS_SELECTED};
 use super::badge::{action_color, azure_icon_color, azure_icon_kind, badge_color};
 use super::draw::{draw_text, measured_width};
 use super::draw_icons::{
-    FaviconFallback, draw_azure_icon, draw_claude_code_icon, draw_command_icon, draw_favicon_icon,
-    draw_icon_backdrop, draw_path_icon, draw_window_icon,
+    FaviconFallback, draw_azure_icon, draw_command_icon, draw_favicon_icon, draw_icon_backdrop,
+    draw_path_icon, draw_window_icon,
 };
 use super::layout::scale;
 use super::{
@@ -171,20 +171,10 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
             let _ = DeleteObject(accent.into());
         }
 
-        // `cc ` のフォルダ候補 (`claude_code_folder_entries`) は検索欄を補完する
-        // `ReplaceQuery` だが、実体はフォルダを指す。他のフォルダ候補や `az` の
-        // サブコマンド補完 (path を持たない `ReplaceQuery`) と見分けられるよう、
-        // "CC" グリフを Claude Code のバッジ色 (緑寄り) で描く。
-        let is_claude_code_folder_candidate =
-            matches!(entry.action, Action::ReplaceQuery(_)) && !entry.path.is_empty();
         if let Some(kind) = azure_icon_kind(badge, &entry.path) {
             let color = azure_icon_color(kind);
             draw_icon_backdrop(draw.hDC, color, draw.rcItem, dpi);
             draw_azure_icon(draw.hDC, kind, color, draw.rcItem, dpi, name_font);
-        } else if is_claude_code_folder_candidate {
-            let color = badge_color("CLAUDE CODE");
-            draw_icon_backdrop(draw.hDC, color, draw.rcItem, dpi);
-            draw_claude_code_icon(draw.hDC, color, draw.rcItem, dpi, name_font);
         } else {
             draw_icon_backdrop(draw.hDC, action_color(&entry.action), draw.rcItem, dpi);
             match entry.action {
@@ -194,6 +184,13 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
                 | Action::OpenInTerminal
                 | Action::OpenInEditor(_)
                 | Action::OpenClaudeCode(_) => {
+                    draw_path_icon(draw.hDC, &entry.path, draw.rcItem, dpi)
+                }
+                // `cc ` のフォルダ候補 (`claude_code_folder_entries`) は検索欄を
+                // 補完する `ReplaceQuery` だが、実体はフォルダなので他の
+                // フォルダ候補と同じアイコンにする。`az` のサブコマンド補完など
+                // path を持たない `ReplaceQuery` は下のコマンドアイコンへ回す。
+                Action::ReplaceQuery(_) if !entry.path.is_empty() => {
                     draw_path_icon(draw.hDC, &entry.path, draw.rcItem, dpi)
                 }
                 Action::FocusWindow(hwnd) => {
