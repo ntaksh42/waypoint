@@ -153,24 +153,29 @@ pub(crate) fn builtin_command_entries() -> (&'static [Entry], &'static [search::
     (&ENTRIES, &LOWER)
 }
 
-/// `cc <folder> <sessionname>` を Claude Code 起動候補へ変換する。
+/// `cc <folder> [sessionname]` を Claude Code 起動候補へ変換する。
 ///
 /// フォルダはフォルダ候補の選択 (`claude_code_folder_entries`) を経て確定済みの
 /// 1 トークンなので、末尾の半角スペースだけで区切れる。そのぶんセッション名に
-/// 空白は含められない。パスの存在確認は起動時まで遅延し、入力経路では文字列の
-/// 切り分けだけに留める。
+/// 空白は含められない。セッション名は省略でき、その場合は表示名を付けずに
+/// 起動する。パスの存在確認は起動時まで遅延し、入力経路では文字列の切り分け
+/// だけに留める。
 pub(crate) fn claude_code_entry(query: &str) -> Option<Entry> {
     let rest = query.strip_prefix(CLAUDE_CODE_PREFIX)?;
     let (folder, session_name) = rest.rsplit_once(' ')?;
     let folder = folder.trim();
-    if folder.is_empty() || session_name.is_empty() {
+    if folder.is_empty() {
         return None;
     }
+    let session_name = (!session_name.is_empty()).then(|| session_name.to_string());
     Some(Entry {
-        name: format!("Claude Code — {session_name}"),
+        name: match &session_name {
+            Some(session_name) => format!("Claude Code — {session_name}"),
+            None => "Claude Code".to_string(),
+        },
         breadcrumb: format!("Start in {folder}"),
         path: folder.to_string(),
-        action: Action::OpenClaudeCode(session_name.to_string()),
+        action: Action::OpenClaudeCode(session_name),
         branch: None,
     })
 }
@@ -197,7 +202,7 @@ pub enum Action {
     /// フォルダを設定済みエディターで開く (`ed ` プレフィックス)。
     OpenInEditor(String),
     /// Claude Code を指定フォルダと表示名で起動する (`cc ` コマンド)。
-    OpenClaudeCode(String),
+    OpenClaudeCode(Option<String>),
     /// 検索欄へコマンドを補完する。候補の選択時に外部操作は行わない。
     ReplaceQuery(String),
     /// `az wit` のローカルキャッシュ検索で見つからなかったとき、明示的な

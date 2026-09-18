@@ -37,12 +37,23 @@ fn claude_code_command_builds_a_single_candidate() {
     assert_eq!(entry.name, "Claude Code — review42");
     assert_eq!(entry.breadcrumb, "Start in E:\\waypoint");
     assert_eq!(entry.path, "E:\\waypoint");
-    assert_eq!(entry.action, Action::OpenClaudeCode("review42".into()));
+    assert_eq!(
+        entry.action,
+        Action::OpenClaudeCode(Some("review42".into()))
+    );
+}
+
+/// セッション名は省略でき、その場合は表示名なしで起動する候補になる。
+#[test]
+fn claude_code_command_allows_an_omitted_session_name() {
+    let entry = claude_code_entry("cc E:\\waypoint ").expect("candidate missing");
+    assert_eq!(entry.name, "Claude Code");
+    assert_eq!(entry.action, Action::OpenClaudeCode(None));
 }
 
 #[test]
-fn claude_code_command_rejects_incomplete_or_invalid_input() {
-    for query in ["cc ", "cc E:\\waypoint", "cc E:\\waypoint "] {
+fn claude_code_command_rejects_incomplete_input() {
+    for query in ["cc ", "cc E:\\waypoint"] {
         assert!(
             claude_code_entry(query).is_none(),
             "{query} should be rejected"

@@ -99,7 +99,7 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                         let _ = shell::open_editor(&command, &entry.path);
                     }
                     quick_launch::Action::OpenClaudeCode(session_name) => {
-                        let _ = shell::open_claude_code(&entry.path, &session_name);
+                        let _ = shell::open_claude_code(&entry.path, session_name.as_deref());
                     }
                     // ReplaceQuery / AzureLiveWorkItemSearch / AzureLivePullRequestSearch /
                     // AzureLivePipelineSearch はウィンドウを閉じずに Quick Launch

@@ -165,30 +165,32 @@ pub fn open_editor(command: &str, path: &str) -> std::io::Result<()> {
 }
 
 /// Claude Code を Windows Terminal で指定フォルダ・表示名付きで起動する。
-pub fn open_claude_code(path: &str, session_name: &str) -> std::io::Result<()> {
+/// `session_name` は省略でき、その場合は表示名を付けずに起動する。
+pub fn open_claude_code(path: &str, session_name: Option<&str>) -> std::io::Result<()> {
     if !Path::new(path).is_dir() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!("folder not found: {path}"),
         ));
     }
+    let mut wt_args = vec!["-d", path, "claude"];
+    if let Some(session_name) = session_name {
+        wt_args.extend(["--name", session_name]);
+    }
     if std::process::Command::new("wt.exe")
-        .args(["-d", path, "claude", "--name", session_name])
+        .args(&wt_args)
         .spawn()
         .is_ok()
     {
         return Ok(());
     }
 
-    let escaped_name = session_name.replace('\'', "''");
+    let command = match session_name {
+        Some(session_name) => format!("& claude --name '{}'", session_name.replace('\'', "''")),
+        None => "& claude".to_string(),
+    };
     std::process::Command::new("powershell.exe")
-        .args([
-            "-NoExit",
-            "-WorkingDirectory",
-            path,
-            "-Command",
-            &format!("& claude --name '{escaped_name}'"),
-        ])
+        .args(["-NoExit", "-WorkingDirectory", path, "-Command", &command])
         .spawn()
         .map(|_| ())
 }
