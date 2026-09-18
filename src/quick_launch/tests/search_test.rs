@@ -156,7 +156,7 @@ fn claude_code_prefix_switches_to_folder_only_search_with_replace_query_action()
     assert_eq!(found.len(), 1);
     assert_eq!(
         found[0].action,
-        Action::ReplaceQuery(r#"cc E:\waypoint\docs ""#.into())
+        Action::ReplaceQuery(r"cc E:\waypoint\docs ".into())
     );
     assert_eq!(found[0].path, r"E:\waypoint\docs");
 }
@@ -168,13 +168,13 @@ fn claude_code_prefix_excludes_non_folder_candidates() {
     assert!(index.search("cc github").is_empty());
 }
 
-/// セッション名部分 (` "`) まで入力が進んだら、フォルダ絞り込みではなく
-/// 確定候補 1 件の組み立てへ切り替わる (`claude_code_entry` が担当するため
-/// `Index::search` 自体は何も返さない)。
+/// フォルダ選択で確定した `<folder> ` が先頭に来たら、フォルダ絞り込みでは
+/// なく確定候補 1 件の組み立てへ切り替わる (`claude_code_entry` が担当する
+/// ため `Index::search` 自体は何も返さない)。
 #[test]
 fn claude_code_prefix_stops_narrowing_folders_once_session_name_starts() {
     let index = index();
-    assert!(index.search(r#"cc E:\waypoint "review"#).is_empty());
+    assert!(index.search(r"cc E:\waypoint\docs review").is_empty());
 }
 
 /// タイトルにアプリ名が出ないウィンドウも、所有プロセス名で

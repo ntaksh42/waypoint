@@ -158,16 +158,17 @@ pub(crate) fn builtin_command_entries() -> (&'static [Entry], &'static [search::
     (&ENTRIES, &LOWER)
 }
 
-/// `cc <folder> "<sessionname>"` を Claude Code 起動候補へ変換する。
+/// `cc <folder> <sessionname>` を Claude Code 起動候補へ変換する。
 ///
-/// フォルダ部分を引用しなくても空白を含められるよう、最後の ` "` を区切りとする。
-/// パスの存在確認は起動時まで遅延し、入力経路では文字列の切り分けだけに留める。
+/// フォルダはフォルダ候補の選択 (`claude_code_folder_entries`) を経て確定済みの
+/// 1 トークンなので、末尾の半角スペースだけで区切れる。そのぶんセッション名に
+/// 空白は含められない。パスの存在確認は起動時まで遅延し、入力経路では文字列の
+/// 切り分けだけに留める。
 pub(crate) fn claude_code_entry(query: &str) -> Option<Entry> {
     let rest = query.strip_prefix(CLAUDE_CODE_PREFIX)?;
-    let (folder, session_name) = rest.rsplit_once(" \"")?;
+    let (folder, session_name) = rest.rsplit_once(' ')?;
     let folder = folder.trim();
-    let session_name = session_name.strip_suffix('"')?;
-    if folder.is_empty() || session_name.is_empty() || session_name.contains('"') {
+    if folder.is_empty() || session_name.is_empty() {
         return None;
     }
     Some(Entry {

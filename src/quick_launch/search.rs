@@ -79,10 +79,15 @@ impl Index {
     /// プレフィックス入力中は、対応する検索対象だけを検索する。
     pub fn search(&self, query: &str) -> Vec<&Entry> {
         // `cc ` はまずフォルダ候補を `ps `/`ed ` と同じく絞り込み表示する。
-        // セッション名部分 (` "`) まで入力が進んだら、確定候補 1 件の組み立てへ
-        // 切り替える (`quick_launch_window::search` の `claude_code_entry`)。
+        // フォルダ候補の選択 (`Action::ReplaceQuery`) で確定した `<folder> ` が
+        // 先頭に来たら、セッション名の入力へ進んだとみなし、確定候補 1 件の
+        // 組み立てへ切り替える (`quick_launch_window::search` の `claude_code_entry`)。
         if let Some(rest) = query.strip_prefix(CLAUDE_CODE_PREFIX) {
-            if rest.contains(" \"") {
+            let session_name_started = self
+                .claude_code_folders
+                .iter()
+                .any(|entry| rest.starts_with(&format!("{} ", entry.path)));
+            if session_name_started {
                 return Vec::new();
             }
             return search_entries_cached(

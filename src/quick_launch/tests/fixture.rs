@@ -134,7 +134,7 @@ pub(super) fn index() -> Index {
         .iter()
         .filter(|entry| matches!(entry.action, Action::OpenFolder(_)))
         .map(|entry| Entry {
-            action: Action::ReplaceQuery(format!("{}{} \"", CLAUDE_CODE_PREFIX, entry.path)),
+            action: Action::ReplaceQuery(format!("{}{} ", CLAUDE_CODE_PREFIX, entry.path)),
             ..entry.clone()
         })
         .collect();

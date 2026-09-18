@@ -356,7 +356,7 @@ fn editor_folder_entries(
 
 /// `entries` のうちフォルダだけを `cc ` 用の `Action::ReplaceQuery` に
 /// 差し替えた索引を作る (FR-9.15.4)。選択すると検索欄が
-/// `cc <folder> "` へ置き換わり、続けてセッション名を入力させる。
+/// `cc <folder> ` へ置き換わり、続けてセッション名を入力させる。
 fn claude_code_folder_entries(entries: &[Entry]) -> (Vec<Entry>, Vec<super::search::LowerKeys>) {
     let claude_code_folders: Vec<Entry> = entries
         .iter()
@@ -365,7 +365,7 @@ fn claude_code_folder_entries(entries: &[Entry]) -> (Vec<Entry>, Vec<super::sear
             name: entry.name.clone(),
             breadcrumb: entry.breadcrumb.clone(),
             path: entry.path.clone(),
-            action: Action::ReplaceQuery(format!("{}{} \"", super::CLAUDE_CODE_PREFIX, entry.path)),
+            action: Action::ReplaceQuery(format!("{}{} ", super::CLAUDE_CODE_PREFIX, entry.path)),
             branch: entry.branch.clone(),
         })
         .collect();
