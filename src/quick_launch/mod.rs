@@ -44,8 +44,6 @@ const WINDOW_PREFIX: &str = "w ";
 /// と違って `Index::search` の同期モデルには乗らない。判定だけここに置き、
 /// クエリの発行と結果の保持は `quick_launch_window.rs` 側が持つ。
 pub const EVERYTHING_PREFIX: &str = "f ";
-/// Outlook メール検索モードに入るプレフィックス (末尾の半角スペース込み)。
-pub const OUTLOOK_PREFIX: &str = "o ";
 /// アプリ検索モードに入るプレフィックス (末尾の半角スペース込み)。
 const APPS_PREFIX: &str = "a ";
 /// 現在開いているブラウザタブを検索するプレフィックス (末尾の半角スペース込み)。
@@ -88,8 +86,6 @@ pub fn prefix_badge(query: &str) -> Option<&'static str> {
         Some("CLAUDE CODE")
     } else if query.starts_with(EVERYTHING_PREFIX) {
         Some("FILES")
-    } else if query.starts_with(OUTLOOK_PREFIX) {
-        Some("OUTLOOK")
     } else if query.starts_with(KILL_PROCESS_PREFIX) {
         Some("KILL")
     } else if query.starts_with(WEB_SEARCH_PREFIX) {
@@ -114,7 +110,6 @@ pub fn effective_search_term(query: &str) -> &str {
         EDITOR_PREFIX,
         CLAUDE_CODE_PREFIX,
         KILL_PROCESS_PREFIX,
-        OUTLOOK_PREFIX,
     ] {
         if let Some(rest) = query.strip_prefix(prefix) {
             return rest;

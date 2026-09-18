@@ -89,6 +89,33 @@ pub(super) unsafe fn draw_command_icon(hdc: HDC, rect: RECT, dpi: u32, font: Opt
     }
 }
 
+/// `cc ` のフォルダ候補は実体を持つフォルダだが、選択すると即実行ではなく
+/// 検索欄を補完するだけ (`Action::ReplaceQuery`) なので、他のフォルダ候補と
+/// 区別できるよう "CC" のグリフにする。
+pub(super) unsafe fn draw_claude_code_icon(
+    hdc: HDC,
+    color: COLORREF,
+    rect: RECT,
+    dpi: u32,
+    font: Option<HFONT>,
+) {
+    let Some(font) = font else { return };
+    unsafe {
+        let size = scale(ICON_SIZE, dpi);
+        let mut icon_rect = RECT {
+            left: rect.left + scale(ICON_LEFT, dpi),
+            top: rect.top + (rect.bottom - rect.top - size) / 2,
+            right: rect.left + scale(ICON_LEFT, dpi) + size,
+            bottom: rect.top + (rect.bottom - rect.top - size) / 2 + size,
+        };
+        let old_font = SelectObject(hdc, font.into());
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, color);
+        draw_text_centered(hdc, "CC", &mut icon_rect);
+        SelectObject(hdc, old_font);
+    }
+}
+
 pub(super) unsafe fn draw_path_icon(hdc: HDC, path: &str, rect: RECT, dpi: u32) {
     let size = scale(ICON_SIZE, dpi);
     // shell:MyComputerFolder 等はファイルパスではないため専用の解決経路を使う

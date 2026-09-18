@@ -54,9 +54,6 @@ pub(crate) const EVERYTHING_REPLY_ID_START: u32 = WM_APP + 5;
 /// Quick Launch が一度に Everything へ要求する最大件数。
 /// 全件表示はしない (`visible_results` の上限と同じ枠で足りる)。
 pub(crate) const EVERYTHING_MAX_RESULTS: u32 = 24;
-/// Outlook の CLI 検索を入力ごとに起動しないためのデバウンス用タイマー。
-pub(crate) const OUTLOOK_TIMER_ID: usize = 1;
-pub(crate) const OUTLOOK_SEARCH_DELAY_MS: u32 = 250;
 /// リストボックスへ流し込む候補の上限。
 ///
 /// ウィンドウの高さは `visible_results` (12〜24) で決まるので、それを超える

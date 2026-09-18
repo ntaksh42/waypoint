@@ -10,9 +10,7 @@ use crate::quick_launch::Action;
 pub(super) fn badge_color(badge: &str) -> COLORREF {
     match badge {
         "WINDOWS" | "APPS" | "TERMINAL" | "CLAUDE CODE" => rgb(143, 168, 118), // 緑寄りの寒色
-        "BOOKMARKS" | "HISTORY" | "FILES" | "TABS" | "AZURE DEVOPS" | "OUTLOOK" | "WEB" => {
-            rgb(95, 157, 176)
-        } // 青寄りの寒色
+        "BOOKMARKS" | "HISTORY" | "FILES" | "TABS" | "AZURE DEVOPS" | "WEB" => rgb(95, 157, 176), // 青寄りの寒色
         // kill は確認なしの即時破壊操作 (FR-9.15.2) なので、誤入力に気付けるよう
         // 他プレフィックスの寒色2トーンと区別できる警告色にする
         "KILL" => rgb(196, 92, 80),

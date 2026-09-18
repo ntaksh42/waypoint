@@ -76,10 +76,6 @@ pub(super) fn update_results(state: &RefCell<State>) {
     invalidate_azure_live_searches(&mut state.borrow_mut());
     update_badge(state, &query);
 
-    if let Some(rest) = query.strip_prefix(crate::quick_launch::OUTLOOK_PREFIX) {
-        super::outlook::start_outlook_query(state, rest);
-        return;
-    }
     if let Some(rest) = query.strip_prefix(crate::quick_launch::EVERYTHING_PREFIX) {
         start_everything_query(state, rest);
         return;
@@ -104,8 +100,6 @@ pub(super) fn update_results(state: &RefCell<State>) {
         let mut state = state.borrow_mut();
         // プレフィックスを外れたら、遅れて届く Everything の応答を無視させる
         state.everything_active = false;
-        // Outlook も同じく、モードを抜けた後の CLI 応答は現在の候補へ混ぜない。
-        state.outlook_active = false;
         state.empty_message = None;
         // COPIED バッジは update_badge のプレフィックスバッジ変化検知の
         // 対象外なので、ここで変化を見て自前で再描画要求しないと、次に

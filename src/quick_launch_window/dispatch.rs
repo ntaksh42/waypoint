@@ -20,7 +20,7 @@ use super::layout::scale;
 use super::search::{handle_everything_results, update_results};
 use super::{
     BACKGROUND, BADGE_WIDTH, EDIT_HEIGHT, HEADER_HEIGHT, PADDING, ROW_HEIGHT, RowKind, STATE,
-    SURFACE, TEXT_PRIMARY, WM_QUICK_LAUNCH_AZURE_RESULTS, WM_QUICK_LAUNCH_OUTLOOK_RESULTS,
+    SURFACE, TEXT_PRIMARY, WM_QUICK_LAUNCH_AZURE_RESULTS,
 };
 
 pub(super) fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -144,22 +144,6 @@ pub(super) fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM)
             handle_azure_work_item_results(wparam.0 as u32);
             handle_azure_pull_request_results(wparam.0 as u32);
             handle_azure_pipeline_results(wparam.0 as u32);
-            LRESULT(0)
-        }
-        WM_QUICK_LAUNCH_OUTLOOK_RESULTS => {
-            super::outlook::handle_outlook_results(wparam.0 as u32);
-            LRESULT(0)
-        }
-        windows::Win32::UI::WindowsAndMessaging::WM_TIMER
-            if wparam.0 == super::OUTLOOK_TIMER_ID =>
-        {
-            unsafe {
-                let _ = windows::Win32::UI::WindowsAndMessaging::KillTimer(
-                    Some(hwnd),
-                    super::OUTLOOK_TIMER_ID,
-                );
-            }
-            super::outlook::start_outlook_search();
             LRESULT(0)
         }
         windows::Win32::UI::WindowsAndMessaging::WM_COPYDATA => {
