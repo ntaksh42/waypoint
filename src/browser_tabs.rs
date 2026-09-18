@@ -77,6 +77,8 @@ pub struct TabTarget {
     pub browser: Browser,
     pub tab_id: i32,
     pub window_id: i32,
+    /// Native Messaging host が停止している場合に開く URL。メモリ内だけに保持する。
+    pub url: String,
 }
 
 #[derive(Serialize)]

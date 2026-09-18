@@ -75,7 +75,9 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                         shell::activate_window(HWND(hwnd as *mut _));
                     }
                     quick_launch::Action::FocusBrowserTab(target) => {
-                        let _ = crate::browser_tabs::request_focus(&target);
+                        if !crate::browser_tabs::request_focus(&target) && !target.url.is_empty() {
+                            let _ = shell::open_shell_item(&target.url);
+                        }
                     }
                     quick_launch::Action::OpenUrl(url) => {
                         let _ = shell::open_shell_item(&url);

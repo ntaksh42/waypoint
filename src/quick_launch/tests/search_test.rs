@@ -222,8 +222,10 @@ fn tabs_prefix_searches_the_live_tab_cache_only() {
             browser: crate::browser_tabs::Browser::Chrome,
             tab_id: 7,
             window_id: 3,
+            url: _,
         })
     ));
+    assert_eq!(found[0].path, "https://example.test/waypoint");
     assert!(index.search("example.test").is_empty());
 }
 

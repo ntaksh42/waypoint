@@ -190,6 +190,7 @@ impl Index {
                     browser: *browser,
                     tab_id: tab.id,
                     window_id: tab.window_id,
+                    url: tab.url.clone(),
                 }),
                 branch: None,
             })
