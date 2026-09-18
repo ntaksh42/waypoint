@@ -13,6 +13,7 @@ fn prefix_badge_identifies_each_mode() {
     assert_eq!(prefix_badge("t waypoint"), Some("TABS"));
     assert_eq!(prefix_badge("ps waypoint"), Some("TERMINAL"));
     assert_eq!(prefix_badge("ed waypoint"), Some("EDITOR"));
+    assert_eq!(prefix_badge("cc E:\\waypoint review"), Some("CLAUDE CODE"));
     assert_eq!(prefix_badge("f cargo.toml"), Some("FILES"));
     assert_eq!(prefix_badge("k waypoint"), Some("KILL"));
     // `??` だけ末尾スペースを含まない (FR-9.21)
@@ -28,6 +29,36 @@ fn web_search_term_ignores_space_after_marks() {
     assert_eq!(effective_search_term("?? rust lifetime"), "rust lifetime");
     assert_eq!(effective_search_term("??rust lifetime"), "rust lifetime");
     assert_eq!(effective_search_term("??"), "");
+}
+
+#[test]
+fn claude_code_command_builds_a_single_candidate() {
+    let entry = claude_code_entry("cc E:\\waypoint review42").expect("candidate missing");
+    assert_eq!(entry.name, "Claude Code — review42");
+    assert_eq!(entry.breadcrumb, "Start in E:\\waypoint");
+    assert_eq!(entry.path, "E:\\waypoint");
+    assert_eq!(
+        entry.action,
+        Action::OpenClaudeCode(Some("review42".into()))
+    );
+}
+
+/// セッション名は省略でき、その場合は表示名なしで起動する候補になる。
+#[test]
+fn claude_code_command_allows_an_omitted_session_name() {
+    let entry = claude_code_entry("cc E:\\waypoint ").expect("candidate missing");
+    assert_eq!(entry.name, "Claude Code");
+    assert_eq!(entry.action, Action::OpenClaudeCode(None));
+}
+
+#[test]
+fn claude_code_command_rejects_incomplete_input() {
+    for query in ["cc ", "cc E:\\waypoint"] {
+        assert!(
+            claude_code_entry(query).is_none(),
+            "{query} should be rejected"
+        );
+    }
 }
 
 #[test]

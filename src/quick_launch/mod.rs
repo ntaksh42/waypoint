@@ -52,6 +52,8 @@ const TABS_PREFIX: &str = "t ";
 const TERMINAL_PREFIX: &str = "ps ";
 /// フォルダを設定済みエディターで開く検索モードに入るプレフィックス (末尾の半角スペース込み)。
 const EDITOR_PREFIX: &str = "ed ";
+/// Claude Code を表示名付きで起動するコマンドのプレフィックス。
+pub const CLAUDE_CODE_PREFIX: &str = "cc ";
 /// プロセス Kill 検索モードに入るプレフィックス (末尾の半角スペース込み、FR-9.15.2)。
 pub const KILL_PROCESS_PREFIX: &str = "k ";
 /// Web 検索モードに入るプレフィックス (FR-9.21)。
@@ -80,6 +82,8 @@ pub fn prefix_badge(query: &str) -> Option<&'static str> {
         Some("TERMINAL")
     } else if query.starts_with(EDITOR_PREFIX) {
         Some("EDITOR")
+    } else if query.starts_with(CLAUDE_CODE_PREFIX) {
+        Some("CLAUDE CODE")
     } else if query.starts_with(EVERYTHING_PREFIX) {
         Some("FILES")
     } else if query.starts_with(KILL_PROCESS_PREFIX) {
@@ -104,6 +108,7 @@ pub fn effective_search_term(query: &str) -> &str {
         TABS_PREFIX,
         TERMINAL_PREFIX,
         EDITOR_PREFIX,
+        CLAUDE_CODE_PREFIX,
         KILL_PROCESS_PREFIX,
     ] {
         if let Some(rest) = query.strip_prefix(prefix) {
@@ -148,6 +153,33 @@ pub(crate) fn builtin_command_entries() -> (&'static [Entry], &'static [search::
     (&ENTRIES, &LOWER)
 }
 
+/// `cc <folder> [sessionname]` を Claude Code 起動候補へ変換する。
+///
+/// フォルダはフォルダ候補の選択 (`claude_code_folder_entries`) を経て確定済みの
+/// 1 トークンなので、末尾の半角スペースだけで区切れる。そのぶんセッション名に
+/// 空白は含められない。セッション名は省略でき、その場合は表示名を付けずに
+/// 起動する。パスの存在確認は起動時まで遅延し、入力経路では文字列の切り分け
+/// だけに留める。
+pub(crate) fn claude_code_entry(query: &str) -> Option<Entry> {
+    let rest = query.strip_prefix(CLAUDE_CODE_PREFIX)?;
+    let (folder, session_name) = rest.rsplit_once(' ')?;
+    let folder = folder.trim();
+    if folder.is_empty() {
+        return None;
+    }
+    let session_name = (!session_name.is_empty()).then(|| session_name.to_string());
+    Some(Entry {
+        name: match &session_name {
+            Some(session_name) => format!("Claude Code — {session_name}"),
+            None => "Claude Code".to_string(),
+        },
+        breadcrumb: format!("Start in {folder}"),
+        path: folder.to_string(),
+        action: Action::OpenClaudeCode(session_name),
+        branch: None,
+    })
+}
+
 /// 検索結果を選んだときに行うアクション。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -169,6 +201,8 @@ pub enum Action {
     OpenInTerminal,
     /// フォルダを設定済みエディターで開く (`ed ` プレフィックス)。
     OpenInEditor(String),
+    /// Claude Code を指定フォルダと表示名で起動する (`cc ` コマンド)。
+    OpenClaudeCode(Option<String>),
     /// 検索欄へコマンドを補完する。候補の選択時に外部操作は行わない。
     ReplaceQuery(String),
     /// `az wit` のローカルキャッシュ検索で見つからなかったとき、明示的な
@@ -248,6 +282,7 @@ impl Entry {
             | Action::OpenUrl(_)
             | Action::OpenInTerminal
             | Action::OpenInEditor(_)
+            | Action::OpenClaudeCode(_)
             | Action::ReplaceQuery(_)
             | Action::AzureLiveWorkItemSearch(_)
             | Action::AzureLivePullRequestSearch { .. }
@@ -291,6 +326,10 @@ pub struct Index {
     /// `entries` のフォルダを設定済みエディターで開く候補へ差し替えた索引。
     pub(crate) editor_folders: Vec<Entry>,
     pub(crate) editor_folders_lower: Vec<search::LowerKeys>,
+    /// `entries` のうちフォルダだけを `cc ` 用の `ReplaceQuery` へ差し替えた索引
+    /// (FR-9.15.4)。選択するとセッション名の入力へ進めるよう検索欄を補完する。
+    pub(crate) claude_code_folders: Vec<Entry>,
+    pub(crate) claude_code_folders_lower: Vec<search::LowerKeys>,
     pub(crate) search_paths: bool,
     /// Web 検索 (`??`、FR-9.21) で使うエンジン。無効化時は `None`。
     /// 候補は入力から組み立てる 1 件だけなので、索引は持たない

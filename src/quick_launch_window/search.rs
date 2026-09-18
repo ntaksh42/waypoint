@@ -128,9 +128,12 @@ pub(super) fn update_results(state: &RefCell<State>) {
             // 起きていた回だけは安全側に倒し、全候補への再検索にフォールバック
             // する (実測: 候補 25 件超のとき、絞り込みを続けると本来ヒット
             // するはずの候補が一覧から消えていた)。
-            state.results = if let Some(search_term) =
-                refinable_search_term(state.previous_query.as_deref(), &query, state.results.len())
-            {
+            state.results = if !query.starts_with(crate::quick_launch::CLAUDE_CODE_PREFIX)
+                && let Some(search_term) = refinable_search_term(
+                    state.previous_query.as_deref(),
+                    &query,
+                    state.results.len(),
+                ) {
                 crate::quick_launch::search_entries(
                     &state.results,
                     search_term,
@@ -179,6 +182,9 @@ pub(super) fn update_results(state: &RefCell<State>) {
                 state
                     .results
                     .push(crate::quick_launch::web_search_entry(engine, rest));
+            }
+            if let Some(entry) = crate::quick_launch::claude_code_entry(&query) {
+                state.results.push(entry);
             }
             Vec::new()
         };

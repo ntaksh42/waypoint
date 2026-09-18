@@ -129,5 +129,16 @@ pub(super) fn index() -> Index {
         })
         .collect();
     index.editor_folders_lower = super::super::search::LowerKeys::build_for(&index.editor_folders);
+    index.claude_code_folders = index
+        .entries
+        .iter()
+        .filter(|entry| matches!(entry.action, Action::OpenFolder(_)))
+        .map(|entry| Entry {
+            action: Action::ReplaceQuery(format!("{}{} ", CLAUDE_CODE_PREFIX, entry.path)),
+            ..entry.clone()
+        })
+        .collect();
+    index.claude_code_folders_lower =
+        super::super::search::LowerKeys::build_for(&index.claude_code_folders);
     index
 }

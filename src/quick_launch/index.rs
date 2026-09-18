@@ -77,6 +77,7 @@ impl Index {
         let (terminal_folders, terminal_folders_lower) = terminal_folder_entries(&entries);
         let (editor_folders, editor_folders_lower) =
             editor_folder_entries(&entries, &settings.editor_command);
+        let (claude_code_folders, claude_code_folders_lower) = claude_code_folder_entries(&entries);
 
         Self {
             config_entries,
@@ -99,6 +100,8 @@ impl Index {
             terminal_folders_lower,
             editor_folders,
             editor_folders_lower,
+            claude_code_folders,
+            claude_code_folders_lower,
             search_paths: settings.search_paths,
             web_search: settings
                 .include_web_search
@@ -122,6 +125,7 @@ impl Index {
         let (terminal_folders, terminal_folders_lower) = terminal_folder_entries(&entries);
         let (editor_folders, editor_folders_lower) =
             editor_folder_entries(&entries, &settings.editor_command);
+        let (claude_code_folders, claude_code_folders_lower) = claude_code_folder_entries(&entries);
         self.entries = entries;
         self.entries_lower = entries_lower;
         self.windows = windows;
@@ -130,6 +134,8 @@ impl Index {
         self.terminal_folders_lower = terminal_folders_lower;
         self.editor_folders = editor_folders;
         self.editor_folders_lower = editor_folders_lower;
+        self.claude_code_folders = claude_code_folders;
+        self.claude_code_folders_lower = claude_code_folders_lower;
     }
 
     /// config 由来の候補 (`config_entries`) と、それを含む `entries` /
@@ -346,6 +352,25 @@ fn editor_folder_entries(
         .collect();
     let editor_folders_lower = super::search::LowerKeys::build_for(&editor_folders);
     (editor_folders, editor_folders_lower)
+}
+
+/// `entries` のうちフォルダだけを `cc ` 用の `Action::ReplaceQuery` に
+/// 差し替えた索引を作る (FR-9.15.4)。選択すると検索欄が
+/// `cc <folder> ` へ置き換わり、続けてセッション名を入力させる。
+fn claude_code_folder_entries(entries: &[Entry]) -> (Vec<Entry>, Vec<super::search::LowerKeys>) {
+    let claude_code_folders: Vec<Entry> = entries
+        .iter()
+        .filter(|entry| matches!(entry.action, Action::OpenFolder(_)))
+        .map(|entry| Entry {
+            name: entry.name.clone(),
+            breadcrumb: entry.breadcrumb.clone(),
+            path: entry.path.clone(),
+            action: Action::ReplaceQuery(format!("{}{} ", super::CLAUDE_CODE_PREFIX, entry.path)),
+            branch: entry.branch.clone(),
+        })
+        .collect();
+    let claude_code_folders_lower = super::search::LowerKeys::build_for(&claude_code_folders);
+    (claude_code_folders, claude_code_folders_lower)
 }
 
 /// `inherited_show_branch` は祖先 Submenu の showBranch が真だったか。
