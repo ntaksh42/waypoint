@@ -140,5 +140,15 @@ pub(super) fn index() -> Index {
         .collect();
     index.claude_code_folders_lower =
         super::super::search::LowerKeys::build_for(&index.claude_code_folders);
+    index.codex_folders = index
+        .entries
+        .iter()
+        .filter(|entry| matches!(entry.action, Action::OpenFolder(_)))
+        .map(|entry| Entry {
+            action: Action::OpenCodex,
+            ..entry.clone()
+        })
+        .collect();
+    index.codex_folders_lower = super::super::search::LowerKeys::build_for(&index.codex_folders);
     index
 }

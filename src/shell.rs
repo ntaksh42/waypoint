@@ -215,6 +215,29 @@ pub fn open_claude_code(path: &str, session_name: Option<&str>) -> std::io::Resu
         .map(|_| ())
 }
 
+/// Codex CLI を Windows Terminal で指定フォルダを作業ディレクトリにして起動する
+/// (`cx ` プレフィックス、FR-9.15.5)。Windows Terminal が起動できなければ
+/// Windows PowerShell で同じ作業ディレクトリから起動する。
+pub fn open_codex(path: &str) -> std::io::Result<()> {
+    if !Path::new(path).is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("folder not found: {path}"),
+        ));
+    }
+    if std::process::Command::new("wt.exe")
+        .args(["-d", path, "codex"])
+        .spawn()
+        .is_ok()
+    {
+        return Ok(());
+    }
+    std::process::Command::new("powershell.exe")
+        .args(["-NoExit", "-WorkingDirectory", path, "-Command", "& codex"])
+        .spawn()
+        .map(|_| ())
+}
+
 /// 実行ファイル名から実体のフルパスを解決する。パス区切りを含む指定は
 /// そのまま、名前だけの指定は `PATH` × `PATHEXT` の総当たりで探す。
 ///

@@ -101,6 +101,9 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                     quick_launch::Action::OpenClaudeCode(session_name) => {
                         let _ = shell::open_claude_code(&entry.path, session_name.as_deref());
                     }
+                    quick_launch::Action::OpenCodex => {
+                        let _ = shell::open_codex(&entry.path);
+                    }
                     // ReplaceQuery / AzureLiveWorkItemSearch / AzureLivePullRequestSearch /
                     // AzureLivePipelineSearch はウィンドウを閉じずに Quick Launch
                     // 側で完結する (queue_selected 参照)。ここへは実行対象として来ない

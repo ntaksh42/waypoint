@@ -14,6 +14,7 @@ fn prefix_badge_identifies_each_mode() {
     assert_eq!(prefix_badge("ps waypoint"), Some("TERMINAL"));
     assert_eq!(prefix_badge("ed waypoint"), Some("EDITOR"));
     assert_eq!(prefix_badge("cc E:\\waypoint review"), Some("CLAUDE CODE"));
+    assert_eq!(prefix_badge("cx waypoint"), Some("CODEX"));
     assert_eq!(prefix_badge("f cargo.toml"), Some("FILES"));
     assert_eq!(prefix_badge("k waypoint"), Some("KILL"));
     // `??` だけ末尾スペースを含まない (FR-9.21)
@@ -110,6 +111,7 @@ fn settings_command_does_not_leak_into_prefix_modes() {
         "a settings",
         "ps settings",
         "ed settings",
+        "cx settings",
     ] {
         assert!(
             !index

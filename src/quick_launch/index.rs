@@ -78,6 +78,7 @@ impl Index {
         let (editor_folders, editor_folders_lower) =
             editor_folder_entries(&entries, &settings.editor_command);
         let (claude_code_folders, claude_code_folders_lower) = claude_code_folder_entries(&entries);
+        let (codex_folders, codex_folders_lower) = codex_folder_entries(&entries);
 
         Self {
             config_entries,
@@ -102,6 +103,8 @@ impl Index {
             editor_folders_lower,
             claude_code_folders,
             claude_code_folders_lower,
+            codex_folders,
+            codex_folders_lower,
             search_paths: settings.search_paths,
             web_search: settings
                 .include_web_search
@@ -126,6 +129,7 @@ impl Index {
         let (editor_folders, editor_folders_lower) =
             editor_folder_entries(&entries, &settings.editor_command);
         let (claude_code_folders, claude_code_folders_lower) = claude_code_folder_entries(&entries);
+        let (codex_folders, codex_folders_lower) = codex_folder_entries(&entries);
         self.entries = entries;
         self.entries_lower = entries_lower;
         self.windows = windows;
@@ -136,6 +140,8 @@ impl Index {
         self.editor_folders_lower = editor_folders_lower;
         self.claude_code_folders = claude_code_folders;
         self.claude_code_folders_lower = claude_code_folders_lower;
+        self.codex_folders = codex_folders;
+        self.codex_folders_lower = codex_folders_lower;
     }
 
     /// config 由来の候補 (`config_entries`) と、それを含む `entries` /
@@ -371,6 +377,22 @@ fn claude_code_folder_entries(entries: &[Entry]) -> (Vec<Entry>, Vec<super::sear
         .collect();
     let claude_code_folders_lower = super::search::LowerKeys::build_for(&claude_code_folders);
     (claude_code_folders, claude_code_folders_lower)
+}
+
+/// `entries` のうちフォルダだけを `Action::OpenCodex` に差し替えた索引を作る
+/// (FR-9.15.5)。Codex CLI には表示名の指定が無いため、`cc ` と違って
+/// 検索欄の補完を挟まず、選択で即起動する。
+fn codex_folder_entries(entries: &[Entry]) -> (Vec<Entry>, Vec<super::search::LowerKeys>) {
+    let codex_folders: Vec<Entry> = entries
+        .iter()
+        .filter(|entry| matches!(entry.action, Action::OpenFolder(_)))
+        .map(|entry| Entry {
+            action: Action::OpenCodex,
+            ..entry.clone()
+        })
+        .collect();
+    let codex_folders_lower = super::search::LowerKeys::build_for(&codex_folders);
+    (codex_folders, codex_folders_lower)
 }
 
 /// `inherited_show_branch` は祖先 Submenu の showBranch が真だったか。

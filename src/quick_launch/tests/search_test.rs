@@ -105,6 +105,18 @@ fn terminal_prefix_switches_to_folder_only_search_with_terminal_action() {
     assert_eq!(found[0].path, r"E:\waypoint\docs");
 }
 
+/// FR-9.15.5: `cx ` はフォルダ候補だけに絞り込み、選択時のアクションを
+/// `OpenCodex` に差し替える。`cc ` と違い検索欄の補完は挟まない。
+#[test]
+fn codex_prefix_switches_to_folder_only_search_with_codex_action() {
+    let index = index();
+    let found = index.search("cx waypoint docs");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].action, Action::OpenCodex);
+    assert_eq!(found[0].path, r"E:\waypoint\docs");
+    assert!(index.search("cx github").is_empty());
+}
+
 /// `ps ` はブックマークやウィンドウなど、フォルダ以外の候補を含まない。
 #[test]
 fn terminal_prefix_excludes_non_folder_candidates() {

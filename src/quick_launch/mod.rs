@@ -54,6 +54,9 @@ const TERMINAL_PREFIX: &str = "ps ";
 const EDITOR_PREFIX: &str = "ed ";
 /// Claude Code を表示名付きで起動するコマンドのプレフィックス。
 pub const CLAUDE_CODE_PREFIX: &str = "cc ";
+/// フォルダを作業ディレクトリにして Codex CLI を起動する検索モードのプレフィックス
+/// (末尾の半角スペース込み、FR-9.15.5)。
+const CODEX_PREFIX: &str = "cx ";
 /// プロセス Kill 検索モードに入るプレフィックス (末尾の半角スペース込み、FR-9.15.2)。
 pub const KILL_PROCESS_PREFIX: &str = "k ";
 /// Web 検索モードに入るプレフィックス (FR-9.21)。
@@ -84,6 +87,8 @@ pub fn prefix_badge(query: &str) -> Option<&'static str> {
         Some("EDITOR")
     } else if query.starts_with(CLAUDE_CODE_PREFIX) {
         Some("CLAUDE CODE")
+    } else if query.starts_with(CODEX_PREFIX) {
+        Some("CODEX")
     } else if query.starts_with(EVERYTHING_PREFIX) {
         Some("FILES")
     } else if query.starts_with(KILL_PROCESS_PREFIX) {
@@ -109,6 +114,7 @@ pub fn effective_search_term(query: &str) -> &str {
         TERMINAL_PREFIX,
         EDITOR_PREFIX,
         CLAUDE_CODE_PREFIX,
+        CODEX_PREFIX,
         KILL_PROCESS_PREFIX,
     ] {
         if let Some(rest) = query.strip_prefix(prefix) {
@@ -203,6 +209,8 @@ pub enum Action {
     OpenInEditor(String),
     /// Claude Code を指定フォルダと表示名で起動する (`cc ` コマンド)。
     OpenClaudeCode(Option<String>),
+    /// Codex CLI を指定フォルダで起動する (`cx ` プレフィックス、FR-9.15.5)。
+    OpenCodex,
     /// 検索欄へコマンドを補完する。候補の選択時に外部操作は行わない。
     ReplaceQuery(String),
     /// `az wit` のローカルキャッシュ検索で見つからなかったとき、明示的な
@@ -283,6 +291,7 @@ impl Entry {
             | Action::OpenInTerminal
             | Action::OpenInEditor(_)
             | Action::OpenClaudeCode(_)
+            | Action::OpenCodex
             | Action::ReplaceQuery(_)
             | Action::AzureLiveWorkItemSearch(_)
             | Action::AzureLivePullRequestSearch { .. }
@@ -330,6 +339,9 @@ pub struct Index {
     /// (FR-9.15.4)。選択するとセッション名の入力へ進めるよう検索欄を補完する。
     pub(crate) claude_code_folders: Vec<Entry>,
     pub(crate) claude_code_folders_lower: Vec<search::LowerKeys>,
+    /// `entries` のフォルダを `OpenCodex` へ差し替えた索引 (`cx `、FR-9.15.5)。
+    pub(crate) codex_folders: Vec<Entry>,
+    pub(crate) codex_folders_lower: Vec<search::LowerKeys>,
     pub(crate) search_paths: bool,
     /// Web 検索 (`??`、FR-9.21) で使うエンジン。無効化時は `None`。
     /// 候補は入力から組み立てる 1 件だけなので、索引は持たない

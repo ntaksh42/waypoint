@@ -59,7 +59,7 @@ fn key_kind(action: &Action) -> Option<&'static str> {
         Action::LaunchApp => Some("app"),
         Action::OpenInTerminal => Some("terminal"),
         Action::OpenInEditor(_) => Some("editor"),
-        Action::OpenClaudeCode(_) => None,
+        Action::OpenClaudeCode(_) | Action::OpenCodex => None,
         Action::FocusWindow(_)
         | Action::FocusBrowserTab(_)
         | Action::ReplaceQuery(_)
