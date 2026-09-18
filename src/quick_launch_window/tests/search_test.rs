@@ -1,6 +1,7 @@
 use super::super::azure_live::{
     accepts_azure_work_item_reply, invalidate_azure_live_searches, start_azure_work_item_query,
 };
+use super::super::outlook::{accepts_outlook_reply, next_outlook_reply_id};
 use super::super::search::{
     accepts_everything_reply, build_rows, next_everything_reply_id, refinable_search_term,
 };
@@ -27,6 +28,16 @@ fn stale_everything_reply_is_rejected_after_a_new_query() {
     assert!(!accepts_everything_reply(true, second, first));
     assert!(accepts_everything_reply(true, second, second));
     assert!(!accepts_everything_reply(false, second, second));
+}
+
+#[test]
+fn stale_outlook_reply_is_rejected_after_a_new_query() {
+    let first = next_outlook_reply_id(0);
+    let second = next_outlook_reply_id(first);
+
+    assert!(!accepts_outlook_reply(true, second, first));
+    assert!(accepts_outlook_reply(true, second, second));
+    assert!(!accepts_outlook_reply(false, second, second));
 }
 
 #[test]

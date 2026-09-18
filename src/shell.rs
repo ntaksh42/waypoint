@@ -164,6 +164,35 @@ pub fn open_editor(command: &str, path: &str) -> std::io::Result<()> {
         .map(|_| ())
 }
 
+/// Claude Code を Windows Terminal で指定フォルダ・表示名付きで起動する。
+pub fn open_claude_code(path: &str, session_name: &str) -> std::io::Result<()> {
+    if !Path::new(path).is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("folder not found: {path}"),
+        ));
+    }
+    if std::process::Command::new("wt.exe")
+        .args(["-d", path, "claude", "--name", session_name])
+        .spawn()
+        .is_ok()
+    {
+        return Ok(());
+    }
+
+    let escaped_name = session_name.replace('\'', "''");
+    std::process::Command::new("powershell.exe")
+        .args([
+            "-NoExit",
+            "-WorkingDirectory",
+            path,
+            "-Command",
+            &format!("& claude --name '{escaped_name}'"),
+        ])
+        .spawn()
+        .map(|_| ())
+}
+
 /// PowerShell 7 (`pwsh.exe`) のフルパスを探す。既定のインストール先を先に見て、
 /// 無ければ `PATH` から探す (winget/MSI どちらでインストールしても既定は前者)。
 fn find_pwsh() -> Option<PathBuf> {

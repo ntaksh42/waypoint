@@ -87,6 +87,12 @@ pub(in crate::quick_launch_window) struct State {
     /// (`everything::MATCH_CASE` 等の OR 合成)。モードを抜けても値は保持し、
     /// 次に `f ` へ入ったときも同じ絞り込みを引き継ぐ。
     pub(in crate::quick_launch_window) everything_flags: u32,
+    /// `o ` プレフィックスの間だけ立てる。入力変更後に古い CLI 応答を
+    /// 反映させないためのガード。
+    pub(in crate::quick_launch_window) outlook_active: bool,
+    pub(in crate::quick_launch_window) outlook_reply_id: u32,
+    /// 250ms のデバウンス完了時に CLI へ渡す検索語。
+    pub(in crate::quick_launch_window) outlook_query: String,
     /// `az wit ` 中だけ立てる。古い検索スレッドの結果を捨てるために使う。
     pub(in crate::quick_launch_window) azure_work_items_active: bool,
     pub(in crate::quick_launch_window) azure_work_item_reply_id: u32,

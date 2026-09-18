@@ -44,6 +44,8 @@ const WINDOW_PREFIX: &str = "w ";
 /// と違って `Index::search` の同期モデルには乗らない。判定だけここに置き、
 /// クエリの発行と結果の保持は `quick_launch_window.rs` 側が持つ。
 pub const EVERYTHING_PREFIX: &str = "f ";
+/// Outlook メール検索モードに入るプレフィックス (末尾の半角スペース込み)。
+pub const OUTLOOK_PREFIX: &str = "o ";
 /// アプリ検索モードに入るプレフィックス (末尾の半角スペース込み)。
 const APPS_PREFIX: &str = "a ";
 /// 現在開いているブラウザタブを検索するプレフィックス (末尾の半角スペース込み)。
@@ -52,6 +54,8 @@ const TABS_PREFIX: &str = "t ";
 const TERMINAL_PREFIX: &str = "ps ";
 /// フォルダを設定済みエディターで開く検索モードに入るプレフィックス (末尾の半角スペース込み)。
 const EDITOR_PREFIX: &str = "ed ";
+/// Claude Code を表示名付きで起動するコマンドのプレフィックス。
+pub const CLAUDE_CODE_PREFIX: &str = "cc ";
 /// プロセス Kill 検索モードに入るプレフィックス (末尾の半角スペース込み、FR-9.15.2)。
 pub const KILL_PROCESS_PREFIX: &str = "k ";
 /// Web 検索モードに入るプレフィックス (FR-9.21)。
@@ -80,8 +84,12 @@ pub fn prefix_badge(query: &str) -> Option<&'static str> {
         Some("TERMINAL")
     } else if query.starts_with(EDITOR_PREFIX) {
         Some("EDITOR")
+    } else if query.starts_with(CLAUDE_CODE_PREFIX) {
+        Some("CLAUDE CODE")
     } else if query.starts_with(EVERYTHING_PREFIX) {
         Some("FILES")
+    } else if query.starts_with(OUTLOOK_PREFIX) {
+        Some("OUTLOOK")
     } else if query.starts_with(KILL_PROCESS_PREFIX) {
         Some("KILL")
     } else if query.starts_with(WEB_SEARCH_PREFIX) {
@@ -104,7 +112,9 @@ pub fn effective_search_term(query: &str) -> &str {
         TABS_PREFIX,
         TERMINAL_PREFIX,
         EDITOR_PREFIX,
+        CLAUDE_CODE_PREFIX,
         KILL_PROCESS_PREFIX,
+        OUTLOOK_PREFIX,
     ] {
         if let Some(rest) = query.strip_prefix(prefix) {
             return rest;
@@ -148,6 +158,27 @@ pub(crate) fn builtin_command_entries() -> (&'static [Entry], &'static [search::
     (&ENTRIES, &LOWER)
 }
 
+/// `cc <folder> "<sessionname>"` を Claude Code 起動候補へ変換する。
+///
+/// フォルダ部分を引用しなくても空白を含められるよう、最後の ` "` を区切りとする。
+/// パスの存在確認は起動時まで遅延し、入力経路では文字列の切り分けだけに留める。
+pub(crate) fn claude_code_entry(query: &str) -> Option<Entry> {
+    let rest = query.strip_prefix(CLAUDE_CODE_PREFIX)?;
+    let (folder, session_name) = rest.rsplit_once(" \"")?;
+    let folder = folder.trim();
+    let session_name = session_name.strip_suffix('"')?;
+    if folder.is_empty() || session_name.is_empty() || session_name.contains('"') {
+        return None;
+    }
+    Some(Entry {
+        name: format!("Claude Code — {session_name}"),
+        breadcrumb: format!("Start in {folder}"),
+        path: folder.to_string(),
+        action: Action::OpenClaudeCode(session_name.to_string()),
+        branch: None,
+    })
+}
+
 /// 検索結果を選んだときに行うアクション。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -169,6 +200,8 @@ pub enum Action {
     OpenInTerminal,
     /// フォルダを設定済みエディターで開く (`ed ` プレフィックス)。
     OpenInEditor(String),
+    /// Claude Code を指定フォルダと表示名で起動する (`cc ` コマンド)。
+    OpenClaudeCode(String),
     /// 検索欄へコマンドを補完する。候補の選択時に外部操作は行わない。
     ReplaceQuery(String),
     /// `az wit` のローカルキャッシュ検索で見つからなかったとき、明示的な
@@ -248,6 +281,7 @@ impl Entry {
             | Action::OpenUrl(_)
             | Action::OpenInTerminal
             | Action::OpenInEditor(_)
+            | Action::OpenClaudeCode(_)
             | Action::ReplaceQuery(_)
             | Action::AzureLiveWorkItemSearch(_)
             | Action::AzureLivePullRequestSearch { .. }

@@ -13,7 +13,12 @@ fn prefix_badge_identifies_each_mode() {
     assert_eq!(prefix_badge("t waypoint"), Some("TABS"));
     assert_eq!(prefix_badge("ps waypoint"), Some("TERMINAL"));
     assert_eq!(prefix_badge("ed waypoint"), Some("EDITOR"));
+    assert_eq!(
+        prefix_badge("cc E:\\waypoint \"review\""),
+        Some("CLAUDE CODE")
+    );
     assert_eq!(prefix_badge("f cargo.toml"), Some("FILES"));
+    assert_eq!(prefix_badge("o roadmap"), Some("OUTLOOK"));
     assert_eq!(prefix_badge("k waypoint"), Some("KILL"));
     // `??` だけ末尾スペースを含まない (FR-9.21)
     assert_eq!(prefix_badge("?? rust lifetime"), Some("WEB"));
@@ -28,6 +33,35 @@ fn web_search_term_ignores_space_after_marks() {
     assert_eq!(effective_search_term("?? rust lifetime"), "rust lifetime");
     assert_eq!(effective_search_term("??rust lifetime"), "rust lifetime");
     assert_eq!(effective_search_term("??"), "");
+}
+
+#[test]
+fn claude_code_command_builds_a_single_candidate() {
+    let entry = claude_code_entry("cc E:\\work folder \"review 42\"").expect("candidate missing");
+    assert_eq!(entry.name, "Claude Code — review 42");
+    assert_eq!(entry.breadcrumb, "Start in E:\\work folder");
+    assert_eq!(entry.path, "E:\\work folder");
+    assert_eq!(entry.action, Action::OpenClaudeCode("review 42".into()));
+}
+
+#[test]
+fn claude_code_command_rejects_incomplete_or_invalid_input() {
+    for query in [
+        "cc ",
+        "cc E:\\work",
+        "cc E:\\work \"\"",
+        "cc E:\\work \"bad\"name\"",
+    ] {
+        assert!(
+            claude_code_entry(query).is_none(),
+            "{query} should be rejected"
+        );
+    }
+}
+
+#[test]
+fn outlook_prefix_removes_the_mode_marker_from_highlighting() {
+    assert_eq!(effective_search_term("o roadmap"), "roadmap");
 }
 
 #[test]

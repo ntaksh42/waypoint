@@ -182,7 +182,8 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
                 | Action::OpenWithDefaultHandler
                 | Action::LaunchApp
                 | Action::OpenInTerminal
-                | Action::OpenInEditor(_) => {
+                | Action::OpenInEditor(_)
+                | Action::OpenClaudeCode(_) => {
                     draw_path_icon(draw.hDC, &entry.path, draw.rcItem, dpi)
                 }
                 Action::FocusWindow(hwnd) => {

@@ -9,6 +9,7 @@ mod draw_row;
 mod highlight;
 mod input;
 mod layout;
+mod outlook;
 mod search;
 mod state;
 #[cfg(test)]
@@ -56,6 +57,8 @@ pub const WM_QUICK_LAUNCH_EXECUTE: u32 = WM_APP + 4;
 pub const WM_QUICK_LAUNCH_ADD_TO_FAVORITES: u32 = WM_APP + 6;
 /// Azure DevOps の Work Item 検索スレッドが結果を返す通知。
 pub const WM_QUICK_LAUNCH_AZURE_RESULTS: u32 = WM_APP + 7;
+/// Outlook 検索ワーカーが CLI の応答を返す通知。
+pub const WM_QUICK_LAUNCH_OUTLOOK_RESULTS: u32 = WM_APP + 8;
 
 pub fn configure(config: &Config, dynamic: &Menus) {
     STATE.with(|state| {

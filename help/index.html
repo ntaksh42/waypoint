@@ -113,6 +113,7 @@ const DATA = [
       { title: "開いているブラウザタブ", prefix: "t ", keys: "", desc: "Chrome / Edge 拡張 (Native Messaging) 経由で現在開いているタブを検索し、選択すると前面化する。" },
       { title: "ターミナルでフォルダを開く", prefix: "ps ", keys: "", desc: "フォルダ候補 (config 登録 + Recent/Frequent) だけを検索し、選択すると Windows Terminal + PowerShell 7 でそのフォルダを開く (wt.exe -d <path> pwsh)。" },
       { title: "エディターでフォルダを開く", prefix: "ed ", keys: "", desc: "フォルダ候補 (config 登録 + Recent/Frequent) だけを検索し、選択すると設定済みエディターで開く。既定は VS Code の code コマンド。" },
+      { title: "Claude Code を起動", prefix: "cc ", keys: "", desc: "cc <folder> \"<sessionname>\" を入力すると、指定フォルダで Claude Code をその表示名付きで起動する。フォルダには空白を含められる。" },
       { title: "プロセス Kill", prefix: "k ", keys: "", desc: "実行中プロセスを名前で検索し、選択すると確認なしで即座に終了する (TerminateProcess)。waypoint 自身は候補から除外される。" },
       { title: "Everything 全文検索", prefix: "f ", keys: "", desc: "常駐中の Everything (voidtools) へ IPC で問い合わせて PC 全体のファイル名を検索する。設定で既定オフ。" },
       { title: "Azure DevOps 検索", prefix: "az ", keys: "", desc: "設定したプロジェクトの PR / Pipeline / Work Item を検索する (az pr / az wit / az pipeline / az project / az optimize)。" },
