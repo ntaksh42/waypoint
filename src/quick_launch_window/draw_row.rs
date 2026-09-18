@@ -186,6 +186,13 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
                 | Action::OpenClaudeCode(_) => {
                     draw_path_icon(draw.hDC, &entry.path, draw.rcItem, dpi)
                 }
+                // `cc ` のフォルダ候補 (`claude_code_folder_entries`) は検索欄を
+                // 補完する `ReplaceQuery` だが、実体はフォルダなので他の
+                // フォルダ候補と同じアイコンにする。`az` のサブコマンド補完など
+                // path を持たない `ReplaceQuery` は下のコマンドアイコンへ回す。
+                Action::ReplaceQuery(_) if !entry.path.is_empty() => {
+                    draw_path_icon(draw.hDC, &entry.path, draw.rcItem, dpi)
+                }
                 Action::FocusWindow(hwnd) => {
                     draw_window_icon(draw.hDC, HWND(hwnd as *mut _), draw.rcItem, dpi)
                 }
