@@ -1,12 +1,13 @@
 //! フォルダを開く。新規ウィンドウと、既存ウィンドウのフォルダ変更の 2 通り。
 
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 
 use windows::Win32::Foundation::{ERROR_CANCELLED, HWND};
 use windows::Win32::System::Com::{
     CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
 };
-use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+use windows::Win32::System::Threading::{AttachThreadInput, CREATE_NO_WINDOW, GetCurrentThreadId};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Shell::{IShellWindows, IWebBrowser2, ShellExecuteW, ShellWindows};
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
@@ -158,10 +159,87 @@ pub fn open_editor(command: &str, path: &str) -> std::io::Result<()> {
             format!("folder not found: {path}"),
         ));
     }
-    std::process::Command::new(command)
+    let program = find_executable(command).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("editor not found: {command}"),
+        )
+    })?;
+
+    // `.cmd` / `.bat` は CreateProcessW が直接起動できないので cmd.exe を挟む。
+    // VS Code が PATH へ置くのは `code.cmd` なので、既定値がこちらに来る。
+    // CREATE_NO_WINDOW を付けないとコンソールが一瞬開いて閉じる
+    if is_batch_script(&program) {
+        return std::process::Command::new("cmd.exe")
+            .arg("/c")
+            .arg(&program)
+            .arg(path)
+            .creation_flags(CREATE_NO_WINDOW.0)
+            .spawn()
+            .map(|_| ());
+    }
+    std::process::Command::new(&program)
         .arg(path)
         .spawn()
         .map(|_| ())
+}
+
+/// 実行ファイル名から実体のフルパスを解決する。パス区切りを含む指定は
+/// そのまま、名前だけの指定は `PATH` × `PATHEXT` の総当たりで探す。
+///
+/// `std::process::Command` の実行ファイル探索は `CreateProcessW` 任せで、
+/// `PATHEXT` を見ない。VS Code が PATH へ置くのは `code.cmd` だけなので、
+/// 既定の `code` が「program not found」で黙って落ちていた。
+fn find_executable(command: &str) -> Option<PathBuf> {
+    let paths = std::env::var_os("PATH").unwrap_or_default();
+    find_executable_in(command, std::env::split_paths(&paths))
+}
+
+/// `find_executable` の探索本体。テストから `PATH` を差し替えずに叩けるよう、
+/// 探索対象のディレクトリを引数で受ける。
+fn find_executable_in(
+    command: &str,
+    search_dirs: impl Iterator<Item = PathBuf>,
+) -> Option<PathBuf> {
+    let as_path = Path::new(command);
+    if as_path.components().count() > 1 {
+        return with_extensions(as_path).find(|candidate| candidate.is_file());
+    }
+
+    search_dirs
+        .flat_map(|dir| with_extensions(&dir.join(command)).collect::<Vec<_>>())
+        .find(|candidate| candidate.is_file())
+}
+
+/// `PATHEXT` の各拡張子を付けた候補を返す。`base` が既に拡張子を持つ場合は
+/// それ自体も先頭の候補にする。
+///
+/// 拡張子の無い `base` 自体は候補にしない。VS Code の bin には Windows では
+/// 起動できない拡張子なしの `code` (sh スクリプト) が `code.cmd` と並んで
+/// 置かれており、先に拾うと有効な Win32 アプリケーションでないと言われる。
+fn with_extensions(base: &Path) -> impl Iterator<Item = PathBuf> + use<> {
+    let explicit = base
+        .extension()
+        .is_some()
+        .then(|| base.to_path_buf())
+        .into_iter();
+    let pathext = std::env::var("PATHEXT")
+        .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string())
+        .split(';')
+        .filter(|ext| !ext.is_empty())
+        .map(|ext| {
+            let mut with_ext = base.as_os_str().to_os_string();
+            with_ext.push(ext);
+            PathBuf::from(with_ext)
+        })
+        .collect::<Vec<_>>();
+    explicit.chain(pathext)
+}
+
+/// 拡張子が `.cmd` / `.bat` か。`CreateProcessW` が直接起動できない形式。
+fn is_batch_script(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
 }
 
 /// PowerShell 7 (`pwsh.exe`) のフルパスを探す。既定のインストール先を先に見て、
@@ -290,5 +368,72 @@ fn navigate_existing(origin: HWND, path: &str) -> windows::core::Result<()> {
         }
 
         Err(windows::core::Error::empty())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// VS Code が PATH へ置くのは `code.cmd` だけ (拡張子なしの `code` は
+    /// sh スクリプト)。`Command::new("code")` は CreateProcessW が PATHEXT を
+    /// 見ないため「program not found」で黙って落ちていた
+    #[test]
+    fn find_executable_resolves_cmd_from_path() {
+        let dir = std::env::temp_dir().join("waypoint_find_executable_cmd");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // 拡張子なしのスクリプトも一緒に置き、`.cmd` が選ばれることを見る
+        std::fs::write(dir.join("dummyeditor"), "#!/bin/sh\n").unwrap();
+        std::fs::write(dir.join("dummyeditor.cmd"), "@echo off\n").unwrap();
+
+        let found = find_executable_in("dummyeditor", std::iter::once(dir.clone()));
+
+        // 付ける拡張子は PATHEXT の綴り (既定は大文字) をそのまま使う
+        assert!(
+            found.as_ref().is_some_and(|found| found
+                .as_os_str()
+                .eq_ignore_ascii_case(dir.join("dummyeditor.cmd").as_os_str())),
+            "unexpected: {found:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_executable_accepts_absolute_path() {
+        let dir = std::env::temp_dir().join("waypoint_find_executable_abs");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("someeditor.exe");
+        std::fs::write(&exe, "").unwrap();
+
+        assert_eq!(find_executable(exe.to_str().unwrap()), Some(exe.clone()));
+        // 拡張子を省いた絶対パスも PATHEXT で補える (綴りは PATHEXT のまま)
+        let completed = find_executable(dir.join("someeditor").to_str().unwrap());
+        assert!(
+            completed
+                .as_ref()
+                .is_some_and(|found| found.as_os_str().eq_ignore_ascii_case(exe.as_os_str())),
+            "unexpected: {completed:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_executable_returns_none_when_missing() {
+        assert!(
+            find_executable_in(
+                "waypoint_no_such_editor_xyz",
+                std::iter::once(std::env::temp_dir())
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn batch_scripts_are_detected_case_insensitively() {
+        assert!(is_batch_script(Path::new(r"C:\bin\code.CMD")));
+        assert!(is_batch_script(Path::new(r"C:\bin\run.bat")));
+        assert!(!is_batch_script(Path::new(r"C:\bin\idea64.exe")));
     }
 }
