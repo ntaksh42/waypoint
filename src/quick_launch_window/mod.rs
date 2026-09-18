@@ -285,7 +285,14 @@ pub fn handle_message(message: &windows::Win32::UI::WindowsAndMessaging::MSG) ->
         return false;
     }
     match message.wParam.0 as u32 {
-        0x1b => hide_window(STATE.with(|state| state.borrow().window)), // Esc
+        // Esc
+        0x1b => {
+            let (window, owner) = STATE.with(|state| {
+                let state = state.borrow();
+                (state.window, state.owner)
+            });
+            hide_window(window, owner);
+        }
         0x26 => move_selection(-1),
         0x28 => move_selection(1),
         // 見出し行 (区分見出し) は選択対象外。results.len() を直接使うと
