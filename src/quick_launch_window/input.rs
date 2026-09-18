@@ -219,13 +219,7 @@ pub(super) fn queue_selected() {
             );
         },
         Some(Selected::Execute(window, owner)) => {
-            hide_window(window);
-            if let Some(owner) = owner {
-                unsafe {
-                    let _ =
-                        PostMessageW(Some(owner), WM_QUICK_LAUNCH_EXECUTE, WPARAM(0), LPARAM(0));
-                }
-            }
+            hide_window(window, owner);
         }
         Some(Selected::LiveWorkItemSearch(query)) => {
             STATE.with(|state| super::azure_live::start_azure_work_item_live_search(state, &query));
@@ -333,15 +327,29 @@ pub(super) fn reveal_selected_in_explorer() {
     if entry.path.is_empty() {
         return;
     }
-    let window = STATE.with(|state| state.borrow().window);
-    hide_window(window);
+    let (window, owner) = STATE.with(|state| {
+        let state = state.borrow();
+        (state.window, state.owner)
+    });
+    hide_window(window, owner);
     let _ = crate::shell::reveal_in_explorer(&entry.path);
 }
 
-pub(super) fn hide_window(window: Option<HWND>) {
+/// ウィンドウを閉じ、`owner` (常駐部) へ `WM_QUICK_LAUNCH_EXECUTE` を通知する。
+///
+/// 実行 (Enter) 以外の経路 (Esc・フォーカス喪失・×ボタン) でも同じ通知を
+/// 送ることで、`refresh_dynamic` (Recent/Frequent Folders・開いている
+/// ウィンドウの再列挙) を必ず走らせる。`take_pending()` は実行時にしか
+/// `pending` が立たないため、キャンセル経路では何も実行せず素通りする。
+pub(super) fn hide_window(window: Option<HWND>, owner: Option<HWND>) {
     if let Some(window) = window {
         unsafe {
             let _ = ShowWindow(window, SW_HIDE);
+        }
+    }
+    if let Some(owner) = owner {
+        unsafe {
+            let _ = PostMessageW(Some(owner), WM_QUICK_LAUNCH_EXECUTE, WPARAM(0), LPARAM(0));
         }
     }
 }

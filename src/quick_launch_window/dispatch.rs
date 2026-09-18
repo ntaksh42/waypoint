@@ -128,11 +128,13 @@ pub(super) fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM)
             LRESULT(0)
         }
         WM_ACTIVATE if (wparam.0 & 0xffff) == 0 => {
-            hide_window(Some(hwnd));
+            let owner = STATE.with(|state| state.borrow().owner);
+            hide_window(Some(hwnd), owner);
             LRESULT(0)
         }
         WM_CLOSE => {
-            hide_window(Some(hwnd));
+            let owner = STATE.with(|state| state.borrow().owner);
+            hide_window(Some(hwnd), owner);
             LRESULT(0)
         }
         WM_QUICK_LAUNCH_AZURE_RESULTS => {
