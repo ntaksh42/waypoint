@@ -221,10 +221,8 @@ pub fn open_claude_code(path: &str, session_name: Option<&str>) -> std::io::Resu
 /// PowerShell 7 が見つからなければ Windows 標準の `powershell.exe` (5.1) に
 /// フォールバックする。
 ///
-/// npm 経由の `codex` は実体が `codex.cmd`/`codex.ps1` で、裸の `codex` を
-/// `-Command` に渡すと `PATH` 解決の文脈違いで `ERROR_FILE_NOT_FOUND` になる
-/// ことを実機で確認済みなので、`find_executable` で実体を解決してから
-/// `&` 呼び出し演算子で実行する。
+/// Codex statusline が配置済みなら、そのラッパーが Windows Terminal と
+/// ステータス表示ペインをまとめて開く。未配置時は従来の Codex CLI を起動する。
 pub fn open_codex(path: &str) -> std::io::Result<()> {
     if !Path::new(path).is_dir() {
         return Err(std::io::Error::new(
@@ -232,6 +230,26 @@ pub fn open_codex(path: &str) -> std::io::Result<()> {
             format!("folder not found: {path}"),
         ));
     }
+
+    if let Some(wrapper) = std::env::var_os("LOCALAPPDATA")
+        .map(|dir| {
+            PathBuf::from(dir)
+                .join("CodexStatusline")
+                .join("codex-wt.ps1")
+        })
+        .filter(|wrapper| wrapper.is_file())
+        && let Some(pwsh) = find_pwsh()
+        && std::process::Command::new(pwsh)
+            .args(["-NoProfile", "-File"])
+            .arg(wrapper)
+            .current_dir(path)
+            .creation_flags(CREATE_NO_WINDOW.0)
+            .spawn()
+            .is_ok()
+    {
+        return Ok(());
+    }
+
     let codex = find_executable("codex")
         .map(|program| program.display().to_string())
         .unwrap_or_else(|| "codex".to_string());
