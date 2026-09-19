@@ -184,8 +184,9 @@ pub fn open_editor(command: &str, path: &str) -> std::io::Result<()> {
         .map(|_| ())
 }
 
-/// Claude Code を Windows Terminal で指定フォルダ・表示名付きで起動する。
-/// `session_name` は省略でき、その場合は表示名を付けずに起動する。
+/// Claude Code を Windows Terminal + PowerShell 7 で指定フォルダ・表示名付きで起動する。
+/// `session_name` は省略でき、その場合は表示名を付けずに起動する。PowerShell 7 が
+/// 見つからない場合は Windows 標準の `powershell.exe` (5.1) にフォールバックする。
 pub fn open_claude_code(path: &str, session_name: Option<&str>) -> std::io::Result<()> {
     if !Path::new(path).is_dir() {
         return Err(std::io::Error::new(
@@ -193,22 +194,22 @@ pub fn open_claude_code(path: &str, session_name: Option<&str>) -> std::io::Resu
             format!("folder not found: {path}"),
         ));
     }
-    let mut wt_args = vec!["-d", path, "claude"];
-    if let Some(session_name) = session_name {
-        wt_args.extend(["--name", session_name]);
-    }
-    if std::process::Command::new("wt.exe")
-        .args(&wt_args)
-        .spawn()
-        .is_ok()
-    {
-        return Ok(());
-    }
-
     let command = match session_name {
         Some(session_name) => format!("& claude --name '{}'", session_name.replace('\'', "''")),
         None => "& claude".to_string(),
     };
+
+    if let Some(pwsh) = find_pwsh()
+        && std::process::Command::new("wt.exe")
+            .args(["-d", path])
+            .arg(&pwsh)
+            .args(["-NoExit", "-Command", &command])
+            .spawn()
+            .is_ok()
+    {
+        return Ok(());
+    }
+
     std::process::Command::new("powershell.exe")
         .args(["-NoExit", "-WorkingDirectory", path, "-Command", &command])
         .spawn()
