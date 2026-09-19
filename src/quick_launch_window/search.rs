@@ -374,6 +374,8 @@ fn local_search_scope(query: &str) -> Option<(&'static str, &str)> {
         Some(("terminal", term))
     } else if let Some(term) = query.strip_prefix("ed ") {
         Some(("editor", term))
+    } else if let Some(term) = query.strip_prefix(crate::quick_launch::CODEX_PREFIX) {
+        Some(("codex", term))
     } else {
         Some(("normal", query))
     }

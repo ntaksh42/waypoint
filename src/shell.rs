@@ -215,9 +215,16 @@ pub fn open_claude_code(path: &str, session_name: Option<&str>) -> std::io::Resu
         .map(|_| ())
 }
 
-/// Codex CLI を Windows Terminal で指定フォルダを作業ディレクトリにして起動する
-/// (`cx ` プレフィックス、FR-9.15.5)。Windows Terminal が起動できなければ
-/// Windows PowerShell で同じ作業ディレクトリから起動する。
+/// Codex CLI を Windows Terminal + PowerShell 7 で指定フォルダを作業ディレクトリ
+/// にして起動する (`cx ` プレフィックス、FR-9.15.5)。`open_terminal` と同じ理由
+/// (`wt.exe` の PATH 解決文脈の違い) で `pwsh.exe` のフルパスを自前で解決し、
+/// PowerShell 7 が見つからなければ Windows 標準の `powershell.exe` (5.1) に
+/// フォールバックする。
+///
+/// npm 経由の `codex` は実体が `codex.cmd`/`codex.ps1` で、裸の `codex` を
+/// `-Command` に渡すと `PATH` 解決の文脈違いで `ERROR_FILE_NOT_FOUND` になる
+/// ことを実機で確認済みなので、`find_executable` で実体を解決してから
+/// `&` 呼び出し演算子で実行する。
 pub fn open_codex(path: &str) -> std::io::Result<()> {
     if !Path::new(path).is_dir() {
         return Err(std::io::Error::new(
@@ -225,15 +232,24 @@ pub fn open_codex(path: &str) -> std::io::Result<()> {
             format!("folder not found: {path}"),
         ));
     }
-    if std::process::Command::new("wt.exe")
-        .args(["-d", path, "codex"])
-        .spawn()
-        .is_ok()
+    let codex = find_executable("codex")
+        .map(|program| program.display().to_string())
+        .unwrap_or_else(|| "codex".to_string());
+    let command = format!("& '{}'", codex.replace('\'', "''"));
+
+    if let Some(pwsh) = find_pwsh()
+        && std::process::Command::new("wt.exe")
+            .args(["-d", path])
+            .arg(&pwsh)
+            .args(["-NoExit", "-Command", &command])
+            .spawn()
+            .is_ok()
     {
         return Ok(());
     }
+
     std::process::Command::new("powershell.exe")
-        .args(["-NoExit", "-WorkingDirectory", path, "-Command", "& codex"])
+        .args(["-NoExit", "-WorkingDirectory", path, "-Command", &command])
         .spawn()
         .map(|_| ())
 }

@@ -56,7 +56,7 @@ const EDITOR_PREFIX: &str = "ed ";
 pub const CLAUDE_CODE_PREFIX: &str = "cc ";
 /// フォルダを作業ディレクトリにして Codex CLI を起動する検索モードのプレフィックス
 /// (末尾の半角スペース込み、FR-9.15.5)。
-const CODEX_PREFIX: &str = "cx ";
+pub const CODEX_PREFIX: &str = "cx ";
 /// プロセス Kill 検索モードに入るプレフィックス (末尾の半角スペース込み、FR-9.15.2)。
 pub const KILL_PROCESS_PREFIX: &str = "k ";
 /// Web 検索モードに入るプレフィックス (FR-9.21)。

@@ -86,6 +86,15 @@ fn refined_search_only_reuses_candidates_for_a_narrower_local_query() {
         refinable_search_term(Some("ps way"), "ps wayp", 1),
         Some("wayp")
     );
+    // `ps ` と同じ理由で `cx ` も欠けていた: 通常検索中に `cx ` を打ち足して
+    // Codex 起動モードへ入った直後、フォルダ以外を含む通常検索の結果を
+    // 誤って絞り込んでしまい、Index::search の `cx ` 専用索引 (フォルダのみ)
+    // が引き直されなかった (実機で `codex` から `cx ` と打った際に再現)。
+    assert_eq!(refinable_search_term(Some("codex"), "cx waypoint", 1), None);
+    assert_eq!(
+        refinable_search_term(Some("cx way"), "cx wayp", 1),
+        Some("wayp")
+    );
 }
 
 /// 前回の結果が表示上限 (`MAX_LIST_RESULTS`) ちょうどで切り詰められていた
