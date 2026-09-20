@@ -183,7 +183,7 @@ pub(super) fn update_results(state: &RefCell<State>) {
                     .results
                     .push(crate::quick_launch::web_search_entry(engine, rest));
             }
-            if let Some(entry) = crate::quick_launch::claude_code_entry(&query) {
+            if let Some(entry) = state.index.claude_code_entry(&query) {
                 state.results.push(entry);
             }
             Vec::new()

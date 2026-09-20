@@ -76,6 +76,15 @@ impl LowerKeys {
 }
 
 impl Index {
+    /// `cc ` の入力が索引内の確定済みフォルダを指す場合だけ起動候補を返す。
+    pub(crate) fn claude_code_entry(&self, query: &str) -> Option<Entry> {
+        let entry = super::claude_code_entry(query)?;
+        self.claude_code_folders
+            .iter()
+            .any(|folder| folder.path.eq_ignore_ascii_case(&entry.path))
+            .then_some(entry)
+    }
+
     /// プレフィックス入力中は、対応する検索対象だけを検索する。
     pub fn search(&self, query: &str) -> Vec<&Entry> {
         // `cc ` はまずフォルダ候補を `ps `/`ed ` と同じく絞り込み表示する。

@@ -63,6 +63,21 @@ fn claude_code_command_rejects_incomplete_input() {
 }
 
 #[test]
+fn claude_code_command_rejects_a_folder_not_selected_from_the_index() {
+    let index = index();
+    assert!(
+        index
+            .claude_code_entry(r"cc C:\not-registered review42")
+            .is_none()
+    );
+    assert!(
+        index
+            .claude_code_entry(r"cc E:\waypoint\docs review42")
+            .is_some()
+    );
+}
+
+#[test]
 fn web_search_entry_builds_single_candidate() {
     let entry = web_search_entry(crate::web_search::Engine::Google, " rust lifetime ");
     assert_eq!(entry.name, "rust lifetime");
