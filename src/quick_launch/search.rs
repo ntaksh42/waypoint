@@ -76,6 +76,19 @@ impl LowerKeys {
 }
 
 impl Index {
+    /// 閉じたウィンドウの候補を索引から外す (FR-9.8.5)。フル再構築せず、
+    /// 次の `refresh_dynamic` までの間だけ一覧に残らないようにする。
+    pub(crate) fn remove_window(&mut self, hwnd: isize) {
+        if let Some(pos) = self
+            .windows
+            .iter()
+            .position(|entry| matches!(entry.action, super::Action::FocusWindow(h) if h == hwnd))
+        {
+            self.windows.remove(pos);
+            self.windows_lower.remove(pos);
+        }
+    }
+
     /// `cc ` の入力が索引内の確定済みフォルダを指す場合だけ起動候補を返す。
     pub(crate) fn claude_code_entry(&self, query: &str) -> Option<Entry> {
         let entry = super::claude_code_entry(query)?;
