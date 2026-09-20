@@ -47,6 +47,11 @@ fn rejects_empty_and_garbage() {
     assert!(parse_hotkey("Ctrl+NoSuchKey").is_none());
 }
 
+#[test]
+fn rejects_multiple_primary_keys() {
+    assert!(parse_hotkey("Ctrl+A+B").is_none());
+}
+
 /// キー入力から設定した値 (FR-6.8.1) は、そのまま登録経路に渡る。
 /// `format_hotkey` は `parse_hotkey` が読める文字列だけを返すこと。
 #[test]

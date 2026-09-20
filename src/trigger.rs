@@ -89,7 +89,9 @@ pub fn parse_hotkey(spec: &str) -> Option<(HOT_KEY_MODIFIERS, u32)> {
             "shift" => mods |= MOD_SHIFT,
             "" => return None,
             other => {
-                key = Some(virtual_key(other)?);
+                if key.replace(virtual_key(other)?).is_some() {
+                    return None;
+                }
             }
         }
     }
