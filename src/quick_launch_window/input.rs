@@ -5,7 +5,7 @@ use windows::Win32::UI::Controls::{EM_GETSEL, EM_REPLACESEL, EM_SETSEL};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_CONTROL, VK_SHIFT};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowTextLengthW, GetWindowTextW, LB_GETCURSEL, LB_SETCURSEL, PostMessageW, SW_HIDE,
-    SetWindowTextW, ShowWindow,
+    SetWindowTextW, ShowWindow, WM_CLOSE,
 };
 use windows::core::{HSTRING, w};
 
@@ -333,6 +333,43 @@ pub(super) fn reveal_selected_in_explorer() {
     });
     hide_window(window, owner);
     let _ = crate::shell::reveal_in_explorer(&entry.path);
+}
+
+/// `Ctrl+W`: 選択中の Current Windows 候補の実ウィンドウへ `WM_CLOSE` を送る
+/// (FR-9.8.5)。候補は索引と一覧から外し、検索画面は開いたまま選択位置を保つ。
+/// ウィンドウ以外の候補は無音で無視する。
+pub(super) fn close_selected_window() {
+    let list = STATE.with(|state| state.borrow().list);
+    let Some(row) = current_selection(list) else {
+        return;
+    };
+    let Some(entry) = STATE.with(|state| entry_at_row(&state.borrow(), row)) else {
+        return;
+    };
+    let Action::FocusWindow(hwnd) = entry.action else {
+        return;
+    };
+    unsafe {
+        let _ = PostMessageW(Some(HWND(hwnd as *mut _)), WM_CLOSE, WPARAM(0), LPARAM(0));
+    }
+    STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        state.index.remove_window(hwnd);
+        // 絞り込み再検索は前回の `results` を母集団にするため、閉じた候補が
+        // 残らないよう全候補への再検索へ落とす
+        state.previous_query = None;
+    });
+    STATE.with(super::search::update_results);
+    let (list, rows) = STATE.with(|state| {
+        let state = state.borrow();
+        (state.list, state.rows.clone())
+    });
+    let target = (row..rows.len())
+        .find(|&i| matches!(rows[i], RowKind::Item(_)))
+        .or_else(|| last_selectable_row(&rows));
+    if let Some(target) = target {
+        select_at(list, target);
+    }
 }
 
 /// ウィンドウを閉じ、`owner` (常駐部) へ `WM_QUICK_LAUNCH_EXECUTE` を通知する。

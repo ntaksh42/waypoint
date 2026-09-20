@@ -36,9 +36,10 @@ use crate::quick_launch::{Entry, Index};
 use azure_live::{AzureLiveSearchStart, start_azure_live_search_for_query};
 use dispatch::dispatch;
 use input::{
-    add_selected_to_favorites, copy_selected_path, delete_word_before_cursor, first_selectable_row,
-    hide_window, last_selectable_row, move_selection, queue_selected, queue_selected_elevated,
-    reveal_selected_in_explorer, select_at,
+    add_selected_to_favorites, close_selected_window, copy_selected_path,
+    delete_word_before_cursor, first_selectable_row, hide_window, last_selectable_row,
+    move_selection, queue_selected, queue_selected_elevated, reveal_selected_in_explorer,
+    select_at,
 };
 use layout::{apply_dpi, apply_window_chrome, target_monitor_dpi};
 use search::update_results;
@@ -360,6 +361,10 @@ pub fn handle_message(message: &windows::Win32::UI::WindowsAndMessaging::MSG) ->
         // Ctrl+E: 選択中候補をエクスプローラーで開き、対象を選択状態にする。
         0x45 if unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0 => {
             reveal_selected_in_explorer();
+        }
+        // Ctrl+W: 選択中のウィンドウ候補の実ウィンドウを閉じる (FR-9.8.5)
+        0x57 if unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0 => {
+            close_selected_window();
         }
         0x08 if unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0 => {
             let edit = STATE.with(|state| state.borrow().edit);

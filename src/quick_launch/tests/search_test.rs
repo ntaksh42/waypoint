@@ -235,6 +235,34 @@ fn window_search_uses_all_windows_not_the_truncated_tray_list() {
     assert_eq!(found.len(), 3);
 }
 
+/// `Ctrl+W` で閉じたウィンドウ (FR-9.8.5) は、指定した 1 件だけが `w ` 検索から消え、
+/// 残りの候補と並列キー (`windows_lower`) の対応がずれないこと。
+#[test]
+fn remove_window_drops_only_the_closed_window() {
+    use crate::dynamic::WindowEntry;
+
+    let window = |hwnd: isize| WindowEntry {
+        title: format!("Window {hwnd}"),
+        hwnd,
+        process_name: "app.exe".to_string(),
+    };
+    let dynamic = Menus {
+        all_windows: vec![window(1), window(2), window(3)],
+        ..Menus::default()
+    };
+    let mut index = Index::build(&Config::default(), &dynamic);
+
+    index.remove_window(2);
+
+    let found = index.search("w window");
+    assert_eq!(found.len(), 2);
+    assert!(index.search("w window 2").is_empty());
+    assert_eq!(index.windows.len(), index.windows_lower.len());
+    // 存在しない hwnd は何も変えない
+    index.remove_window(99);
+    assert_eq!(index.search("w window").len(), 2);
+}
+
 #[test]
 fn apps_prefix_switches_to_apps_only_search() {
     let index = index();
