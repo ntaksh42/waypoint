@@ -141,8 +141,10 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                         crate::process::kill(pid);
                     }
                 }
-                refresh_dynamic(hwnd);
             }
+            // Quick Launch は Esc・フォーカス喪失でもこのメッセージを送る。
+            // 実行した場合だけに限定すると、キャンセル後の `w ` が古いままになる。
+            refresh_dynamic(hwnd);
             LRESULT(0)
         }
         WM_QUICK_LAUNCH_ADD_TO_FAVORITES => {
