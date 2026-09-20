@@ -9,6 +9,10 @@ fn azure_pr_status_command_filters_cached_pull_requests() {
     let index = index();
     assert_eq!(index.search("az pr active azure").len(), 1);
     assert_eq!(index.search("az pr active mine azure").len(), 1);
+    assert_eq!(index.search("az pr active reviewer azure").len(), 1);
+    assert_eq!(index.search("az pr active needs-review azure").len(), 1);
+    assert!(index.search("az pr active waiting azure").is_empty());
+    assert!(index.search("az pr active author azure").is_empty());
     assert!(index.search("az pr completed azure").is_empty());
     assert_eq!(index.search("az wp").len(), 1);
 }
@@ -46,6 +50,13 @@ fn azure_title_phrase_ranks_before_the_same_words_in_a_different_order() {
             kind: crate::azure_devops::Kind::PullRequest,
             status: "active".into(),
             is_mine: false,
+            is_author: false,
+            is_reviewer: false,
+            needs_my_review: false,
+            waiting_for_others: false,
+            is_draft: false,
+            ready_to_complete: false,
+            is_stale: false,
         });
     }
 
@@ -86,6 +97,13 @@ fn azure_command_recognizes_all_supported_subcommands() {
                 status: crate::azure_devops::PullRequestStatus::Completed,
                 status_explicit: true,
                 mine: false,
+                author: false,
+                reviewer: false,
+                needs_review: false,
+                waiting: false,
+                draft: false,
+                ready: false,
+                stale: false,
                 live: false,
             }),
             "done"
@@ -110,6 +128,13 @@ fn azure_command_recognizes_all_supported_subcommands() {
                 status: crate::azure_devops::PullRequestStatus::Active,
                 status_explicit: true,
                 mine: true,
+                author: false,
+                reviewer: false,
+                needs_review: false,
+                waiting: false,
+                draft: false,
+                ready: false,
+                stale: false,
                 live: false,
             }),
             "launcher"
@@ -123,6 +148,13 @@ fn azure_command_recognizes_all_supported_subcommands() {
                 status: crate::azure_devops::PullRequestStatus::Active,
                 status_explicit: true,
                 mine: true,
+                author: false,
+                reviewer: false,
+                needs_review: false,
+                waiting: false,
+                draft: false,
+                ready: false,
+                stale: false,
                 live: false,
             }),
             "launcher"
@@ -136,6 +168,13 @@ fn azure_command_recognizes_all_supported_subcommands() {
                 status: crate::azure_devops::PullRequestStatus::Active,
                 status_explicit: true,
                 mine: false,
+                author: false,
+                reviewer: false,
+                needs_review: false,
+                waiting: false,
+                draft: false,
+                ready: false,
+                stale: false,
                 live: false,
             }),
             ""
@@ -179,9 +218,23 @@ fn azure_live_request_covers_bare_query() {
 }
 
 #[test]
-fn azure_prefix_alone_shows_nothing() {
+fn azure_prefix_alone_shows_shortcuts_then_all_azure_commands() {
     let index = index();
-    assert!(index.search("az ").is_empty());
+    let names: Vec<_> = index
+        .search("az ")
+        .into_iter()
+        .map(|entry| entry.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "az pr",
+            "az wit",
+            "az pipeline",
+            "az project",
+            "az optimize"
+        ]
+    );
 }
 
 #[test]

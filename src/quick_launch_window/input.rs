@@ -319,6 +319,29 @@ pub(super) fn copy_selected_path() {
     });
 }
 
+/// `Ctrl+Shift+C`: PR 候補の source branch をクリップボードへコピーする。
+/// フォルダの Git branch 表示にも使うフィールドだが、URL を持つ候補だけに限定し、
+/// 通常の `Ctrl+C`（URL / パスコピー）の意味を変えない。
+pub(super) fn copy_selected_branch() {
+    let Some(entry) = selected_entry() else {
+        return;
+    };
+    let Some(branch) = entry.branch.filter(|branch| !branch.is_empty()) else {
+        return;
+    };
+    if crate::clipboard::set_text(&branch).is_err() {
+        return;
+    }
+    STATE.with(|state| {
+        let (window, dpi) = {
+            let mut state = state.borrow_mut();
+            state.copy_feedback = true;
+            (state.window, state.dpi)
+        };
+        invalidate_search_bar(window, dpi);
+    });
+}
+
 /// `Ctrl+E`: 選択中候補をエクスプローラーで開き、対象を選択状態にする。
 pub(super) fn reveal_selected_in_explorer() {
     let Some(entry) = selected_entry() else {

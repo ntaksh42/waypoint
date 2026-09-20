@@ -187,7 +187,11 @@ impl Index {
             return Vec::new();
         }
         if query == AZURE_DEVOPS_PREFIX {
-            return Vec::new();
+            return self
+                .azure_shortcuts
+                .iter()
+                .chain(azure_command_entries())
+                .collect();
         }
         if let Some(command_text) = super::azure::incomplete_azure_command(query) {
             let completions =
@@ -218,6 +222,13 @@ impl Index {
                             entry.kind == crate::azure_devops::Kind::PullRequest
                                 && filter.status.matches(&entry.status)
                                 && (!filter.mine || entry.is_mine)
+                                && (!filter.author || entry.is_author)
+                                && (!filter.reviewer || entry.is_reviewer)
+                                && (!filter.needs_review || entry.needs_my_review)
+                                && (!filter.waiting || entry.waiting_for_others)
+                                && (!filter.draft || entry.is_draft)
+                                && (!filter.ready || entry.ready_to_complete)
+                                && (!filter.stale || entry.is_stale)
                         })
                         .map(|entry| (&entry.entry, &entry.lower)),
                     rest,

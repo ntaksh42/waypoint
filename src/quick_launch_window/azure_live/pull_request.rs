@@ -100,7 +100,7 @@ pub(in crate::quick_launch_window) fn start_azure_pull_request_live_search(
     crate::azure_devops::search_pull_requests_live_async(
         settings,
         filter.status.live_search_statuses(),
-        filter.mine,
+        filter,
         query.to_string(),
         reply_id,
         window,

@@ -184,12 +184,25 @@ pub struct Candidate {
     pub status: String,
     pub name: String,
     pub detail: String,
+    /// PR の source branch。PR 以外は `None`。Quick Launch で表示・コピーする。
+    pub branch: Option<String>,
     pub url: String,
     pub organization: String,
     pub project: String,
     pub aliases: Vec<String>,
     pub priority: u32,
     pub is_mine: bool,
+    /// 認証済みユーザーが PR の作成者か。`author` 絞り込みに使う。
+    pub is_author: bool,
+    /// 認証済みユーザーが PR の reviewer か。`reviewer` 絞り込みに使う。
+    pub is_reviewer: bool,
+    /// 自分が reviewer で、まだ投票していない Active PR。
+    pub needs_my_review: bool,
+    /// 自分が作成者で、required reviewer の未投票または差し戻しが残る PR。
+    pub waiting_for_others: bool,
+    pub is_draft: bool,
+    pub ready_to_complete: bool,
+    pub is_stale: bool,
 }
 
 /// Quick Launch と設定画面に出す、キャッシュの鮮度と最後の同期結果。
@@ -212,12 +225,20 @@ pub fn project_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
             status: String::new(),
             name: project.project.trim().to_string(),
             detail: format!("Azure DevOps — {}", project.organization.trim()),
+            branch: None,
             url: project_url(project),
             organization: project.organization.trim().to_string(),
             project: project.project.trim().to_string(),
             aliases: project.aliases.clone(),
             priority: project.priority,
             is_mine: false,
+            is_author: false,
+            is_reviewer: false,
+            needs_my_review: false,
+            waiting_for_others: false,
+            is_draft: false,
+            ready_to_complete: false,
+            is_stale: false,
         })
         .collect()
 }

@@ -12,12 +12,20 @@ mod tests {
             status: String::new(),
             name: name.into(),
             detail: "Azure DevOps — org/project".into(),
+            branch: None,
             url: "https://dev.azure.com/org/project".into(),
             organization: "org".into(),
             project: "project".into(),
             aliases: Vec::new(),
             priority: 0,
             is_mine: false,
+            is_author: false,
+            is_reviewer: false,
+            needs_my_review: false,
+            waiting_for_others: false,
+            is_draft: false,
+            ready_to_complete: false,
+            is_stale: false,
         }
     }
 
@@ -49,7 +57,7 @@ use std::collections::HashMap;
 use crate::config::AzureDevOpsSettings;
 
 use super::cache::{CachedRow, open_cache_read_only, read_identity};
-use super::convert::{project_key, valid_project};
+use super::convert::{parse_rfc3339_unix, project_key, unix_timestamp, valid_project};
 use super::{Candidate, Kind, shared_cache};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -91,6 +99,8 @@ fn pr_history_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
             detail: row.get(6)?,
             url: row.get(7)?,
             is_mine: row.get::<_, i64>(8)? != 0,
+            is_author: false,
+            is_reviewer: false,
         })
     }) else {
         return Vec::new();
@@ -117,12 +127,20 @@ fn pr_history_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
                 status: row.status,
                 name: row.name,
                 detail: row.detail,
+                branch: None,
                 url: row.url,
                 organization: row.organization,
                 project: row.project,
                 aliases,
                 priority,
                 is_mine: row.is_mine,
+                is_author: false,
+                is_reviewer: false,
+                needs_my_review: false,
+                waiting_for_others: false,
+                is_draft: false,
+                ready_to_complete: false,
+                is_stale: false,
             })
         })
         .collect()
@@ -212,26 +230,72 @@ fn read_candidate_groups(
                                         && reviewer.reviewer_id == my_id
                                 })
                         });
+                        let is_author = row.created_by_id.as_deref() == my_id.as_deref();
+                        let my_reviewer = reviewers.iter().find(|reviewer| {
+                            reviewer.repository_id == row.repository_id
+                                && reviewer.pull_request_id == row.pull_request_id
+                                && Some(reviewer.reviewer_id.as_str()) == my_id.as_deref()
+                        });
+                        let is_reviewer = my_reviewer.is_some();
+                        let needs_my_review = is_reviewer
+                            && row.status.eq_ignore_ascii_case("active")
+                            && my_reviewer.is_some_and(|reviewer| reviewer.vote == 0);
+                        let waiting_for_others = is_author
+                            && row.status.eq_ignore_ascii_case("active")
+                            && reviewers.iter().any(|reviewer| {
+                                reviewer.repository_id == row.repository_id
+                                    && reviewer.pull_request_id == row.pull_request_id
+                                    && reviewer.is_required
+                                    && reviewer.vote <= 0
+                            });
+                        let required: Vec<_> = reviewers
+                            .iter()
+                            .filter(|reviewer| {
+                                reviewer.repository_id == row.repository_id
+                                    && reviewer.pull_request_id == row.pull_request_id
+                                    && reviewer.is_required
+                            })
+                            .collect();
+                        let ready_to_complete = is_author
+                            && row.status.eq_ignore_ascii_case("active")
+                            && !required.is_empty()
+                            && required.iter().all(|reviewer| reviewer.vote > 0);
+                        let is_stale = row.status.eq_ignore_ascii_case("active")
+                            && parse_rfc3339_unix(&row.creation_date).is_some_and(|created| {
+                                unix_timestamp().saturating_sub(created) >= 14 * 24 * 60 * 60
+                            });
+                        let source_branch = row.source_ref_name.trim_start_matches("refs/heads/");
+                        let target_branch = row.target_ref_name.trim_start_matches("refs/heads/");
                         pull_requests.push(Candidate {
                             kind: Kind::PullRequest,
                             name: format!("PR {}: {}", row.pull_request_id, row.title),
                             detail: match &row.created_by {
                                 Some(author) if !author.is_empty() => format!(
-                                    "Azure DevOps — {organization}/{project_name} — {} — by {author}",
-                                    row.status
+                                    "Azure DevOps — {organization}/{project_name}/{repository} — {} — {source_branch} → {target_branch} — by {author}",
+                                    row.status,
+                                    repository = row.repository_name,
                                 ),
                                 _ => format!(
-                                    "Azure DevOps — {organization}/{project_name} — {}",
-                                    row.status
+                                    "Azure DevOps — {organization}/{project_name}/{repository} — {} — {source_branch} → {target_branch}",
+                                    row.status,
+                                    repository = row.repository_name,
                                 ),
                             },
                             status: row.status,
+                            branch: Some(source_branch.to_string()),
                             url,
                             organization: organization.to_string(),
                             project: project_name.to_string(),
                             aliases: project.aliases.clone(),
                             priority: project.priority,
                             is_mine,
+                            is_author,
+                            is_reviewer,
+                            needs_my_review,
+                            waiting_for_others,
+                            is_draft: row.is_draft,
+                            ready_to_complete,
+                            is_stale,
                         });
                     }
                 }
@@ -253,12 +317,20 @@ fn read_candidate_groups(
                             detail: format!(
                                 "Azure DevOps — {organization}/{project_name} — {kind} {state}"
                             ),
+                            branch: None,
                             url,
                             organization: organization.to_string(),
                             project: project_name.to_string(),
                             aliases: project.aliases.clone(),
                             priority: project.priority,
                             is_mine: false,
+                            is_author: false,
+                            is_reviewer: false,
+                            needs_my_review: false,
+                            waiting_for_others: false,
+                            is_draft: false,
+                            ready_to_complete: false,
+                            is_stale: false,
                         });
                     }
                 }

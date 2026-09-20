@@ -113,14 +113,15 @@ pub(crate) fn pull_request_row(
     let status = item["status"].as_str().unwrap_or("unknown").to_string();
     let repository = item["repository"]["name"].as_str().unwrap_or("");
     let author = item["createdBy"]["displayName"].as_str().unwrap_or("");
-    let is_mine = current_user.is_some_and(|user| {
-        item["createdBy"]["id"].as_str() == Some(user)
-            || item["reviewers"].as_array().is_some_and(|reviewers| {
-                reviewers
-                    .iter()
-                    .any(|reviewer| reviewer["id"].as_str() == Some(user))
-            })
+    let is_author = current_user.is_some_and(|user| item["createdBy"]["id"].as_str() == Some(user));
+    let is_reviewer = current_user.is_some_and(|user| {
+        item["reviewers"].as_array().is_some_and(|reviewers| {
+            reviewers
+                .iter()
+                .any(|reviewer| reviewer["id"].as_str() == Some(user))
+        })
     });
+    let is_mine = is_author || is_reviewer;
     let url = item["_links"]["web"]["href"]
         .as_str()
         .map(str::to_string)
@@ -151,6 +152,8 @@ pub(crate) fn pull_request_row(
         },
         url,
         is_mine,
+        is_author,
+        is_reviewer,
     })
 }
 
@@ -214,6 +217,8 @@ pub(crate) fn pipeline_row(
         name,
         url,
         is_mine: false,
+        is_author: false,
+        is_reviewer: false,
     }
 }
 
@@ -250,12 +255,20 @@ pub(crate) fn pull_request_cached_row_to_candidate(
         status: row.status.clone(),
         name: row.name.clone(),
         detail: row.detail.clone(),
+        branch: None,
         url: row.url.clone(),
         organization: row.organization.clone(),
         project: row.project.clone(),
         aliases: project.aliases.clone(),
         priority: project.priority,
         is_mine: row.is_mine,
+        is_author: row.is_author,
+        is_reviewer: row.is_reviewer,
+        needs_my_review: false,
+        waiting_for_others: false,
+        is_draft: false,
+        ready_to_complete: false,
+        is_stale: false,
     }
 }
 
@@ -270,12 +283,20 @@ pub(crate) fn pipeline_cached_row_to_candidate(
         status: row.status.clone(),
         name: row.name.clone(),
         detail: row.detail.clone(),
+        branch: None,
         url: row.url.clone(),
         organization: row.organization.clone(),
         project: row.project.clone(),
         aliases: project.aliases.clone(),
         priority: project.priority,
         is_mine: row.is_mine,
+        is_author: false,
+        is_reviewer: false,
+        needs_my_review: false,
+        waiting_for_others: false,
+        is_draft: false,
+        ready_to_complete: false,
+        is_stale: false,
     }
 }
 
@@ -309,12 +330,20 @@ pub(crate) fn work_item_candidate(
             "Azure DevOps — {}/{} — {kind} {state}",
             project.organization, project.project
         ),
+        branch: None,
         url: format!("{}/_workitems/edit/{id}", project_url(project)),
         organization: project.organization.trim().to_string(),
         project: project.project.trim().to_string(),
         aliases: project.aliases.clone(),
         priority: project.priority,
         is_mine: false,
+        is_author: false,
+        is_reviewer: false,
+        needs_my_review: false,
+        waiting_for_others: false,
+        is_draft: false,
+        ready_to_complete: false,
+        is_stale: false,
     })
 }
 

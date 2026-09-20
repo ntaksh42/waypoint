@@ -16,11 +16,11 @@ mod search;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use azure::azure_suggest_entry;
 pub use azure::{
     AzureCommand, AzureLiveRequest, PipelineFilter, PullRequestFilter, azure_command,
     azure_live_request,
 };
+pub(crate) use azure::{azure_shortcut_entries, azure_suggest_entry};
 pub(crate) use rank::search_entries;
 pub(crate) use scoring::highlight_ranges;
 
@@ -319,6 +319,7 @@ pub struct Index {
     pub(crate) history: Vec<Entry>,
     pub(crate) history_lower: Vec<search::LowerKeys>,
     pub(crate) azure: Vec<AzureIndexed>,
+    pub(crate) azure_shortcuts: Vec<Entry>,
     pub(crate) azure_work_items: Vec<Entry>,
     pub(crate) azure_work_items_lower: Vec<search::LowerKeys>,
     pub(crate) windows: Vec<Entry>,

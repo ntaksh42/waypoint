@@ -31,9 +31,23 @@ pub(crate) fn refresh_project(
 ) -> Result<(), String> {
     // 共有キャッシュを読んでスキップする場合でも is_mine の判定に自分の
     // ID が要るので、フェッチの成否とは独立に毎回解決しておく。
-    let current_user = current_user_id(client, &project.organization, pat).ok();
-    if let Some(user_id) = &current_user {
-        let _ = write_identity(project.organization.trim(), user_id);
+    let current_user = match current_user_id(client, &project.organization, pat) {
+        Ok(user_id) => Some(user_id),
+        Err(error) => {
+            crate::panic_log::record(&format!(
+                "azure devops: could not resolve identity for {}: {error}",
+                project.organization
+            ));
+            None
+        }
+    };
+    if let Some(user_id) = &current_user
+        && let Err(error) = write_identity(project.organization.trim(), user_id)
+    {
+        crate::panic_log::record(&format!(
+            "azure devops: could not cache identity for {}: {error}",
+            project.organization
+        ));
     }
 
     let history_rows = if project.include_pull_requests {
@@ -59,7 +73,7 @@ pub(crate) fn current_user_id(
     pat: &str,
 ) -> Result<String, String> {
     let url = format!(
-        "https://dev.azure.com/{}/_apis/connectionData?connectOptions=1&lastChangeId=-1&lastChangeId64=-1&api-version={API_VERSION}",
+        "https://dev.azure.com/{}/_apis/connectionData?connectOptions=1&api-version=7.1-preview.1",
         super::convert::encode_segment(organization)
     );
     get_json(client, &url, pat)?["authenticatedUser"]["id"]

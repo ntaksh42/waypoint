@@ -80,6 +80,13 @@ pub(super) fn index() -> Index {
                 kind: crate::azure_devops::Kind::PullRequest,
                 status: "active".into(),
                 is_mine: true,
+                is_author: false,
+                is_reviewer: true,
+                needs_my_review: true,
+                waiting_for_others: false,
+                is_draft: false,
+                ready_to_complete: false,
+                is_stale: false,
             }]
         },
         azure_work_items: Vec::new(),

@@ -22,6 +22,8 @@ pub(crate) struct CachedRow {
     pub(crate) detail: String,
     pub(crate) url: String,
     pub(crate) is_mine: bool,
+    pub(crate) is_author: bool,
+    pub(crate) is_reviewer: bool,
 }
 
 pub(crate) fn open_cache() -> Result<Connection, String> {
@@ -195,15 +197,29 @@ pub(crate) fn read_identity(organization: &str) -> Option<String> {
 }
 
 pub(crate) fn write_identity(organization: &str, user_id: &str) -> Result<(), String> {
-    let connection = open_cache()?;
-    connection
-        .execute(
-            "INSERT INTO identity (organization, user_id) VALUES (?1, ?2)
-             ON CONFLICT(organization) DO UPDATE SET user_id = excluded.user_id",
-            params![organization.trim(), user_id],
-        )
-        .map_err(|error| error.to_string())?;
-    Ok(())
+    let mut last_error = None;
+    // 起動直後は複数プロジェクトの同期が同時にこの DB を初期化する。
+    // identity は reviewer のキャッシュ絞り込みに必須なので、短い競合で
+    // 失わないよう再試行する。
+    for _ in 0..3 {
+        let result = (|| {
+            let connection = open_cache()?;
+            connection
+                .execute(
+                    "INSERT INTO identity (organization, user_id) VALUES (?1, ?2)
+                     ON CONFLICT(organization) DO UPDATE SET user_id = excluded.user_id",
+                    params![organization.trim(), user_id],
+                )
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = Some(error),
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Err(last_error.unwrap_or_else(|| "Could not save Azure DevOps identity.".to_string()))
 }
 
 pub(crate) fn cache_path() -> Option<PathBuf> {

@@ -36,7 +36,7 @@ use crate::quick_launch::{Entry, Index};
 use azure_live::{AzureLiveSearchStart, start_azure_live_search_for_query};
 use dispatch::dispatch;
 use input::{
-    add_selected_to_favorites, close_selected_window, copy_selected_path,
+    add_selected_to_favorites, close_selected_window, copy_selected_branch, copy_selected_path,
     delete_word_before_cursor, first_selectable_row, hide_window, last_selectable_row,
     move_selection, queue_selected, queue_selected_elevated, reveal_selected_in_explorer,
     select_at,
@@ -349,6 +349,14 @@ pub fn handle_message(message: &windows::Win32::UI::WindowsAndMessaging::MSG) ->
             }
         }
         0x0d => queue_selected(),
+        // Ctrl+Shift+C: PR の source branch をコピーする。Ctrl+C の URL / パス
+        // コピーと役割を分け、PR を作業ブランチへ移る操作を 1 手にする。
+        0x43 if unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0
+            && unsafe { GetKeyState(VK_SHIFT.0 as i32) } < 0
+            && copy_path_shortcut_applies(message.hwnd) =>
+        {
+            copy_selected_branch();
+        }
         // Ctrl+C: 選択中候補のパスをクリップボードへコピーする。
         // 通常は Edit にフォーカスを置いたまま上下キーで候補を選ぶため、
         // リスト側限定にすると事実上到達しない。Edit 側でも扱うが、

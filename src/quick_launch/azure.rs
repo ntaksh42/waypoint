@@ -13,6 +13,13 @@ pub(crate) struct AzureIndexed {
     pub(crate) kind: crate::azure_devops::Kind,
     pub(crate) status: String,
     pub(crate) is_mine: bool,
+    pub(crate) is_author: bool,
+    pub(crate) is_reviewer: bool,
+    pub(crate) needs_my_review: bool,
+    pub(crate) waiting_for_others: bool,
+    pub(crate) is_draft: bool,
+    pub(crate) ready_to_complete: bool,
+    pub(crate) is_stale: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,11 +37,21 @@ pub enum AzureCommand {
     Suggest,
 }
 
+/// `az pr` の状態・自分との関係を表す絞り込み条件。
+/// `#[derive(...)]` は Rust の属性構文で、Debug（表示用）、Clone / Copy（複製）、
+/// PartialEq / Eq（比較）の標準 trait 実装をコンパイラに自動生成させる。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PullRequestFilter {
     pub(crate) status: crate::azure_devops::PullRequestStatus,
     pub(crate) status_explicit: bool,
     pub(crate) mine: bool,
+    pub(crate) author: bool,
+    pub(crate) reviewer: bool,
+    pub(crate) needs_review: bool,
+    pub(crate) waiting: bool,
+    pub(crate) draft: bool,
+    pub(crate) ready: bool,
+    pub(crate) stale: bool,
     /// `live` トークンの解析互換性を保つ。API 呼び出しは入力変更ではなく
     /// `Ctrl+Enter` の明示操作でのみ開始する。
     pub(crate) live: bool,
@@ -125,6 +142,13 @@ fn parse_pull_request_command(text: &str) -> (AzureCommand, &str) {
     let mut status = crate::azure_devops::PullRequestStatus::All;
     let mut status_explicit = false;
     let mut mine = false;
+    let mut author = false;
+    let mut reviewer = false;
+    let mut needs_review = false;
+    let mut waiting = false;
+    let mut draft = false;
+    let mut ready = false;
+    let mut stale = false;
     let mut live = false;
     let rest = strip_attribute_tokens(text, |token| {
         match token {
@@ -145,6 +169,13 @@ fn parse_pull_request_command(text: &str) -> (AzureCommand, &str) {
                 status_explicit = true;
             }
             "mine" | "me" => mine = true,
+            "author" | "authored" => author = true,
+            "reviewer" | "review" => reviewer = true,
+            "needs-review" | "needsreview" => needs_review = true,
+            "waiting" | "waiting-for-others" => waiting = true,
+            "draft" | "drafts" => draft = true,
+            "ready" | "ready-to-complete" => ready = true,
+            "stale" => stale = true,
             "live" => live = true,
             _ => return false,
         }
@@ -155,6 +186,13 @@ fn parse_pull_request_command(text: &str) -> (AzureCommand, &str) {
             status,
             status_explicit,
             mine,
+            author,
+            reviewer,
+            needs_review,
+            waiting,
+            draft,
+            ready,
+            stale,
             live,
         }),
         rest,
@@ -249,6 +287,85 @@ pub(crate) fn azure_command_entries() -> &'static [Entry] {
     &ENTRIES
 }
 
+/// `az ` の直後にコマンド候補より先に出す、入力を省くための PR 絞り込みショートカット。
+/// リポジトリは設定画面で明示的に監視対象へ選んだものだけを使う。
+pub(crate) fn azure_shortcut_entries(settings: &crate::config::AzureDevOpsSettings) -> Vec<Entry> {
+    if !settings.enabled {
+        return Vec::new();
+    }
+    let mut entries = vec![
+        azure_shortcut(
+            "My review requests",
+            "Active PRs awaiting my vote",
+            "az pr active needs-review ",
+        ),
+        azure_shortcut(
+            "My active PRs",
+            "Active PRs I authored",
+            "az pr active author ",
+        ),
+        azure_shortcut(
+            "Waiting for others",
+            "My Active PRs with required reviewer feedback outstanding",
+            "az pr active waiting ",
+        ),
+        azure_shortcut(
+            "Stale PRs",
+            "Active PRs created 14+ days ago",
+            "az pr active stale ",
+        ),
+    ];
+    for project in &settings.projects {
+        if !project.include_pull_requests {
+            continue;
+        }
+        for repository in &project.interest_repositories {
+            let repository = repository.trim();
+            if repository.is_empty() {
+                continue;
+            }
+            entries.push(azure_shortcut(
+                &format!("{repository} — review requests"),
+                &format!(
+                    "{} / {}",
+                    project.organization.trim(),
+                    project.project.trim()
+                ),
+                &format!("az pr active reviewer {repository} "),
+            ));
+            entries.push(azure_shortcut(
+                &format!("{repository} — my PRs"),
+                &format!(
+                    "{} / {}",
+                    project.organization.trim(),
+                    project.project.trim()
+                ),
+                &format!("az pr active author {repository} "),
+            ));
+            entries.push(azure_shortcut(
+                &format!("{repository} — waiting for others"),
+                &format!(
+                    "{} / {}",
+                    project.organization.trim(),
+                    project.project.trim()
+                ),
+                &format!("az pr active waiting {repository} "),
+            ));
+        }
+    }
+    entries
+}
+
+fn azure_shortcut(name: &str, breadcrumb: &str, query: &str) -> Entry {
+    Entry {
+        name: name.to_string(),
+        breadcrumb: breadcrumb.to_string(),
+        path: String::new(),
+        action: Action::ReplaceQuery(query.to_string()),
+        branch: None,
+    }
+}
+
 /// `az optimize`（`suggest` / `rank` でも入れる）に入ったときの唯一の確定候補。
 /// 検索対象を持たないコマンドなので、選択すると直近アクティビティから
 /// Project / Iteration の優先度をバックグラウンドで自動更新する。
@@ -272,7 +389,7 @@ pub(crate) fn azure_candidate_entry(candidate: crate::azure_devops::Candidate) -
         },
         path: candidate.url.clone(),
         action: Action::OpenUrl(candidate.url),
-        branch: None,
+        branch: candidate.branch,
     }
 }
 
@@ -299,6 +416,13 @@ mod tests {
                     status: crate::azure_devops::PullRequestStatus::Active,
                     status_explicit: true,
                     mine: true,
+                    author: false,
+                    reviewer: false,
+                    needs_review: false,
+                    waiting: false,
+                    draft: false,
+                    ready: false,
+                    stale: false,
                     live: false,
                 },
                 query: "waypoint".to_string(),
@@ -352,6 +476,13 @@ mod tests {
                     status: crate::azure_devops::PullRequestStatus::All,
                     status_explicit: false,
                     mine: true,
+                    author: false,
+                    reviewer: false,
+                    needs_review: false,
+                    waiting: false,
+                    draft: false,
+                    ready: false,
+                    stale: false,
                     live: true,
                 }),
                 "foo"
@@ -391,6 +522,32 @@ mod tests {
             azure_command_entries()
                 .iter()
                 .any(|entry| entry.name == "az optimize")
+        );
+    }
+
+    #[test]
+    fn azure_shortcuts_offer_personal_and_configured_repository_filters() {
+        let settings = crate::config::AzureDevOpsSettings {
+            enabled: true,
+            projects: vec![crate::config::AzureDevOpsProject {
+                organization: "org".into(),
+                project: "project".into(),
+                aliases: Vec::new(),
+                priority: 0,
+                include_pull_requests: true,
+                include_pipelines: true,
+                include_work_items: true,
+                interest_areas: Vec::new(),
+                interest_iterations: Vec::new(),
+                interest_repositories: vec!["waypoint".into()],
+            }],
+        };
+        let entries = azure_shortcut_entries(&settings);
+        assert_eq!(entries.len(), 7);
+        assert_eq!(entries[0].name, "My review requests");
+        assert_eq!(
+            entries[4].action,
+            Action::ReplaceQuery("az pr active reviewer waypoint ".into())
         );
     }
 }

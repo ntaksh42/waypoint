@@ -15,12 +15,20 @@ fn azure_candidate(kind: crate::azure_devops::Kind, name: &str) -> crate::azure_
         },
         name: name.into(),
         detail: "Azure DevOps — org/project".into(),
+        branch: None,
         url: format!("https://dev.azure.com/org/project/{name}"),
         organization: "org".into(),
         project: "project".into(),
         aliases: Vec::new(),
         priority: 0,
         is_mine: false,
+        is_author: false,
+        is_reviewer: false,
+        needs_my_review: false,
+        waiting_for_others: false,
+        is_draft: false,
+        ready_to_complete: false,
+        is_stale: false,
     }
 }
 

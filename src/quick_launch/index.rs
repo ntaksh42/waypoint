@@ -51,6 +51,7 @@ impl Index {
         };
 
         let (azure, azure_work_items) = azure_entries(settings);
+        let azure_shortcuts = super::azure_shortcut_entries(&settings.azure_devops);
 
         let apps = if settings.include_apps {
             crate::apps::scan()
@@ -89,6 +90,7 @@ impl Index {
             history,
             history_lower,
             azure,
+            azure_shortcuts,
             azure_work_items,
             azure_work_items_lower,
             windows,
@@ -179,6 +181,7 @@ impl Index {
         groups: crate::azure_devops::CachedCandidateGroups,
     ) {
         (self.azure, self.azure_work_items) = azure_entries_from_candidates(settings, groups);
+        self.azure_shortcuts = super::azure_shortcut_entries(&settings.azure_devops);
         self.azure_work_items_lower = super::search::LowerKeys::build_for(&self.azure_work_items);
     }
 
@@ -249,6 +252,13 @@ fn azure_entries_from_candidates(
                 kind: candidate.kind,
                 status: candidate.status,
                 is_mine: candidate.is_mine,
+                is_author: candidate.is_author,
+                is_reviewer: candidate.is_reviewer,
+                needs_my_review: candidate.needs_my_review,
+                waiting_for_others: candidate.waiting_for_others,
+                is_draft: candidate.is_draft,
+                ready_to_complete: candidate.ready_to_complete,
+                is_stale: candidate.is_stale,
             }
         })
         .collect();
@@ -509,12 +519,20 @@ mod tests {
             status: status.to_string(),
             name: String::new(),
             detail: String::new(),
+            branch: None,
             url: String::new(),
             organization: String::new(),
             project: String::new(),
             aliases: Vec::new(),
             priority: 0,
             is_mine,
+            is_author: false,
+            is_reviewer: false,
+            needs_my_review: false,
+            waiting_for_others: false,
+            is_draft: false,
+            ready_to_complete: false,
+            is_stale: false,
         }
     }
 

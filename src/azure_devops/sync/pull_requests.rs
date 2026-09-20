@@ -8,6 +8,7 @@ use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 
 use crate::config::AzureDevOpsSettings;
+use crate::quick_launch::PullRequestFilter;
 
 use super::super::api::{current_user_id, fetch_pull_requests_live, http_client};
 use super::super::auth_cache::OrganizationValues;
@@ -37,7 +38,7 @@ type PullRequestFetchOutcome<'a> = (
 pub fn search_pull_requests_live_async(
     settings: AzureDevOpsSettings,
     statuses: &'static [&'static str],
-    mine: bool,
+    filter: PullRequestFilter,
     query: String,
     request_id: u32,
     notify: HWND,
@@ -127,8 +128,14 @@ pub fn search_pull_requests_live_async(
         if !query.trim().is_empty() {
             results.retain(|candidate| title_match_quality(&candidate.name, &query).is_some());
         }
-        if mine {
+        if filter.mine {
             results.retain(|candidate| candidate.is_mine);
+        }
+        if filter.author {
+            results.retain(|candidate| candidate.is_author);
+        }
+        if filter.reviewer {
+            results.retain(|candidate| candidate.is_reviewer);
         }
         results.sort_by_key(|candidate| {
             (
