@@ -62,6 +62,36 @@ fn editing_a_query_invalidates_all_pending_live_replies() {
     });
 }
 
+/// `az <query>` の集約 Live 検索が応答を待つ間に入力が変わると、その集約は
+/// もう表示されない。残したままにすると、次に単独種別の Live 検索
+/// (`az wit foo` 等) を投げたとき前の検索の PR / Pipeline が結果に混ざる。
+#[test]
+fn editing_a_query_also_drops_the_combined_live_search_buffer() {
+    STATE.with(|state| {
+        *state.borrow_mut() = State::default();
+        state.borrow_mut().azure_live_combined =
+            Some(super::super::azure_live::CombinedLiveSearch::new(3));
+
+        invalidate_azure_live_searches(&mut state.borrow_mut());
+
+        assert!(state.borrow().azure_live_combined.is_none());
+    });
+}
+
+/// `az wit ` のキャッシュ検索へ戻った時点でも同じ理由で捨てる。
+#[test]
+fn returning_to_the_cached_work_item_query_drops_the_combined_buffer() {
+    STATE.with(|state| {
+        *state.borrow_mut() = State::default();
+        state.borrow_mut().azure_live_combined =
+            Some(super::super::azure_live::CombinedLiveSearch::new(3));
+
+        start_azure_work_item_query(state, "anything");
+
+        assert!(state.borrow().azure_live_combined.is_none());
+    });
+}
+
 #[test]
 fn refined_search_only_reuses_candidates_for_a_narrower_local_query() {
     assert_eq!(refinable_search_term(Some("way"), "wayp", 1), Some("wayp"));

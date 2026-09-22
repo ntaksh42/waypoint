@@ -315,8 +315,16 @@ pub(super) fn start_azure_combined_live_search(state: &RefCell<State>, query: &s
 /// 入力が変わった、または別種別の Live 検索を始めるときに、先行応答を
 /// 現在の一覧へ反映させない。3 種別は reply_id が独立しているため、
 /// 個別フラグを残すと別種別の遅延応答まで有効になってしまう。
+///
+/// 集約バッファも同時に捨てる。捨てないと、応答が揃う前に入力が変わって
+/// 打ち切られた `az <query>` の集約が `Some` のまま残り、次に単独種別の
+/// Live 検索 (`az wit foo` など) を投げたときに前の検索の PR / Pipeline が
+/// 結果へ混ざる (単独種別の start は集約が `Some` の間、一覧を消さず
+/// 他種別の結果を温存する作りのため)。`az <query>` 自身はこの直後に
+/// 新しい集約を置き直すので影響しない。
 pub(super) fn invalidate_azure_live_searches(state: &mut State) {
     state.azure_work_items_active = false;
     state.azure_pull_requests_live_active = false;
     state.azure_pipelines_live_active = false;
+    state.azure_live_combined = None;
 }

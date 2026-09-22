@@ -24,6 +24,9 @@ pub(in crate::quick_launch_window) fn start_azure_work_item_query(
     let (list, has_results) = {
         let mut state = state.borrow_mut();
         state.everything_active = false;
+        // キャッシュ検索へ戻った時点で、打ち切られた集約 Live 検索の
+        // 残りも捨てる (`invalidate_azure_live_searches` と同じ理由)。
+        state.azure_live_combined = None;
         state.previous_query = None;
         state.highlight_term.clear();
         state.results = state

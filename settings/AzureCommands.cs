@@ -133,6 +133,10 @@ public partial class MainWindow
 
     private void ExportAzureProjects_Click(object sender, RoutedEventArgs e)
     {
+        // 編集中のプロジェクトの入力欄はまだ JSON へ書き戻されていない。
+        // 他の Azure 操作と同じく先に確定させないと、直前の編集を欠いた
+        // 内容を書き出してしまう。
+        CommitAzureProject();
         var dialog = new Microsoft.Win32.SaveFileDialog { FileName = "azure-devops-projects.json", Filter = "JSON files (*.json)|*.json" };
         if (dialog.ShowDialog(this) != true) return;
         File.WriteAllText(dialog.FileName, Array(AzureSettings(), "projects").ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
@@ -146,7 +150,16 @@ public partial class MainWindow
         try
         {
             if (JsonNode.Parse(File.ReadAllText(dialog.FileName)) is not JsonArray projects) throw new InvalidDataException("The file must contain a JSON array of projects.");
-            AzureSettings()["projects"] = projects;
+            // 取り込む前に要素を検証する。オブジェクト以外をそのまま設定へ
+            // 入れると、一覧には出ない (OfType<JsonObject>) のに保存時だけ
+            // config.json へ書かれ、常駐部のパースを壊す。
+            var imported = new JsonArray();
+            foreach (var project in projects)
+            {
+                if (project is not JsonObject entry) throw new InvalidDataException("Every entry must be a JSON object.");
+                imported.Add(entry.DeepClone());
+            }
+            AzureSettings()["projects"] = imported;
             LoadAzureProjects();
             AzureConnectionStatus.Text = $"Imported {_azureProjects.Count} project(s).";
             Changed();
