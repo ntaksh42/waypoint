@@ -26,6 +26,11 @@ const WORK_ITEM_BATCH_LIMIT: usize = 200;
 
 /// 直近の自分の作業に含まれる Area / Iteration Path。
 pub(crate) struct RecentActivityPaths {
+    /// 読み取れた Work Item の件数。Area / Iteration Path は未設定の
+    /// Work Item では欠けるため、`areas.len()` / `iterations.len()` を
+    /// 作業量として使うと、Iteration を運用していないプロジェクトが
+    /// 「活動ゼロ」に見えてしまう。
+    pub items: usize,
     pub areas: Vec<String>,
     pub iterations: Vec<String>,
 }
@@ -90,23 +95,23 @@ fn fetch_work_items_for_shared_cache(
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    let items = post_json(
+    let values = fetch_work_item_fields(
         client,
-        &format!("{base}/_apis/wit/workitemsbatch?api-version={API_VERSION}"),
+        &base,
         pat,
-        &json!({
-            "ids": ids,
-            "fields": [
-                "System.Id", "System.Title", "System.State", "System.WorkItemType",
-                "System.AssignedTo", "System.ChangedDate", "System.Tags"
-            ],
-            "errorPolicy": "omit"
-        }),
+        &ids,
+        &[
+            "System.Id",
+            "System.Title",
+            "System.State",
+            "System.WorkItemType",
+            "System.AssignedTo",
+            "System.ChangedDate",
+            "System.Tags",
+        ],
     )?;
-    Ok(items["value"]
-        .as_array()
-        .into_iter()
-        .flatten()
+    Ok(values
+        .iter()
         .filter_map(|item| {
             let fields = &item["fields"];
             let id = json_i64(&fields["System.Id"]).or_else(|| json_i64(&item["id"]))?;
@@ -128,6 +133,30 @@ fn fetch_work_items_for_shared_cache(
             })
         })
         .collect())
+}
+
+/// `workitemsbatch` へ ID をまとめて投げる。Azure DevOps はこの API を
+/// **1 リクエスト 200 件まで**に制限するため、それを超えると HTTP 400 で
+/// 取得全体が失敗する (`$top` は 200 より大きいので実際に踏む)。呼び出し側が
+/// 上限を意識しなくて済むよう、ここで分割して結果を連結する。
+fn fetch_work_item_fields(
+    client: &reqwest::blocking::Client,
+    base: &str,
+    pat: &str,
+    ids: &[i64],
+    fields: &[&str],
+) -> Result<Vec<serde_json::Value>, String> {
+    let mut values = Vec::new();
+    for chunk in ids.chunks(WORK_ITEM_BATCH_LIMIT) {
+        let items = post_json(
+            client,
+            &format!("{base}/_apis/wit/workitemsbatch?api-version={API_VERSION}"),
+            pat,
+            &json!({ "ids": chunk, "fields": fields, "errorPolicy": "omit" }),
+        )?;
+        values.extend(items["value"].as_array().into_iter().flatten().cloned());
+    }
+    Ok(values)
 }
 
 pub(crate) fn fetch_work_items(
@@ -220,17 +249,22 @@ fn fetch_work_items_by_wiql(
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    let items = post_json(
+    let values = fetch_work_item_fields(
         client,
-        &format!("{base}/_apis/wit/workitemsbatch?api-version={API_VERSION}"),
+        &base,
         pat,
-        &json!({
-            "ids": ids,
-            "fields": ["System.Id", "System.Title", "System.State", "System.WorkItemType"],
-            "errorPolicy": "omit"
-        }),
+        &ids,
+        &[
+            "System.Id",
+            "System.Title",
+            "System.State",
+            "System.WorkItemType",
+        ],
     )?;
-    Ok(work_item_batch_candidates(project, &items))
+    Ok(work_item_batch_candidates(
+        project,
+        &json!({ "value": values }),
+    ))
 }
 
 /// 空の `az wit` 用に、最近更新された Work Item を WIQL で絞って取得する。
@@ -269,6 +303,7 @@ pub(crate) fn fetch_recent_activity_paths(
     let ids = recent_activity_ids(&activity, project.project.trim(), &cutoff);
     if ids.is_empty() {
         return Ok(RecentActivityPaths {
+            items: 0,
             areas: Vec::new(),
             iterations: Vec::new(),
         });
@@ -278,28 +313,24 @@ pub(crate) fn fetch_recent_activity_paths(
         encode_segment(&project.organization),
         encode_segment(&project.project)
     );
+    let values = fetch_work_item_fields(
+        client,
+        &base,
+        pat,
+        &ids,
+        &["System.AreaPath", "System.IterationPath"],
+    )?;
     let mut paths = RecentActivityPaths {
+        items: values.len(),
         areas: Vec::new(),
         iterations: Vec::new(),
     };
-    for ids in ids.chunks(WORK_ITEM_BATCH_LIMIT) {
-        let items = post_json(
-            client,
-            &format!("{base}/_apis/wit/workitemsbatch?api-version={API_VERSION}"),
-            pat,
-            &json!({
-                "ids": ids,
-                "fields": ["System.AreaPath", "System.IterationPath"],
-                "errorPolicy": "omit"
-            }),
-        )?;
-        for item in items["value"].as_array().into_iter().flatten() {
-            if let Some(path) = item["fields"]["System.AreaPath"].as_str() {
-                paths.areas.push(path.to_string());
-            }
-            if let Some(path) = item["fields"]["System.IterationPath"].as_str() {
-                paths.iterations.push(path.to_string());
-            }
+    for item in &values {
+        if let Some(path) = item["fields"]["System.AreaPath"].as_str() {
+            paths.areas.push(path.to_string());
+        }
+        if let Some(path) = item["fields"]["System.IterationPath"].as_str() {
+            paths.iterations.push(path.to_string());
         }
     }
     Ok(paths)

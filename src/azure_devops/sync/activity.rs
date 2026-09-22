@@ -94,7 +94,7 @@ pub fn suggest_priorities_async(
                     Ok(paths) => ProjectActivity {
                         organization: project.organization.trim().to_string(),
                         project: project.project.trim().to_string(),
-                        count: paths.iterations.len(),
+                        count: paths.items,
                         areas: count_paths(paths.areas),
                         iterations: count_paths(paths.iterations),
                     },
@@ -129,10 +129,7 @@ pub fn apply_optimization(
     let mut activity_by_project = HashMap::new();
     for entry in activity {
         activity_by_project.insert(
-            (
-                entry.organization.to_lowercase(),
-                entry.project.to_lowercase(),
-            ),
+            activity_key(&entry.organization, &entry.project),
             (
                 entry.count,
                 entry.iterations.first().map(|(path, _)| path.clone()),
@@ -144,10 +141,7 @@ pub fn apply_optimization(
         .iter()
         .enumerate()
         .map(|(index, project)| {
-            let key = (
-                project.organization.to_lowercase(),
-                project.project.to_lowercase(),
-            );
+            let key = activity_key(&project.organization, &project.project);
             let (count, iteration) = activity_by_project.get(&key).cloned().unwrap_or((0, None));
             (index, count, iteration, project.priority)
         })
@@ -165,11 +159,25 @@ pub fn apply_optimization(
         let project = &mut settings.projects[index];
         project.priority = priority as u32;
         if count > 0 {
-            project.interest_iterations = iteration.into_iter().collect();
+            // 最頻 Iteration が取れたときだけ書き換える。空で上書きすると、
+            // Iteration を運用していないプロジェクトで手動設定した
+            // `interest_iterations` が最適化のたびに消える。
+            if let Some(iteration) = iteration {
+                project.interest_iterations = vec![iteration];
+            }
             optimized += 1;
         }
     }
     optimized
+}
+
+/// 設定側とアクティビティ側で綴りの揺れ (前後の空白・大小文字) を吸収する
+/// 突き合わせキー。設定の組織名に空白が混じっていると一致しなくなる。
+fn activity_key(organization: &str, project: &str) -> (String, String) {
+    (
+        organization.trim().to_lowercase(),
+        project.trim().to_lowercase(),
+    )
 }
 
 /// Area Path の出現回数を多い順に集計する。
@@ -233,6 +241,49 @@ mod tests {
             ["Active\\Sprint 2"]
         );
         assert!(settings.projects[0].interest_iterations.is_empty());
+    }
+
+    /// 設定側に前後の空白が混じっていても、集計結果と突き合わせられること。
+    #[test]
+    fn optimization_matches_projects_despite_surrounding_whitespace() {
+        let mut settings = AzureDevOpsSettings {
+            enabled: true,
+            projects: vec![project(" contoso ", " Active ", 5)],
+        };
+        let activity = vec![ProjectActivity {
+            organization: "contoso".to_string(),
+            project: "Active".to_string(),
+            count: 2,
+            areas: Vec::new(),
+            iterations: vec![("Active\\Sprint 1".to_string(), 2)],
+        }];
+
+        assert_eq!(apply_optimization(&mut settings, &activity), 1);
+        assert_eq!(
+            settings.projects[0].interest_iterations,
+            ["Active\\Sprint 1"]
+        );
+    }
+
+    /// Iteration を運用していないプロジェクトで、手動設定した
+    /// `interest_iterations` が最適化で消えないこと。
+    #[test]
+    fn optimization_keeps_manual_iterations_when_activity_has_none() {
+        let mut settings = AzureDevOpsSettings {
+            enabled: true,
+            projects: vec![project("contoso", "Active", 0)],
+        };
+        settings.projects[0].interest_iterations = vec!["Active\\Manual".to_string()];
+        let activity = vec![ProjectActivity {
+            organization: "contoso".to_string(),
+            project: "Active".to_string(),
+            count: 4,
+            areas: vec![("Active\\Area".to_string(), 4)],
+            iterations: Vec::new(),
+        }];
+
+        assert_eq!(apply_optimization(&mut settings, &activity), 1);
+        assert_eq!(settings.projects[0].interest_iterations, ["Active\\Manual"]);
     }
 
     fn project(
