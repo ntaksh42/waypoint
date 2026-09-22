@@ -86,6 +86,125 @@ mod tests {
         assert_eq!(results[0].status, "Active");
     }
 
+    fn pr_project() -> AzureDevOpsProject {
+        AzureDevOpsProject {
+            organization: "org".to_string(),
+            project: "project".to_string(),
+            aliases: Vec::new(),
+            priority: 0,
+            include_pull_requests: true,
+            include_pipelines: true,
+            include_work_items: true,
+            interest_areas: Vec::new(),
+            interest_iterations: Vec::new(),
+            interest_repositories: Vec::new(),
+        }
+    }
+
+    /// `az pr needs-review` / `waiting` / `ready` / `draft` のライブ検索は
+    /// この導出フラグだけを見る。生 JSON から立てられないと、絞り込みが
+    /// 効かないまま Active PR が丸ごと返る。
+    #[test]
+    fn pull_request_row_derives_the_review_state_filters_from_reviewer_votes() {
+        let row = pull_request_row(
+            &pr_project(),
+            &json!({
+                "pullRequestId": 7,
+                "title": "Add az filters",
+                "status": "active",
+                "isDraft": true,
+                "createdBy": { "id": "me", "displayName": "Me" },
+                "reviewers": [
+                    { "id": "me", "vote": 0, "isRequired": true },
+                    { "id": "other", "vote": -5, "isRequired": true }
+                ]
+            }),
+            Some("me"),
+        )
+        .expect("row");
+        assert!(row.is_author);
+        assert!(row.is_reviewer);
+        assert!(row.is_draft);
+        assert!(row.needs_my_review, "未投票の reviewer なので要レビュー");
+        assert!(row.waiting_for_others, "required に未投票・差し戻しが残る");
+        assert!(!row.ready_to_complete);
+    }
+
+    #[test]
+    fn pull_request_row_marks_ready_to_complete_when_every_required_reviewer_approved() {
+        let row = pull_request_row(
+            &pr_project(),
+            &json!({
+                "pullRequestId": 8,
+                "title": "Ready",
+                "status": "active",
+                "createdBy": { "id": "me" },
+                "reviewers": [{ "id": "other", "vote": 10, "isRequired": true }]
+            }),
+            Some("me"),
+        )
+        .expect("row");
+        assert!(row.ready_to_complete);
+        assert!(!row.waiting_for_others);
+        assert!(!row.needs_my_review, "自分は reviewer ではない");
+    }
+
+    /// Completed / Abandoned に Active 前提のフラグを立てない。
+    #[test]
+    fn closed_pull_requests_never_carry_the_active_only_filters() {
+        let row = pull_request_row(
+            &pr_project(),
+            &json!({
+                "pullRequestId": 9,
+                "title": "Old",
+                "status": "completed",
+                "creationDate": "2000-01-01T00:00:00Z",
+                "createdBy": { "id": "me" },
+                "reviewers": [{ "id": "me", "vote": 0, "isRequired": true }]
+            }),
+            Some("me"),
+        )
+        .expect("row");
+        assert!(!row.needs_my_review);
+        assert!(!row.waiting_for_others);
+        assert!(!row.ready_to_complete);
+        assert!(!row.is_stale);
+    }
+
+    #[test]
+    fn active_pull_requests_older_than_two_weeks_are_stale() {
+        let row = pull_request_row(
+            &pr_project(),
+            &json!({
+                "pullRequestId": 10,
+                "title": "Stale",
+                "status": "active",
+                "creationDate": "2000-01-01T00:00:00Z"
+            }),
+            None,
+        )
+        .expect("row");
+        assert!(row.is_stale);
+    }
+
+    /// 自分の ID が未解決でも他人の PR を `author` にしない。
+    #[test]
+    fn unknown_identity_never_claims_authorship() {
+        let row = pull_request_row(
+            &pr_project(),
+            &json!({
+                "pullRequestId": 11,
+                "title": "Someone else",
+                "status": "active",
+                "createdBy": { "displayName": "Other" }
+            }),
+            None,
+        )
+        .expect("row");
+        assert!(!row.is_author);
+        assert!(!row.is_mine);
+    }
+
     #[test]
     fn project_names_sort_and_deduplicate_case_insensitively() {
         assert_eq!(

@@ -101,6 +101,13 @@ fn pr_history_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
             is_mine: row.get::<_, i64>(8)? != 0,
             is_author: false,
             is_reviewer: false,
+            // Completed/Abandoned の履歴だけを持つテーブルなので、
+            // Active 前提の導出フラグはすべて false で正しい。
+            is_draft: false,
+            needs_my_review: false,
+            waiting_for_others: false,
+            ready_to_complete: false,
+            is_stale: false,
         })
     }) else {
         return Vec::new();
@@ -230,7 +237,13 @@ fn read_candidate_groups(
                                         && reviewer.reviewer_id == my_id
                                 })
                         });
-                        let is_author = row.created_by_id.as_deref() == my_id.as_deref();
+                        // 自分の ID が未解決 (初回同期前・connectionData 失敗) の
+                        // ときは「誰の PR でもない」側へ倒す。`Option` 同士を
+                        // 直接比べると、作成者 ID を持たない行と None が一致して
+                        // 他人の PR まで `author` 扱いになる。
+                        let is_author = my_id
+                            .as_deref()
+                            .is_some_and(|my_id| row.created_by_id.as_deref() == Some(my_id));
                         let my_reviewer = reviewers.iter().find(|reviewer| {
                             reviewer.repository_id == row.repository_id
                                 && reviewer.pull_request_id == row.pull_request_id

@@ -137,6 +137,24 @@ pub fn search_pull_requests_live_async(
         if filter.reviewer {
             results.retain(|candidate| candidate.is_reviewer);
         }
+        // 残りの絞り込みもキャッシュ検索 (`Index::search`) と同じ条件で
+        // 適用する。ここを落とすと `az pr active needs-review` の
+        // `Ctrl+Enter` が Active PR を丸ごと返してしまう。
+        if filter.needs_review {
+            results.retain(|candidate| candidate.needs_my_review);
+        }
+        if filter.waiting {
+            results.retain(|candidate| candidate.waiting_for_others);
+        }
+        if filter.draft {
+            results.retain(|candidate| candidate.is_draft);
+        }
+        if filter.ready {
+            results.retain(|candidate| candidate.ready_to_complete);
+        }
+        if filter.stale {
+            results.retain(|candidate| candidate.is_stale);
+        }
         results.sort_by_key(|candidate| {
             (
                 title_match_quality(&candidate.name, &query).unwrap_or(u8::MAX),

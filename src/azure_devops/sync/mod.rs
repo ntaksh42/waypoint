@@ -8,7 +8,7 @@ mod pull_requests;
 mod work_items;
 
 pub use common::refresh_async;
-pub(crate) use common::{REFRESHING, take_refresh_reply};
+pub(crate) use common::{REFRESHING, RunningFlag, take_refresh_reply};
 
 pub use activity::{ProjectActivity, apply_optimization, suggest_priorities_async};
 pub use pipelines::{search_pipelines_live_async, take_pipeline_results};

@@ -41,7 +41,7 @@ use convert::{
     unix_timestamp, valid_project,
 };
 use credential::credential_for_request;
-use sync::REFRESHING;
+use sync::{REFRESHING, RunningFlag};
 pub(crate) use title_search::match_quality as title_match_quality;
 
 pub use api::{fetch_area_nodes, fetch_my_area_suggestions, list_repository_names};
@@ -71,11 +71,13 @@ static OPTIMIZING: AtomicBool = AtomicBool::new(false);
 /// `az optimize` 用。ネットワーク集計と保存を UI スレッド外で完結させ、成功時
 /// だけ設定再読み込みメッセージを返す。同じ最適化を同時に走らせない。
 pub fn optimize_async(settings: AzureDevOpsSettings, notify: HWND, message: u32) -> bool {
-    if OPTIMIZING.swap(true, Ordering::AcqRel) {
+    let Some(running) = RunningFlag::acquire(&OPTIMIZING) else {
         return false;
-    }
+    };
     let notify = notify.0 as isize;
     thread::spawn(move || {
+        // パニックしてもフラグを下ろすため、ワーカーの生存期間に紐づける。
+        let _running = running;
         let result = suggest_priorities_async(settings)
             .recv()
             .map_err(|_| "Recent activity worker stopped unexpectedly.".to_string())
@@ -112,7 +114,6 @@ pub fn optimize_async(settings: AzureDevOpsSettings, notify: HWND, message: u32)
                 crate::panic_log::record(&format!("azure devops: optimize failed: {error}"))
             }
         }
-        OPTIMIZING.store(false, Ordering::Release);
     });
     true
 }

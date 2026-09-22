@@ -40,7 +40,10 @@ pub(in crate::quick_launch_window) fn start_azure_pull_request_live_search(
     query: &str,
 ) -> bool {
     let filter = filter.for_live();
-    let key = format!("pr:{:?}:{}:{}", filter.status, filter.mine, query.trim());
+    // gate のキーには絞り込み条件を全部入れる。status と mine だけだと
+    // `az pr active author x` → `az pr active reviewer x` のような切り替えが
+    // 同じキーとみなされ、クールダウン中の 2 本目が黙って握り潰される。
+    let key = format!("pr:{filter:?}:{}", query.trim());
     if !state.borrow_mut().azure_live_search_gate.try_start(
         LiveSearchKind::PullRequests,
         &key,

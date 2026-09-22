@@ -114,14 +114,39 @@ pub(crate) fn pull_request_row(
     let repository = item["repository"]["name"].as_str().unwrap_or("");
     let author = item["createdBy"]["displayName"].as_str().unwrap_or("");
     let is_author = current_user.is_some_and(|user| item["createdBy"]["id"].as_str() == Some(user));
-    let is_reviewer = current_user.is_some_and(|user| {
-        item["reviewers"].as_array().is_some_and(|reviewers| {
-            reviewers
-                .iter()
-                .any(|reviewer| reviewer["id"].as_str() == Some(user))
-        })
+    let my_vote = current_user.and_then(|user| {
+        item["reviewers"]
+            .as_array()?
+            .iter()
+            .find(|reviewer| reviewer["id"].as_str() == Some(user))
+            .map(|reviewer| reviewer["vote"].as_i64().unwrap_or(0))
     });
+    let is_reviewer = my_vote.is_some();
     let is_mine = is_author || is_reviewer;
+    // 以降は `az pr needs-review` 等の絞り込みをライブ検索でも効かせる
+    // ための導出フラグ。共有キャッシュ経路 (`candidate_cache.rs`) と同じ
+    // 定義に揃える — 同じ入力で同じ候補が出ないと、キャッシュ検索から
+    // ライブ検索へ切り替えた瞬間に結果の意味が変わってしまう。
+    let is_active = status.eq_ignore_ascii_case("active");
+    let is_draft = item["isDraft"].as_bool().unwrap_or(false);
+    let needs_my_review = is_active && my_vote == Some(0);
+    let required_votes: Vec<i64> = item["reviewers"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|reviewer| reviewer["isRequired"].as_bool().unwrap_or(false))
+        .map(|reviewer| reviewer["vote"].as_i64().unwrap_or(0))
+        .collect();
+    let waiting_for_others = is_author && is_active && required_votes.iter().any(|vote| *vote <= 0);
+    let ready_to_complete = is_author
+        && is_active
+        && !required_votes.is_empty()
+        && required_votes.iter().all(|vote| *vote > 0);
+    let is_stale = is_active
+        && item["creationDate"]
+            .as_str()
+            .and_then(parse_rfc3339_unix)
+            .is_some_and(|created| unix_timestamp().saturating_sub(created) >= 14 * 24 * 60 * 60);
     let url = item["_links"]["web"]["href"]
         .as_str()
         .map(str::to_string)
@@ -154,6 +179,11 @@ pub(crate) fn pull_request_row(
         is_mine,
         is_author,
         is_reviewer,
+        is_draft,
+        needs_my_review,
+        waiting_for_others,
+        ready_to_complete,
+        is_stale,
     })
 }
 
@@ -219,6 +249,11 @@ pub(crate) fn pipeline_row(
         is_mine: false,
         is_author: false,
         is_reviewer: false,
+        is_draft: false,
+        needs_my_review: false,
+        waiting_for_others: false,
+        ready_to_complete: false,
+        is_stale: false,
     }
 }
 
@@ -264,11 +299,11 @@ pub(crate) fn pull_request_cached_row_to_candidate(
         is_mine: row.is_mine,
         is_author: row.is_author,
         is_reviewer: row.is_reviewer,
-        needs_my_review: false,
-        waiting_for_others: false,
-        is_draft: false,
-        ready_to_complete: false,
-        is_stale: false,
+        needs_my_review: row.needs_my_review,
+        waiting_for_others: row.waiting_for_others,
+        is_draft: row.is_draft,
+        ready_to_complete: row.ready_to_complete,
+        is_stale: row.is_stale,
     }
 }
 

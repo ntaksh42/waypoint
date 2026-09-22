@@ -24,6 +24,16 @@ pub(crate) struct CachedRow {
     pub(crate) is_mine: bool,
     pub(crate) is_author: bool,
     pub(crate) is_reviewer: bool,
+    /// 以下 5 つは PR の JSON から導出する絞り込み用フラグ。SQLite へは
+    /// 書かない (永続化するのは Completed/Abandoned の履歴だけで、どれも
+    /// Active 前提のため常に false になる)。ライブ検索 (`az pr` の
+    /// `Ctrl+Enter`) が `PullRequestFilter` をキャッシュ検索と同じ条件で
+    /// 適用できるようにするために持つ。
+    pub(crate) is_draft: bool,
+    pub(crate) needs_my_review: bool,
+    pub(crate) waiting_for_others: bool,
+    pub(crate) ready_to_complete: bool,
+    pub(crate) is_stale: bool,
 }
 
 pub(crate) fn open_cache() -> Result<Connection, String> {

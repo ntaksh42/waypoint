@@ -57,6 +57,26 @@ fn refresh_work(settings: &AzureDevOpsSettings) -> RefreshWork {
 /// 同期を一つに直列化する。設定保存と手動更新が重なっても API と DB を競合させない。
 pub(crate) static REFRESHING: AtomicBool = AtomicBool::new(false);
 
+/// 「実行中」フラグを、正常終了でもパニックでも必ず下ろす RAII ガード。
+///
+/// ワーカースレッドの末尾で `store(false)` するだけだと、途中のパニックで
+/// フラグが立ったまま残り、以後の同期・最適化が恒久的に無言で弾かれる
+/// (`swap(true)` が常に true を返す)。`Drop` なら unwind でも走る。
+pub(crate) struct RunningFlag(&'static AtomicBool);
+
+impl RunningFlag {
+    /// 既に実行中なら `None`。取れた場合だけ処理を進める。
+    pub(crate) fn acquire(flag: &'static AtomicBool) -> Option<Self> {
+        (!flag.swap(true, Ordering::AcqRel)).then_some(Self(flag))
+    }
+}
+
+impl Drop for RunningFlag {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 /// 定期同期完了時に UI スレッドへ渡す、SQLite から構築済みの Azure 候補。
 pub(crate) struct RefreshReply {
     source_settings: AzureDevOpsSettings,
@@ -95,11 +115,12 @@ pub(crate) fn take_refresh_reply() -> Option<RefreshReply> {
 /// SQLite への書き込みはプロジェクトごとに別接続で行うため、同時書き込みは
 /// ファイルロックにより自動的に順番待ちされるだけで安全。
 pub fn refresh_async(settings: AzureDevOpsSettings, notify: HWND, message: u32) -> bool {
-    if REFRESHING.swap(true, Ordering::AcqRel) {
+    let Some(running) = RunningFlag::acquire(&REFRESHING) else {
         return false;
-    }
+    };
     let notify = notify.0 as isize;
     thread::spawn(move || {
+        let running = running;
         if let Err(error) = prune_cache(&settings) {
             crate::panic_log::record(&format!("azure devops: cache prune failed: {error}"));
         }
@@ -163,7 +184,9 @@ pub fn refresh_async(settings: AzureDevOpsSettings, notify: HWND, message: u32) 
             source_settings: settings,
             candidates,
         });
-        REFRESHING.store(false, Ordering::Release);
+        // 完了通知より先にフラグを下ろす。受け取った側がその場で
+        // 次の更新を始められるようにするため。
+        drop(running);
         unsafe {
             let _ = PostMessageW(Some(HWND(notify as *mut _)), message, WPARAM(0), LPARAM(0));
         }
