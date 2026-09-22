@@ -157,6 +157,8 @@ public partial class MainWindow
             foreach (var project in projects)
             {
                 if (project is not JsonObject entry) throw new InvalidDataException("Every entry must be a JSON object.");
+                if (entry["organization"] is not JsonValue || entry["project"] is not JsonValue)
+                    throw new InvalidDataException("Every entry must have \"organization\" and \"project\".");
                 imported.Add(entry.DeepClone());
             }
             AzureSettings()["projects"] = imported;

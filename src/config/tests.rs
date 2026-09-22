@@ -94,3 +94,33 @@ fn shared_settings_do_not_affect_items_or_variables() {
     assert_eq!(cfg.items.len(), original_items_len);
     assert_eq!(cfg.variables.get("Proj").unwrap(), "D:\\work");
 }
+
+/// Azure DevOps の監視プロジェクトに組織名・プロジェクト名が欠けていても、
+/// config 全体のパースは通ること。
+///
+/// 必須フィールド扱いだと、設定画面の Import などで壊れた項目が 1 件
+/// 混ざるだけで `serde` が config 全体を弾き、常駐部が `.bak` へ退避して
+/// 既定設定で再シードする (= 登録したフォルダが丸ごと消える)。欠けた項目は
+/// `valid_project` が同期・検索から外すので、読み飛ばすほうが実害が小さい。
+#[test]
+fn azure_project_missing_organization_does_not_fail_the_whole_config() {
+    let text = r#"{
+        "settings": {
+            "quickLaunch": {
+                "azureDevops": {
+                    "enabled": true,
+                    "projects": [
+                        { "project": "Waypoint" },
+                        { "organization": "contoso", "project": "Waypoint" }
+                    ]
+                }
+            }
+        }
+    }"#;
+
+    let config: Config = serde_json::from_str(text).expect("config は読めること");
+    let projects = &config.settings.quick_launch.azure_devops.projects;
+    assert_eq!(projects.len(), 2);
+    assert_eq!(projects[0].organization, "");
+    assert_eq!(projects[1].organization, "contoso");
+}

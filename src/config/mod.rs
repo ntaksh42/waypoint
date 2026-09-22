@@ -101,7 +101,13 @@ pub struct AzureDevOpsSettings {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AzureDevOpsProject {
+    /// 組織名・プロジェクト名が欠けた項目は `valid_project` が同期・検索から
+    /// 外すので、既定値で読み飛ばす。必須扱いにすると 1 件の不正な項目
+    /// (設定画面の Import 等) で config 全体のパースが失敗し、`.bak` 退避と
+    /// 再シードでフォルダ登録ごと初期化されてしまう。
+    #[serde(default)]
     pub organization: String,
+    #[serde(default)]
     pub project: String,
     #[serde(default)]
     pub aliases: Vec<String>,
