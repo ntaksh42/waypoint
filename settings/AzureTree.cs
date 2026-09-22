@@ -29,8 +29,13 @@ public partial class MainWindow
         foreach (var group in groups)
         {
             var count = group.Count();
-            var orgItem = new TreeViewItem { Header = BuildOrgHeader(group.Key, count, filter), Tag = group.Key, IsExpanded = true };
-            AutomationProperties.SetName(orgItem, $"{group.Key}, {count} project{(count == 1 ? "" : "s")}, {(HasPat(group.Key) ? "PAT connected" : "no PAT")}");
+            // HasPat は Credential Manager への CredRead。ヘッダーの色・
+            // ツールチップ・読み上げ名で 3 回呼ぶと、検索欄の 1 打鍵ごとに
+            // 走る RebuildAzureTree が組織数 x 3 回の P/Invoke を抱える。
+            // 組織あたり 1 回だけ引いて使い回す。
+            var hasPat = HasPat(group.Key);
+            var orgItem = new TreeViewItem { Header = BuildOrgHeader(group.Key, count, filter, hasPat), Tag = group.Key, IsExpanded = true };
+            AutomationProperties.SetName(orgItem, $"{group.Key}, {count} project{(count == 1 ? "" : "s")}, {(hasPat ? "PAT connected" : "no PAT")}");
             if (preferSelect is string organization && organization.Equals(group.Key, StringComparison.OrdinalIgnoreCase)) toSelect = orgItem;
             foreach (var row in group.OrderBy(row => row.Priority))
             {
@@ -51,14 +56,14 @@ public partial class MainWindow
         else ClearAzureDetailsPanel();
     }
 
-    private static object BuildOrgHeader(string organization, int projectCount, string filter)
+    private static object BuildOrgHeader(string organization, int projectCount, string filter, bool hasPat)
     {
         var panel = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         panel.Children.Add(new Ellipse
         {
             Width = 7, Height = 7, Margin = new Thickness(0, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center,
-            Fill = new SolidColorBrush(HasPat(organization) ? Color.FromRgb(0x2F, 0x85, 0x58) : Color.FromRgb(0xC7, 0xCC, 0xD3)),
-            ToolTip = HasPat(organization) ? "PAT saved for this organization" : "No PAT saved for this organization",
+            Fill = new SolidColorBrush(hasPat ? Color.FromRgb(0x2F, 0x85, 0x58) : Color.FromRgb(0xC7, 0xCC, 0xD3)),
+            ToolTip = hasPat ? "PAT saved for this organization" : "No PAT saved for this organization",
         });
         panel.Children.Add(HighlightedText(string.IsNullOrWhiteSpace(organization) ? "(no organization)" : organization, filter, FontWeights.SemiBold));
         panel.Children.Add(new TextBlock

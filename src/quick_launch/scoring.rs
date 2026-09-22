@@ -150,7 +150,17 @@ pub(crate) fn highlight_ranges(name: &str, term: &str) -> Vec<(usize, usize)> {
 /// 1 語ぶんのヒット範囲。連続部分一致 (tier0〜3 相当) を優先し、
 /// 無ければ fuzzy のサブシーケンス一致 (tier6 相当) を試す。
 fn term_ranges(name: &str, name_lower: &str, word: &str) -> Vec<(usize, usize)> {
-    if let Some(start) = name_lower.find(word) {
+    // `name_lower` 上のバイト位置を `name` にそのまま流用してよいのは、
+    // `to_lowercase` がバイト長を変えなかったときだけ。`\u{130}` (I with dot)
+    // は 2 バイトから 3 バイトへ伸び、ケルビン記号 `\u{212A}` は 3 バイトから
+    // 1 バイトへ縮む。ずれた範囲で `name` をスライスすると、良くて無関係な
+    // 箇所を強調し、悪くすると文字境界の外で panic する (描画は
+    // `window_proc` の中なので unwind できず abort になる)。長さが変わった
+    // 場合は下の fuzzy 経路へ落とす。そちらは `name` 自身の文字境界表を
+    // 使うので、位置がずれても panic しない。
+    if name.len() == name_lower.len()
+        && let Some(start) = name_lower.find(word)
+    {
         return vec![(start, start + word.len())];
     }
     let Some((_, char_indices)) = FUZZY_MATCHER.fuzzy_indices(name_lower, word) else {

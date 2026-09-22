@@ -137,6 +137,32 @@ fn highlight_ranges_fuzzy_is_scattered() {
     assert_eq!(ranges, vec![(0, 1), (9, 10), (11, 12)]);
 }
 
+/// `to_lowercase` がバイト長を変える文字が名前に含まれていても、返る範囲は
+/// 必ず元の `name` の有効なスライスになること。
+///
+/// ハイライトの描画 (`quick_launch_window::highlight::draw_text_highlighted`)
+/// は範囲で `name` を直接スライスする。U+0130 は小文字化で 2 バイトから
+/// 3 バイトへ伸び、U+212A (ケルビン記号) は 3 バイトから 1 バイトへ縮む。
+/// 小文字化後の位置をそのまま使うと文字境界の外を指し、`window_proc` の
+/// 中で panic (= abort) していた。
+#[test]
+fn highlight_ranges_stay_valid_when_lowercasing_changes_byte_length() {
+    for name in [
+        "PR 12: İstanbul deploy",
+        "PR 13: Kelvin build",
+        "İİİ deploy",
+    ] {
+        for term in ["deploy", "build", "pr"] {
+            for (start, end) in highlight_ranges(name, term) {
+                assert!(
+                    name.get(start..end).is_some(),
+                    "{name:?} の {start}..{end} が {term:?} で無効なスライスになった"
+                );
+            }
+        }
+    }
+}
+
 /// breadcrumb/path 経由の一致 (name 自体には一致しない) はハイライト対象外。
 #[test]
 fn highlight_ranges_empty_when_name_does_not_match() {
