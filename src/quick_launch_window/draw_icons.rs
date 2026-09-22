@@ -89,10 +89,16 @@ pub(super) unsafe fn draw_command_icon(hdc: HDC, rect: RECT, dpi: u32, font: Opt
     }
 }
 
+/// シェル名前空間の指定かどうか。`shell:MyComputerFolder` と
+/// `::{GUID}` はファイルパスではないため、ファイル扱いで引くと必ず失敗する
+/// (実測: `::{20D04FE0-...}` は `SHGetFileInfo` が何も返さない)。
+pub(super) fn is_shell_namespace(path: &str) -> bool {
+    path.starts_with("shell:") || path.starts_with("::{")
+}
+
 pub(super) unsafe fn draw_path_icon(hdc: HDC, path: &str, rect: RECT, dpi: u32) {
     let size = scale(ICON_SIZE, dpi);
-    // shell:MyComputerFolder 等はファイルパスではないため専用の解決経路を使う
-    let bitmap = if path.starts_with("shell:") {
+    let bitmap = if is_shell_namespace(path) {
         crate::icon::bitmap_for_shell_sized(path, size)
     } else {
         crate::icon::bitmap_for_sized(path, size)
@@ -187,5 +193,20 @@ pub(super) unsafe fn draw_icon_bitmap(hdc: HDC, bitmap: HBITMAP, rect: RECT, dpi
         );
         SelectObject(source, old);
         let _ = DeleteDC(source);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_shell_namespace;
+
+    #[test]
+    fn detects_both_spellings_of_shell_namespace() {
+        assert!(is_shell_namespace("shell:MyComputerFolder"));
+        assert!(is_shell_namespace(
+            "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}"
+        ));
+        assert!(!is_shell_namespace(r"C:\Users"));
+        assert!(!is_shell_namespace("https://example.com/"));
     }
 }

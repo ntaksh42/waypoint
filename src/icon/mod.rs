@@ -6,6 +6,7 @@ mod window;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::SIZE;
 use windows::Win32::Graphics::Gdi::{DeleteObject, HBITMAP};
@@ -18,8 +19,30 @@ pub(crate) use window::bitmap_for_window_sized;
 
 thread_local! {
     /// パス -> ビットマップ。Quick Launch の再描画ごとに引き直さない。
-    static CACHE: RefCell<HashMap<String, isize>> = RefCell::new(HashMap::new());
+    static CACHE: RefCell<HashMap<String, Cached>> = RefCell::new(HashMap::new());
 }
+
+/// キャッシュの中身。失敗も覚えるが、成功と違って期限を持つ。
+enum Cached {
+    Bitmap(isize),
+    Failed(Instant),
+}
+
+/// 取得に失敗した項目を再び引き直すまでの間隔。
+///
+/// 失敗を覚えないと、到達できないネットワークパスのように 1 回が重い
+/// 相手へ再描画のたびに問い合わせて表示が固まる。一方で永久に覚えると、
+/// たまたま取れなかっただけの項目 (オフラインだった共有、起動直後で
+/// `WM_GETICON` に応答しなかったウィンドウ) がセッション中ずっと
+/// アイコン無しのままになる。
+const RETRY_AFTER: Duration = Duration::from_secs(30);
+
+/// キャッシュが抱える最大件数。
+///
+/// GDI オブジェクトはプロセスあたり 10,000 個で頭打ちになり (実測)、
+/// そこに達すると以降すべてのビットマップ生成が失敗する。Everything の
+/// 検索結果はパスごとに 1 件増えるため、上限を超えたら捨てて作り直す。
+const MAX_ENTRIES: usize = 2048;
 
 /// 設定 (歯車) アイコンの在り処。
 ///
@@ -113,56 +136,60 @@ pub(crate) fn bitmap_for_favicon_sized(url: &str, size: i32) -> Option<HBITMAP> 
 }
 
 fn cached_bitmap(key: &str, load: impl FnOnce() -> Option<HBITMAP>) -> Option<HBITMAP> {
-    let cached = CACHE.with(|cache| cache.borrow().get(key).copied());
-    if let Some(raw) = cached {
-        return (raw != 0).then_some(HBITMAP(raw as *mut _));
+    // 「まだ引いていない」と「引いて駄目だった」を区別する。前者は
+    // load へ進み、後者は期限が切れるまで None を返す
+    let cached = CACHE.with(|cache| match cache.borrow().get(key) {
+        Some(Cached::Bitmap(raw)) => Some(Some(*raw)),
+        Some(Cached::Failed(at)) if at.elapsed() < RETRY_AFTER => Some(None),
+        _ => None,
+    });
+    if let Some(hit) = cached {
+        return hit.map(|raw| HBITMAP(raw as *mut _));
     }
     let bitmap = load();
     CACHE.with(|cache| {
-        cache
-            .borrow_mut()
-            .insert(key.to_string(), bitmap.map_or(0, |value| value.0 as isize))
-    });
-    bitmap
-}
-
-/// ファイルパスを持たないシェル名前空間項目のアイコンを得る。
-pub(crate) fn bitmap_for_shell_sized(target: &str, size: i32) -> Option<HBITMAP> {
-    let key = format!("shell-namespace:{size}:{target}");
-    let cached = CACHE.with(|cache| cache.borrow().get(&key).copied());
-    if let Some(raw) = cached {
-        return (raw != 0).then_some(HBITMAP(raw as *mut _));
-    }
-
-    let bitmap = shell_icon(target, size).and_then(|icon| {
-        let bitmap = icon_to_bitmap(icon, SIZE { cx: size, cy: size });
-        unsafe {
-            let _ = DestroyIcon(icon);
+        let mut cache = cache.borrow_mut();
+        if cache.len() >= MAX_ENTRIES {
+            drop_entries(&mut cache);
         }
-        bitmap
-    });
-    CACHE.with(|cache| {
-        cache
-            .borrow_mut()
-            .insert(key, bitmap.map_or(0, |value| value.0 as isize))
+        let entry = match bitmap {
+            Some(value) => Cached::Bitmap(value.0 as isize),
+            None => Cached::Failed(Instant::now()),
+        };
+        cache.insert(key.to_string(), entry);
     });
     bitmap
 }
 
-/// キャッシュを捨てる。テーマ変更や設定再読み込みで呼ぶ。
+/// 値の `HBITMAP` を解放しつつ全件捨てる。
 ///
 /// `HashMap` を空にするだけでは中身の `HBITMAP` は解放されない。
 /// テーマ変更・設定再読み込みのたびに全件 GDI リークし、頻繁な
 /// 切り替えでプロセスの GDI ハンドル上限に達してアイコンが描けなく
 /// なる (実測で確認済み) 。値を読んでから `DeleteObject` する。
-pub(crate) fn clear_cache() {
-    CACHE.with(|c| {
-        for (_, raw) in c.borrow_mut().drain() {
-            if raw != 0 {
-                unsafe {
-                    let _ = DeleteObject(HBITMAP(raw as *mut _).into());
-                }
+fn drop_entries(cache: &mut HashMap<String, Cached>) {
+    for (_, entry) in cache.drain() {
+        if let Cached::Bitmap(raw) = entry {
+            unsafe {
+                let _ = DeleteObject(HBITMAP(raw as *mut _).into());
             }
         }
-    });
+    }
+}
+
+/// ファイルパスを持たないシェル名前空間項目のアイコンを得る。
+pub(crate) fn bitmap_for_shell_sized(target: &str, size: i32) -> Option<HBITMAP> {
+    cached_bitmap(&format!("shell-namespace:{size}:{target}"), || {
+        let icon = shell_icon(target, size)?;
+        let bitmap = icon_to_bitmap(icon, SIZE { cx: size, cy: size });
+        unsafe {
+            let _ = DestroyIcon(icon);
+        }
+        bitmap
+    })
+}
+
+/// キャッシュを捨てる。テーマ変更や設定再読み込みで呼ぶ。
+pub(crate) fn clear_cache() {
+    CACHE.with(|cache| drop_entries(&mut cache.borrow_mut()));
 }

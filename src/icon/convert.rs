@@ -6,11 +6,14 @@ use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetObjectW,
     HBITMAP, HGDIOBJ, SelectObject,
 };
+use windows::Win32::Storage::FileSystem::{
+    FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_FLAGS_AND_ATTRIBUTES,
+};
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::UI::Controls::{IImageList, ILD_TRANSPARENT};
 use windows::Win32::UI::Shell::{
     SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGFI_PIDL, SHGFI_SMALLICON, SHGFI_SYSICONINDEX,
-    SHGetFileInfoW, SHGetImageList, SHParseDisplayName,
+    SHGFI_USEFILEATTRIBUTES, SHGetFileInfoW, SHGetImageList, SHParseDisplayName,
 };
 use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, ICONINFO};
 use windows::core::{HSTRING, PCWSTR};
@@ -27,17 +30,43 @@ pub(crate) fn load_bitmap(path: &str, size: i32) -> Option<HBITMAP> {
 }
 
 /// シェルが返すアイコンを、描画寸法に見合う解像度で取得する。
+/// 実体を引けないパス (不在・未接続ドライブ・届かない UNC は 2.1 秒
+/// ブロックした末に失敗) は、拡張子から引く型アイコンへ落とす。
 pub(crate) fn system_icon(path: &str, wanted: i32) -> Option<HICON> {
+    if !path.starts_with(r"\\")
+        && let Some(icon) = shell_file_icon(path, wanted, Default::default(), Default::default())
+    {
+        return Some(icon);
+    }
+    shell_file_icon(path, wanted, attributes_for(path), SHGFI_USEFILEATTRIBUTES)
+}
+
+/// 実体を持たないパスを `SHGFI_USEFILEATTRIBUTES` で引くときに渡す属性。
+/// 拡張子があればファイル、なければフォルダとして扱う。
+fn attributes_for(path: &str) -> FILE_FLAGS_AND_ATTRIBUTES {
+    if std::path::Path::new(path).extension().is_some() {
+        FILE_ATTRIBUTE_NORMAL
+    } else {
+        FILE_ATTRIBUTE_DIRECTORY
+    }
+}
+
+fn shell_file_icon(
+    path: &str,
+    wanted: i32,
+    attributes: FILE_FLAGS_AND_ATTRIBUTES,
+    extra: windows::Win32::UI::Shell::SHGFI_FLAGS,
+) -> Option<HICON> {
     unsafe {
         let wide = HSTRING::from(path);
         let mut info = SHFILEINFOW::default();
 
         // まずシステムイメージリストから引く。こちらのほうが
         // ハンドルを増やさずに済む
-        let flags = SHGFI_SYSICONINDEX | SHGFI_SMALLICON;
+        let flags = SHGFI_SYSICONINDEX | SHGFI_SMALLICON | extra;
         let ok = SHGetFileInfoW(
             &wide,
-            Default::default(),
+            attributes,
             Some(&mut info),
             size_of::<SHFILEINFOW>() as u32,
             flags,
@@ -54,10 +83,10 @@ pub(crate) fn system_icon(path: &str, wanted: i32) -> Option<HICON> {
         let mut info = SHFILEINFOW::default();
         let ok = SHGetFileInfoW(
             &wide,
-            Default::default(),
+            attributes,
             Some(&mut info),
             size_of::<SHFILEINFOW>() as u32,
-            SHGFI_ICON | icon_size_flag(wanted),
+            SHGFI_ICON | icon_size_flag(wanted) | extra,
         );
         (ok != 0 && !info.hIcon.is_invalid()).then_some(info.hIcon)
     }
@@ -270,5 +299,28 @@ pub(crate) fn rgba_to_bitmap(rgba: &[u8], size: SIZE) -> Option<HBITMAP> {
             target[3] = source[3];
         }
         Some(bitmap)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 実体に触れられないパスでも型アイコンは返す。返せないと候補行の
+    /// アイコンが丸ごと空になる (`draw_path_icon` にフォールバックが無い)。
+    #[test]
+    fn falls_back_to_type_icon_for_unreachable_paths() {
+        for path in [
+            r"C:\__waypoint_no_such_dir__",
+            r"C:\__waypoint_no_such_file__.txt",
+            r"Z:\",
+            r"\\no-such-host-waypoint\share\file.txt",
+        ] {
+            let icon = system_icon(path, 26);
+            assert!(icon.is_some(), "{path} のアイコンが取れていない");
+            unsafe {
+                let _ = DestroyIcon(icon.unwrap());
+            }
+        }
     }
 }
