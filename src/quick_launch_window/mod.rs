@@ -4,11 +4,13 @@ mod azure_live;
 mod badge;
 mod dispatch;
 mod draw;
+mod draw_footer;
 mod draw_icons;
 mod draw_row;
 mod highlight;
 mod input;
 mod layout;
+mod row_parts;
 mod search;
 mod state;
 #[cfg(test)]
@@ -477,6 +479,7 @@ fn ensure_window(owner: HWND) -> Result<()> {
         )?;
         let _ = SetWindowTheme(edit, w!("DarkMode_Explorer"), PCWSTR::null());
         let _ = SetWindowTheme(list, w!("DarkMode_Explorer"), PCWSTR::null());
+        layout::set_search_placeholder(edit);
         STATE.with(|state| {
             let mut state = state.borrow_mut();
             state.window = Some(window);

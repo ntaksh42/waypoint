@@ -2,7 +2,7 @@
 
 use windows::Win32::Foundation::COLORREF;
 
-use super::{ACCENT, rgb};
+use super::{ACCENT, TAG_TEXT, rgb};
 use crate::quick_launch::Action;
 
 /// モードバッジの背景色。プレフィックスごとに見分けは付けるが、
@@ -22,28 +22,71 @@ pub(super) fn shows_live_search_hint(badge: Option<&str>) -> bool {
     badge == Some("AZURE DEVOPS")
 }
 
-/// 候補のアクション種別を表す色。種別の判別はアイコン自体の形が担うため、
-/// 背景色は原則アクセント 1 色に寄せて静かにする。
-pub(super) fn action_color(action: &Action) -> COLORREF {
+/// 候補行の右端に出す種別タグ。アイコンだけでは見分けにくい
+/// (フォルダ・ファイル・URL がどれも似た見た目になる) ため、文字で補う。
+/// `az ` モードの Azure DevOps 候補は URL から PR / Work Item 等を判定する。
+pub(super) fn action_tag(action: &Action, badge: Option<&str>, path: &str) -> &'static str {
+    if let Some(kind) = azure_icon_kind(badge, path) {
+        return match kind {
+            AzureIconKind::PullRequest => "PR",
+            AzureIconKind::WorkItem => "Work Item",
+            AzureIconKind::Pipeline => "Pipeline",
+            AzureIconKind::Project => "Project",
+        };
+    }
     match action {
-        Action::FocusWindow(_) | Action::LaunchApp => badge_color("WINDOWS"),
+        Action::OpenFolder(_) => "Folder",
+        Action::FocusWindow(_) => "Window",
+        Action::FocusBrowserTab(_) => "Tab",
+        Action::OpenUrl(_) => "Link",
+        Action::OpenWithDefaultHandler => "File",
+        Action::LaunchApp => "App",
+        Action::OpenInTerminal => "Terminal",
+        Action::OpenInEditor(_) => "Editor",
+        Action::OpenClaudeCode(_) => "Claude Code",
+        Action::OpenCodex => "Codex",
+        // `cc ` のフォルダ候補は path を持つ ReplaceQuery (draw_row.rs 参照)
+        Action::ReplaceQuery(_) if !path.is_empty() => "Folder",
+        Action::ReplaceQuery(_)
+        | Action::AzureOptimize
+        | Action::OpenSettings
+        | Action::OpenHelp => "Command",
+        Action::AzureLiveWorkItemSearch(_)
+        | Action::AzureLivePullRequestSearch { .. }
+        | Action::AzureLivePipelineSearch { .. } => "Search",
+        Action::WebSearch => "Web",
+        Action::KillProcess(_) => "Kill",
+    }
+}
+
+/// 種別タグの文字色。kill は確認なしの即時破壊操作 (FR-9.15.2) なので、
+/// モードバッジと同じ警告色にして誤操作に気付けるようにする。
+pub(super) fn action_tag_color(action: &Action) -> COLORREF {
+    match action {
+        Action::KillProcess(_) => badge_color("KILL"),
+        _ => TAG_TEXT,
+    }
+}
+
+/// 選択行の右端に種別タグの代わりに出す、Enter で起きることの説明。
+pub(super) fn action_verb(action: &Action) -> &'static str {
+    match action {
+        Action::FocusWindow(_) | Action::FocusBrowserTab(_) => "Switch \u{21B5}",
+        Action::ReplaceQuery(_) => "Complete \u{21B5}",
+        Action::AzureLiveWorkItemSearch(_)
+        | Action::AzureLivePullRequestSearch { .. }
+        | Action::AzureLivePipelineSearch { .. }
+        | Action::WebSearch => "Search \u{21B5}",
+        Action::AzureOptimize => "Run \u{21B5}",
+        Action::LaunchApp | Action::OpenClaudeCode(_) | Action::OpenCodex => "Launch \u{21B5}",
+        Action::KillProcess(_) => "Kill \u{21B5}",
         Action::OpenFolder(_)
         | Action::OpenUrl(_)
-        | Action::FocusBrowserTab(_)
         | Action::OpenWithDefaultHandler
         | Action::OpenInTerminal
         | Action::OpenInEditor(_)
-        | Action::OpenClaudeCode(_)
-        | Action::OpenCodex
-        | Action::ReplaceQuery(_)
-        | Action::AzureLiveWorkItemSearch(_)
-        | Action::AzureLivePullRequestSearch { .. }
-        | Action::AzureLivePipelineSearch { .. }
-        | Action::AzureOptimize
         | Action::OpenSettings
-        | Action::OpenHelp
-        | Action::WebSearch => ACCENT,
-        Action::KillProcess(_) => badge_color("KILL"),
+        | Action::OpenHelp => "Open \u{21B5}",
     }
 }
 

@@ -3,12 +3,16 @@
 use super::badge::{badge_color, shows_live_search_hint};
 use super::draw_icons::backdrop_tint;
 use super::layout::{scale, weekday_label};
-use super::{ACCENT, BADGE_WIDTH, EDIT_HEIGHT, PADDING, STATE, SURFACE_HOVER, TEXT_SECONDARY};
+use super::{
+    ACCENT, BADGE_WIDTH, EDIT_HEIGHT, PADDING, SEARCH_ICON, STATE, SURFACE, SURFACE_BORDER,
+    SURFACE_HOVER, TEXT_MUTED,
+};
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreatePen, CreateSolidBrush, DT_CALCRECT, DT_CENTER, DT_END_ELLIPSIS, DT_NOPREFIX,
-    DT_SINGLELINE, DT_VCENTER, DeleteObject, DrawTextW, EndPaint, FillRect, HDC, HFONT,
-    PAINTSTRUCT, PS_SOLID, RoundRect, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
+    DT_PATH_ELLIPSIS, DT_SINGLELINE, DT_VCENTER, DeleteObject, DrawTextW, Ellipse, EndPaint,
+    FillRect, HDC, HFONT, LineTo, MoveToEx, PAINTSTRUCT, PS_SOLID, RoundRect, SelectObject,
+    SetBkMode, SetTextColor, TRANSPARENT,
 };
 
 pub(super) fn paint_window(window: HWND) {
@@ -26,6 +30,7 @@ pub(super) fn paint_window(window: HWND) {
             everything_flags,
             everything_active,
             live_hint,
+            tag_font,
         ) = STATE.with(|state| {
             let state = state.borrow();
             let badge = if state.copy_feedback {
@@ -42,6 +47,7 @@ pub(super) fn paint_window(window: HWND) {
                 state.everything_flags,
                 state.everything_active,
                 state.live_search_hint,
+                state.tag_font,
             )
         });
         if let Some(background) = background {
@@ -57,11 +63,11 @@ pub(super) fn paint_window(window: HWND) {
                 bottom: padding + edit_height,
             };
             // 枠線を塗りつぶしと同じ SURFACE にすると検索窓の輪郭が消えて
-            // 背景と一体化して見えるため、地よりわずかに明るい色で縁取る。
-            let surface_pen = CreatePen(PS_SOLID, 1, SURFACE_HOVER);
+            // 背景と一体化して見えるため、地よりはっきり明るい色で縁取る。
+            let surface_pen = CreatePen(PS_SOLID, 1, SURFACE_BORDER);
             let old_pen = SelectObject(hdc, surface_pen.into());
             let old_brush = SelectObject(hdc, surface.into());
-            let radius = scale(10, dpi);
+            let radius = scale(16, dpi);
             let _ = RoundRect(
                 hdc,
                 search.left,
@@ -74,6 +80,7 @@ pub(super) fn paint_window(window: HWND) {
             SelectObject(hdc, old_brush);
             SelectObject(hdc, old_pen);
             let _ = DeleteObject(surface_pen.into());
+            draw_search_icon(hdc, search, dpi);
 
             if let Some(badge) = badge {
                 draw_badge(hdc, badge, search, dpi, detail_font, live_hint);
@@ -84,7 +91,42 @@ pub(super) fn paint_window(window: HWND) {
                 draw_clock(hdc, search, dpi, detail_font);
             }
         }
+        super::draw_footer::draw_footer(hdc, client, dpi, tag_font);
         let _ = EndPaint(window, &paint);
+    }
+}
+
+/// 検索窓の左端に虫眼鏡を描く。入力欄はこの幅だけ右へずらしてある
+/// (`SEARCH_ICON_WIDTH`、dispatch.rs の WM_SIZE)。
+unsafe fn draw_search_icon(hdc: HDC, search: RECT, dpi: u32) {
+    unsafe {
+        let radius = scale(6, dpi);
+        let center_x = search.left + scale(17, dpi);
+        let center_y = (search.top + search.bottom) / 2 - scale(1, dpi);
+        let pen = CreatePen(PS_SOLID, scale(2, dpi), SEARCH_ICON);
+        // 円の内側は検索窓の地で塗り、輪だけが見えるようにする
+        let brush = CreateSolidBrush(SURFACE);
+        let old_pen = SelectObject(hdc, pen.into());
+        let old_brush = SelectObject(hdc, brush.into());
+        let _ = Ellipse(
+            hdc,
+            center_x - radius,
+            center_y - radius,
+            center_x + radius,
+            center_y + radius,
+        );
+        // 柄は円の右下 45 度から伸ばす (半径 / √2 ≒ 0.7)
+        let edge = radius * 7 / 10;
+        let _ = MoveToEx(hdc, center_x + edge, center_y + edge, None);
+        let _ = LineTo(
+            hdc,
+            center_x + edge + scale(4, dpi),
+            center_y + edge + scale(4, dpi),
+        );
+        SelectObject(hdc, old_pen);
+        SelectObject(hdc, old_brush);
+        let _ = DeleteObject(pen.into());
+        let _ = DeleteObject(brush.into());
     }
 }
 
@@ -170,7 +212,7 @@ pub(super) unsafe fn draw_clock(hdc: HDC, search: RECT, dpi: u32, detail_font: O
         };
         let old_font = SelectObject(hdc, font.into());
         SetBkMode(hdc, TRANSPARENT);
-        SetTextColor(hdc, TEXT_SECONDARY);
+        SetTextColor(hdc, TEXT_MUTED);
         draw_text_centered(hdc, &text, &mut rect);
         SelectObject(hdc, old_font);
     }
@@ -270,6 +312,27 @@ pub(super) unsafe fn draw_text(hdc: HDC, text: &str, rect: &mut RECT) {
             &mut wide,
             rect,
             DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX,
+        );
+    }
+}
+
+/// パスを含むテキストを描く。バックスラッシュを含む (ファイルシステムのパス)
+/// なら中央を省略して末尾のフォルダ名・ファイル名を残し、それ以外 (URL 等) は
+/// 通常どおり末尾を省略する。`DT_PATH_ELLIPSIS` はバックスラッシュを区切りと
+/// みなすため、URL に使うと先頭側が消えて何のページか分からなくなる。
+pub(super) unsafe fn draw_text_path(hdc: HDC, text: &str, rect: &mut RECT) {
+    let ellipsis = if text.contains('\\') {
+        DT_PATH_ELLIPSIS
+    } else {
+        DT_END_ELLIPSIS
+    };
+    let mut wide: Vec<u16> = text.encode_utf16().collect();
+    unsafe {
+        DrawTextW(
+            hdc,
+            &mut wide,
+            rect,
+            DT_SINGLELINE | DT_VCENTER | ellipsis | DT_NOPREFIX,
         );
     }
 }

@@ -7,10 +7,10 @@ use windows::Win32::Graphics::Dwm::{
 };
 use windows::Win32::Graphics::Gdi::{
     CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, CreateFontW, DEFAULT_CHARSET, DEFAULT_PITCH,
-    DeleteObject, FW_NORMAL, FW_SEMIBOLD, GetMonitorInfoW, HFONT, InvalidateRect,
+    DeleteObject, FW_BOLD, FW_NORMAL, FW_SEMIBOLD, GetMonitorInfoW, HFONT, InvalidateRect,
     MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint, OUT_DEFAULT_PRECIS,
 };
-use windows::Win32::UI::Controls::EM_SETMARGINS;
+use windows::Win32::UI::Controls::{EM_SETCUEBANNER, EM_SETMARGINS};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetClientRect, GetCursorPos, MoveWindow, WM_SETFONT,
 };
@@ -18,7 +18,10 @@ use windows::core::w;
 
 use crate::config::MonitorChoice;
 
-use super::{EDIT_HEIGHT, HEADER_HEIGHT, PADDING, ROW_HEIGHT, RowKind, STATE, WINDOW_WIDTH};
+use super::{
+    EDIT_HEIGHT, FOOTER_GAP, FOOTER_HEIGHT, HEADER_HEIGHT, PADDING, ROW_HEIGHT, RowKind, STATE,
+    WINDOW_WIDTH,
+};
 
 /// `rows` (見出し・項目・メッセージ行の並び) を実際に描画したときの合計高さを
 /// 見積もる (DPI 適用前、論理ピクセル)。見出し行は `HEADER_HEIGHT`、それ以外
@@ -91,10 +94,13 @@ pub(super) fn position_window(window: HWND, rows_height: i32, dpi: u32) {
         }
         let width = scale(WINDOW_WIDTH, dpi);
         // リストボックスの実高さは WM_SIZE (dispatch.rs) で
-        // `height - (PADDING + EDIT_HEIGHT + 6) - PADDING` に決まる。
+        // `height - (PADDING + EDIT_HEIGHT + 6) - (FOOTER_GAP + FOOTER_HEIGHT)` に決まる。
         // ここで組み立てる height は逆算で、その式が rows_height と一致する
-        // よう PADDING を 2 回 (検索窓の上下) 差し引いた分だけ足す。
-        let height = scale(PADDING * 2 + EDIT_HEIGHT + 6 + rows_height, dpi);
+        // よう、検索窓の帯と下端の操作ヒント帯の分だけ足す。
+        let height = scale(
+            PADDING + EDIT_HEIGHT + 6 + rows_height + FOOTER_GAP + FOOTER_HEIGHT,
+            dpi,
+        );
         let x = work.left + (work.right - work.left - width) / 2;
         let y = work.top + (work.bottom - work.top - height) / 2;
         let _ = MoveWindow(window, x, y, width, height, true);
@@ -103,32 +109,35 @@ pub(super) fn position_window(window: HWND, rows_height: i32, dpi: u32) {
 
 pub(super) fn apply_dpi(window: HWND, dpi: u32) {
     let dpi = dpi.max(96);
-    let (edit, old_fonts, fonts) = STATE.with(|state| {
+    let (edit, old_fonts, edit_font) = STATE.with(|state| {
         let mut state = state.borrow_mut();
         if state.dpi == dpi && state.edit_font.is_some() {
-            return (
-                state.edit,
-                Vec::new(),
-                (state.edit_font, state.name_font, state.detail_font),
-            );
+            return (state.edit, Vec::new(), state.edit_font);
         }
-        let old_fonts = [state.edit_font, state.name_font, state.detail_font]
-            .into_iter()
-            .flatten()
-            .collect();
+        let old_fonts = [
+            state.edit_font,
+            state.name_font,
+            state.detail_font,
+            state.highlight_font,
+            state.tag_font,
+            state.header_font,
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
         state.dpi = dpi;
-        state.edit_font = create_font(scale(14, dpi), FW_NORMAL.0 as i32);
-        state.name_font = create_font(scale(14, dpi), FW_SEMIBOLD.0 as i32);
-        state.detail_font = create_font(scale(12, dpi), FW_NORMAL.0 as i32);
-        (
-            state.edit,
-            old_fonts,
-            (state.edit_font, state.name_font, state.detail_font),
-        )
+        state.edit_font = create_font(scale(16, dpi), FW_NORMAL.0 as i32, false);
+        state.name_font = create_font(scale(15, dpi), FW_SEMIBOLD.0 as i32, false);
+        state.detail_font = create_font(scale(13, dpi), FW_NORMAL.0 as i32, false);
+        // 一致箇所は色だけでは選択行で区別しづらいため、下線付き太字にする
+        state.highlight_font = create_font(scale(15, dpi), FW_BOLD.0 as i32, true);
+        state.tag_font = create_font(scale(12, dpi), FW_NORMAL.0 as i32, false);
+        state.header_font = create_font(scale(11, dpi), FW_BOLD.0 as i32, false);
+        (state.edit, old_fonts, state.edit_font)
     });
 
     unsafe {
-        if let (Some(edit), Some(font)) = (edit, fonts.0) {
+        if let (Some(edit), Some(font)) = (edit, edit_font) {
             let _ = windows::Win32::UI::WindowsAndMessaging::SendMessageW(
                 edit,
                 WM_SETFONT,
@@ -151,7 +160,23 @@ pub(super) fn apply_dpi(window: HWND, dpi: u32) {
     }
 }
 
-pub(super) fn create_font(pixel_height: i32, weight: i32) -> Option<HFONT> {
+/// 空の検索欄に淡色で出す案内文 (cue banner) を設定する。
+/// 何を検索できるかを、入力前に一目で分かるようにする。
+pub(super) fn set_search_placeholder(edit: HWND) {
+    let text = w!("Search folders, windows, apps\u{2026}");
+    unsafe {
+        // wParam = 1: フォーカス中も出す。検索画面は開いた瞬間から入力欄に
+        // フォーカスがあるため、0 だと案内文が一度も見えない
+        let _ = windows::Win32::UI::WindowsAndMessaging::SendMessageW(
+            edit,
+            EM_SETCUEBANNER,
+            Some(WPARAM(1)),
+            Some(LPARAM(text.as_ptr() as isize)),
+        );
+    }
+}
+
+pub(super) fn create_font(pixel_height: i32, weight: i32, underline: bool) -> Option<HFONT> {
     let font = unsafe {
         CreateFontW(
             -pixel_height,
@@ -160,7 +185,7 @@ pub(super) fn create_font(pixel_height: i32, weight: i32) -> Option<HFONT> {
             0,
             weight,
             0,
-            0,
+            u32::from(underline),
             0,
             DEFAULT_CHARSET,
             OUT_DEFAULT_PRECIS,

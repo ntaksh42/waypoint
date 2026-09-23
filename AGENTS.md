@@ -301,7 +301,7 @@ Recent/Frequent Folders・Open Windows (`w `) ・ブックマーク (`b `) ・�
 |---|---|
 | `config/` | 設定のパース・`Item` 型・変数展開 (FR-5, FR-7) |
 | `quick_launch/` | Quick Launch の検索インデックスと順位付け (`index.rs` / `search.rs` / `azure.rs`)。プレフィックス判定 (`mod.rs`) |
-| `quick_launch_window/` | Quick Launch の Win32 ウィンドウ・入力・描画 (`layout.rs` / `draw.rs` / `draw_row.rs` / `input.rs` / `dispatch.rs`)。状態は `state.rs`、寸法と配色は `theme.rs`、Azure のライブ検索は `azure_live/` |
+| `quick_launch_window/` | Quick Launch の Win32 ウィンドウ・入力・描画 (`layout.rs` / `draw.rs` / `draw_row.rs` / `row_parts.rs` / `draw_footer.rs` / `input.rs` / `dispatch.rs`)。状態は `state.rs`、寸法と配色は `theme.rs`、Azure のライブ検索は `azure_live/` |
 | `quick_launch_history.rs` | Quick Launch で選んだ項目の使用頻度履歴 (`dynamic.rs` の Recent/Frequent とは別データ) |
 | `dynamic.rs` | Recent/Frequent Folders など動的メニュー (QAP の In the Works 相当) |
 | `azure_devops/` | PR/Pipeline/Work Item の SQLite キャッシュ・同期・PAT (`api.rs` / `cache.rs` / `sync.rs` / `credential.rs`) |
