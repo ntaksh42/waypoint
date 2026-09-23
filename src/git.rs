@@ -21,15 +21,6 @@ pub fn branch_of(path: &str) -> Option<String> {
     parse_head(&head)
 }
 
-/// ブランチ名があれば候補名の後ろに `[名前]` を付す。
-/// リポジトリでない項目は名前のみ。
-pub fn with_branch(name: &str, branch: Option<&str>) -> String {
-    match branch {
-        Some(branch) => format!("{name}  [{branch}]"),
-        None => name.to_string(),
-    }
-}
-
 /// `.git` を持つ祖先を探す。サブディレクトリを登録していても効くようにする。
 ///
 /// `.git` がファイルの場合はワークツリーかサブモジュールで、中身の

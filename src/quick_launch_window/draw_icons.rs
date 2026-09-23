@@ -1,10 +1,9 @@
-//! 候補行のアイコン描画（種別背景・Azure種別・パス/ウィンドウ/favicon）。
+//! 候補行のアイコン描画（Azure種別・パス/ウィンドウ/favicon）。
 
 use windows::Win32::Foundation::{COLORREF, HWND, RECT};
 use windows::Win32::Graphics::Gdi::{
-    AC_SRC_ALPHA, AC_SRC_OVER, AlphaBlend, BLENDFUNCTION, CreateCompatibleDC, CreatePen,
-    CreateSolidBrush, DeleteDC, DeleteObject, Ellipse, HBITMAP, HDC, HFONT, PS_SOLID, SelectObject,
-    SetBkMode, SetTextColor, TRANSPARENT,
+    AC_SRC_ALPHA, AC_SRC_OVER, AlphaBlend, BLENDFUNCTION, CreateCompatibleDC, DeleteDC, HBITMAP,
+    HDC, HFONT, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
 };
 
 use super::badge::{AzureIconKind, azure_icon_label};
@@ -13,7 +12,7 @@ use super::layout::scale;
 use super::{ACCENT, ICON_LEFT, ICON_SIZE};
 
 /// 種別色をそのまま塗ると強すぎるので、背景 (`BACKGROUND`) に大きく
-/// 寄せた低彩度版にする。
+/// 寄せた低彩度版にする (モードバッジの地に使う)。
 pub(super) fn backdrop_tint(color: COLORREF) -> COLORREF {
     let mix = |channel: u8| -> u8 { ((channel as u32 * 46 + 13 * 210) / 256) as u8 };
     super::rgb(
@@ -21,25 +20,6 @@ pub(super) fn backdrop_tint(color: COLORREF) -> COLORREF {
         mix(((color.0 >> 8) & 0xff) as u8),
         mix(((color.0 >> 16) & 0xff) as u8),
     )
-}
-
-/// 種別色の丸背景。実アイコンより一回り大きく敷き、透明な余白を持つ
-/// アイコン (フォルダ・URL 等) でも種別が一目で分かるようにする。
-pub(super) unsafe fn draw_icon_backdrop(hdc: HDC, color: COLORREF, rect: RECT, dpi: u32) {
-    unsafe {
-        let size = scale(ICON_SIZE + 6, dpi);
-        let left = rect.left + scale(ICON_LEFT, dpi) - scale(3, dpi);
-        let top = rect.top + (rect.bottom - rect.top - size) / 2;
-        let brush = CreateSolidBrush(backdrop_tint(color));
-        let pen = CreatePen(PS_SOLID, 1, backdrop_tint(color));
-        let old_brush = SelectObject(hdc, brush.into());
-        let old_pen = SelectObject(hdc, pen.into());
-        let _ = Ellipse(hdc, left, top, left + size, top + size);
-        SelectObject(hdc, old_brush);
-        SelectObject(hdc, old_pen);
-        let _ = DeleteObject(brush.into());
-        let _ = DeleteObject(pen.into());
-    }
 }
 
 /// Azure DevOps の種別を小さなグリフとして描く。外部アイコンの読込を

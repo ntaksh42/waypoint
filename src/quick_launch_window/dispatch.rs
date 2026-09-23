@@ -19,8 +19,9 @@ use super::input::{hide_window, queue_selected};
 use super::layout::scale;
 use super::search::{handle_everything_results, update_results};
 use super::{
-    BACKGROUND, BADGE_WIDTH, EDIT_HEIGHT, HEADER_HEIGHT, PADDING, ROW_HEIGHT, RowKind, STATE,
-    SURFACE, TEXT_PRIMARY, WM_QUICK_LAUNCH_AZURE_RESULTS,
+    BACKGROUND, BADGE_WIDTH, EDIT_HEIGHT, FOOTER_GAP, FOOTER_HEIGHT, HEADER_HEIGHT, PADDING,
+    ROW_HEIGHT, RowKind, SEARCH_ICON_WIDTH, STATE, SURFACE, TEXT_PRIMARY,
+    WM_QUICK_LAUNCH_AZURE_RESULTS,
 };
 
 pub(super) fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -49,14 +50,19 @@ pub(super) fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM)
             let padding = scale(PADDING, dpi);
             let edit_height = scale(EDIT_HEIGHT, dpi);
             let badge_width = scale(BADGE_WIDTH, dpi);
+            let icon_width = scale(SEARCH_ICON_WIDTH, dpi);
+            // 入力欄は 1 行の EDIT で、文字は上端から描かれる。16px の文字に
+            // 合わせた高さの箱を検索窓の縦中央に置いて、文字を中央に揃える
+            let input_height = scale(24, dpi);
+            let footer = scale(FOOTER_GAP + FOOTER_HEIGHT, dpi);
             unsafe {
                 if let Some(edit) = edit {
                     let _ = MoveWindow(
                         edit,
-                        padding + scale(6, dpi),
-                        padding + scale(6, dpi),
-                        width - padding * 2 - badge_width - scale(14, dpi),
-                        edit_height - scale(12, dpi),
+                        padding + icon_width,
+                        padding + (edit_height - input_height) / 2,
+                        width - padding * 2 - icon_width - badge_width - scale(8, dpi),
+                        input_height,
                         true,
                     );
                 }
@@ -67,7 +73,7 @@ pub(super) fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM)
                         padding,
                         top,
                         width - padding * 2,
-                        height - top - padding,
+                        height - top - footer,
                         true,
                     );
                 }

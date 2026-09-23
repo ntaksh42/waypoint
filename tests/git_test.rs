@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use waypoint::config::Item;
-use waypoint::git::{parse_head, resolve_gitdir_file, with_branch};
+use waypoint::git::{parse_head, resolve_gitdir_file};
 
 /// このリポジトリ自身を対象にする。作業ツリー内なら何らかの名前が取れる。
 #[test]
@@ -74,16 +74,6 @@ fn show_branch_round_trips_when_true() {
 
     let out = serde_json::to_string(&item).unwrap();
     assert!(out.contains(r#""showBranch":true"#), "{out}");
-}
-
-#[test]
-fn appends_branch_when_present() {
-    assert_eq!(with_branch("waypoint", Some("main")), "waypoint  [main]");
-}
-
-#[test]
-fn leaves_name_alone_outside_repository() {
-    assert_eq!(with_branch("Downloads", None), "Downloads");
 }
 
 #[test]

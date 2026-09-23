@@ -72,6 +72,12 @@ pub(in crate::quick_launch_window) struct State {
     pub(in crate::quick_launch_window) edit_font: Option<HFONT>,
     pub(in crate::quick_launch_window) name_font: Option<HFONT>,
     pub(in crate::quick_launch_window) detail_font: Option<HFONT>,
+    /// 候補名のうち検索語に一致した箇所を描く下線付き太字。
+    pub(in crate::quick_launch_window) highlight_font: Option<HFONT>,
+    /// 行右端のタグと操作ヒント帯の文字。
+    pub(in crate::quick_launch_window) tag_font: Option<HFONT>,
+    /// セクション見出しのラベル。
+    pub(in crate::quick_launch_window) header_font: Option<HFONT>,
     pub(in crate::quick_launch_window) background_brush: Option<HBRUSH>,
     pub(in crate::quick_launch_window) surface_brush: Option<HBRUSH>,
     pub(in crate::quick_launch_window) everything_enabled: bool,
