@@ -156,9 +156,14 @@ pub(super) fn update_results(state: &RefCell<State>) {
             // PR 検索がキャッシュで 0 件だったとき、末尾に明示的なライブ
             // 検索の入口を足す。API 全文検索が無いため、打ち切り期間を
             // 一時的に広げて再取得する以外に取りこぼしを拾う手段が無い。
-            if state.results.is_empty()
-                && let Some((crate::quick_launch::AzureCommand::PullRequests(filter), rest)) =
-                    crate::quick_launch::azure_command(&query)
+            //
+            // PR 番号 (数字だけ) を指定した場合は 0 件でなくても足す。番号が
+            // 部分一致する別の PR が 1 件でも居ると `is_empty()` が false に
+            // なり、目的の PR がキャッシュに無いときにライブ検索へ辿り着く
+            // 手段が消えてしまうため (実測でこれを踏んだ)。
+            if let Some((crate::quick_launch::AzureCommand::PullRequests(filter), rest)) =
+                crate::quick_launch::azure_command(&query)
+                && (state.results.is_empty() || missing_azure_item_id(&state.results, rest))
             {
                 state
                     .results
@@ -327,6 +332,15 @@ pub(super) fn accepts_everything_reply(active: bool, expected: u32, received: u3
 /// ある。切り詰めが起きていた回に前回の結果だけを母集団にすると、切り詰めで
 /// 落ちた候補 (絞り込みで本来上位に来るはずのもの) を拾えない。切り詰めが
 /// 起きていない (`previous_results_len < MAX_LIST_RESULTS`) ときだけ最適化を
+/// 項目 ID 指定 (数字だけの検索語) なのに、先頭 ID が完全一致する候補が
+/// 一覧に無いか。番号指定がキャッシュで取りこぼされたかの判定。
+pub(super) fn missing_azure_item_id(results: &[Entry], query: &str) -> bool {
+    crate::azure_devops::is_item_id_query(query)
+        && !results
+            .iter()
+            .any(|entry| crate::azure_devops::matches_item_id(&entry.name, query))
+}
+
 /// 使い、それ以外は全候補への再検索に倒す。
 pub(super) fn refinable_search_term<'a>(
     previous_query: Option<&str>,

@@ -26,7 +26,7 @@ pub(super) fn search<'a>(
             let (tier, fuzzy_score, usage) = general
                 .unwrap_or_else(|| (u8::MAX, 0, ranking.rank_lower(entry, fields.path_lower)));
             title_quality
-                .or_else(|| general.map(|_| 3))
+                .or_else(|| general.map(|_| crate::azure_devops::TITLE_QUALITY_OTHER))
                 .map(|title_quality| (title_quality, tier, fuzzy_score, usage, order, entry))
         })
         .collect::<Vec<_>>();

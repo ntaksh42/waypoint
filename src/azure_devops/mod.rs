@@ -42,7 +42,10 @@ use convert::{
 };
 use credential::credential_for_request;
 use sync::{REFRESHING, RunningFlag};
-pub(crate) use title_search::match_quality as title_match_quality;
+pub(crate) use title_search::{
+    QUALITY_OTHER as TITLE_QUALITY_OTHER, is_item_id_query, match_quality as title_match_quality,
+    matches_item_id,
+};
 
 pub use api::{fetch_area_nodes, fetch_my_area_suggestions, list_repository_names};
 pub(crate) use candidate_cache::cached_candidate_groups;

@@ -2,7 +2,8 @@ use super::super::azure_live::{
     accepts_azure_work_item_reply, invalidate_azure_live_searches, start_azure_work_item_query,
 };
 use super::super::search::{
-    accepts_everything_reply, build_rows, next_everything_reply_id, refinable_search_term,
+    accepts_everything_reply, build_rows, missing_azure_item_id, next_everything_reply_id,
+    refinable_search_term,
 };
 use super::super::{RowKind, STATE, State};
 use crate::config::OpenMode;
@@ -277,4 +278,40 @@ fn combined_live_search_reports_empty_only_when_all_kinds_finish() {
     let (merged, message) = combined.absorb(LiveSearchKind::WorkItems, Vec::new(), None);
     assert!(merged.is_empty());
     assert_eq!(message.as_deref(), Some("No Azure DevOps results."));
+}
+
+/// PR 番号を指定したのに、その ID の候補がキャッシュに無い状態。番号が
+/// 部分一致する別 PR が 1 件でも居ると `results.is_empty()` が false になり、
+/// 以前はライブ検索の入口が出ずに正解へ辿り着けなかった。
+#[test]
+fn azure_item_id_query_without_an_exact_hit_is_reported_missing() {
+    let pull_request = |name: &str| Entry {
+        name: name.into(),
+        breadcrumb: "Azure DevOps — org/Waypoint — active".into(),
+        path: "https://dev.azure.com/org/Waypoint/_git/app/pullrequest/1".into(),
+        action: Action::OpenUrl("https://dev.azure.com/org/Waypoint/_git/app/pullrequest/1".into()),
+        branch: None,
+    };
+
+    let near_misses = [
+        pull_request("PR 123456: Unrelated rollout"),
+        pull_request("PR 999: Fix 12345 crash"),
+    ];
+    assert!(missing_azure_item_id(&near_misses, "12345"));
+
+    let with_exact = [
+        pull_request("PR 123456: Unrelated rollout"),
+        pull_request("PR 12345: Add launcher shortcut"),
+    ];
+    assert!(!missing_azure_item_id(&with_exact, "12345"));
+
+    // Work Item は `12345: <title>` 形式。
+    assert!(!missing_azure_item_id(
+        &[pull_request("12345: Cache WIT results")],
+        "12345"
+    ));
+
+    // 数字以外の検索語は ID 指定ではないので、この経路では足さない。
+    assert!(!missing_azure_item_id(&near_misses, "rollout"));
+    assert!(!missing_azure_item_id(&near_misses, ""));
 }

@@ -65,6 +65,59 @@ fn azure_title_phrase_ranks_before_the_same_words_in_a_different_order() {
     assert_eq!(found[0].name, "PR 11: Payment service rollout");
 }
 
+/// PR 番号を指定したら、番号が部分一致するだけの別 PR ではなく、その ID の
+/// PR が先頭に来ること。以前は `title.contains(query)` だけを見ていたため
+/// `12345` が `PR 123456` / `PR 112345` / 本文に番号を含む PR と同点になり、
+/// 以降の並びが実質キャッシュ順で決まって正解が先頭に来なかった。
+#[test]
+fn azure_pull_request_number_ranks_the_exact_id_first() {
+    let mut index = index();
+    index.azure.clear();
+    for name in [
+        "PR 123456: Unrelated rollout",
+        "PR 112345: Unrelated cleanup",
+        "PR 999: Fix 12345 crash",
+        "PR 12345: Add launcher shortcut",
+        // 数字の 1 文字違いは別の PR でしかない。タイプミス許容から外す。
+        "PR 12845: Typo neighbour",
+    ] {
+        let url = format!("https://dev.azure.com/org/Waypoint/_git/app/{name}");
+        let entry = Entry {
+            name: name.into(),
+            breadcrumb: "Azure DevOps — org/Waypoint — active".into(),
+            path: url.clone(),
+            action: Action::OpenUrl(url),
+            branch: None,
+        };
+        index.azure.push(super::super::azure::AzureIndexed {
+            lower: super::super::search::LowerKeys::new(&entry),
+            entry,
+            kind: crate::azure_devops::Kind::PullRequest,
+            status: "active".into(),
+            is_mine: false,
+            is_author: false,
+            is_reviewer: false,
+            needs_my_review: false,
+            waiting_for_others: false,
+            is_draft: false,
+            ready_to_complete: false,
+            is_stale: false,
+        });
+    }
+
+    let found = index.search("az pr 12345");
+
+    assert_eq!(found[0].name, "PR 12345: Add launcher shortcut");
+    assert!(
+        !found.iter().any(|entry| entry.name.contains("12845")),
+        "数字クエリでタイプミス許容が効いてはいけない: {:?}",
+        found.iter().map(|entry| &entry.name).collect::<Vec<_>>()
+    );
+    // 入力途中の部分番号は引き続き拾う (完全一致より下位)。
+    let partial = index.search("az pr 1234");
+    assert!(partial.len() > 1);
+}
+
 #[test]
 fn cached_work_items_are_searchable_without_live_api() {
     let mut index = index();
