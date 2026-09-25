@@ -83,6 +83,13 @@ pub fn kill(pid: u32) {
 
 /// 指定ウィンドウを所有するプロセスの実行ファイル名。
 pub fn process_name_of(hwnd: HWND) -> Option<String> {
+    let full = process_path_of(hwnd)?;
+    // フルパスから実行ファイル名だけ取り出す
+    Some(full.rsplit(['\\', '/']).next().unwrap_or(&full).to_string())
+}
+
+/// 指定ウィンドウを所有するプロセスの実行ファイルのフルパス。
+pub fn process_path_of(hwnd: HWND) -> Option<String> {
     if hwnd.0.is_null() {
         return None;
     }
@@ -108,9 +115,7 @@ pub fn process_name_of(hwnd: HWND) -> Option<String> {
         let _ = CloseHandle(handle);
         ok.ok()?;
 
-        let full = String::from_utf16_lossy(&buf[..len as usize]);
-        // フルパスから実行ファイル名だけ取り出す
-        Some(full.rsplit(['\\', '/']).next().unwrap_or(&full).to_string())
+        Some(String::from_utf16_lossy(&buf[..len as usize]))
     }
 }
 
