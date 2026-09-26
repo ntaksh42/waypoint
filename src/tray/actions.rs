@@ -20,8 +20,10 @@ use super::{
 pub(crate) fn show_quick_launch(hwnd: HWND) {
     let origin = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
     with_state(|state| {
-        let state = state.borrow();
-        if let Some(state) = state.as_ref() {
+        let mut state = state.borrow_mut();
+        if let Some(state) = state.as_mut() {
+            // 閉じた後の非同期列挙だけでは、その後に開いたウィンドウが漏れる
+            crate::dynamic::refresh_windows(&mut state.dynamic);
             quick_launch_window::configure_config_items(&state.config, &state.dynamic);
         }
     });
