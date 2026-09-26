@@ -39,12 +39,27 @@ pub(crate) fn load_pat(organization: &str) -> Result<String, String> {
         .map_err(|_| format!("No PAT is saved for Azure DevOps organization \"{organization}\"."))
 }
 
+/// この接頭辞で始まる認証情報は PAT ではなく Bearer トークンとして送る。
+/// PAT は空白を含まないので取り違えない。
+pub(crate) const BEARER_PREFIX: &str = "Bearer ";
+
+/// 保存済みの PAT を優先し、無ければ `az login` 済みの Azure CLI の
+/// トークンで代用する (FR-9.18.2)。後者は `az` を起動するので
+/// UI スレッドから呼ばないこと。
+pub(crate) fn load_credential(organization: &str) -> Result<String, String> {
+    load_pat(organization).or_else(|pat_error| {
+        super::azure_cli::access_token()
+            .map(|token| format!("{BEARER_PREFIX}{token}"))
+            .map_err(|cli_error| format!("{pat_error} {cli_error}"))
+    })
+}
+
 pub(crate) fn credential_for_request(
     organization: &str,
     typed_pat: &str,
 ) -> Result<String, String> {
     if typed_pat.trim().is_empty() {
-        load_pat(organization)
+        load_credential(organization)
     } else {
         Ok(typed_pat.trim().to_string())
     }

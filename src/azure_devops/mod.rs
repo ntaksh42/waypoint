@@ -14,6 +14,7 @@
 
 mod api;
 mod auth_cache;
+mod azure_cli;
 mod cache;
 mod candidate_cache;
 mod convert;
