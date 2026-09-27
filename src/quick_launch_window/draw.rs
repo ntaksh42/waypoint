@@ -21,7 +21,11 @@ pub(super) fn paint_window(window: HWND) {
         let hdc = BeginPaint(window, &mut paint);
         let mut client = RECT::default();
         let _ = windows::Win32::UI::WindowsAndMessaging::GetClientRect(window, &mut client);
+        // LB_GETCURSEL は SendMessageW。STATE の借用より先に読む
+        let selected_row = super::input::current_selection(STATE.with(|state| state.borrow().list));
         let (
+            hints,
+            position,
             dpi,
             background,
             surface,
@@ -38,7 +42,20 @@ pub(super) fn paint_window(window: HWND) {
             } else {
                 state.badge
             };
+            let entry = selected_row.and_then(|row| super::input::entry_at_row(&state, row));
+            // 見出し行を除いた項目行だけの行番号。位置表示 ("3 / 24") の
+            // 分母と、選択行が項目の何番目かを数えるのに使う
+            let item_rows: Vec<usize> = state
+                .rows
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| matches!(row, super::RowKind::Item(_)))
+                .map(|(index, _)| index)
+                .collect();
+            let rank = selected_row.and_then(|row| item_rows.iter().position(|&i| i == row));
             (
+                super::draw_footer::footer_hints(entry.as_ref()),
+                super::draw_footer::footer_position(rank, item_rows.len()),
                 state.dpi,
                 state.background_brush,
                 state.surface_brush,
@@ -91,7 +108,7 @@ pub(super) fn paint_window(window: HWND) {
                 draw_clock(hdc, search, dpi, detail_font);
             }
         }
-        super::draw_footer::draw_footer(hdc, client, dpi, tag_font);
+        super::draw_footer::draw_footer(hdc, client, dpi, tag_font, &hints, position.as_deref());
         let _ = EndPaint(window, &paint);
     }
 }

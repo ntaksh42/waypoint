@@ -10,29 +10,31 @@ use windows::core::{PCWSTR, w};
 
 pub(crate) const EDIT_ID: isize = 1001;
 pub(crate) const LIST_ID: isize = 1002;
-pub(crate) const WINDOW_WIDTH: i32 = 720;
+/// 720 → 840: パスの中央省略を減らし、詳細行で読める範囲を広げる。
+pub(crate) const WINDOW_WIDTH: i32 = 840;
 pub(crate) const PADDING: i32 = 10;
 /// 検索窓の高さ。虫眼鏡アイコンと 16px の入力文字を収めるため 34 → 40 へ広げた。
 pub(crate) const EDIT_HEIGHT: i32 = 40;
-/// 候補行の高さ。名前 15px・詳細 13px の 2 段が重ならない最小値。
-/// 旧 42px では名前 (上端 2〜23px) と詳細 (20px〜) の描画範囲が重なっていた。
-pub(crate) const ROW_HEIGHT: i32 = 48;
+/// 候補行の高さ。名前 14px・詳細 12px の 2 段が重ならない最小値。
+/// 48px では 1 画面に収まる件数が少なく、一覧性を優先して詰めた。
+pub(crate) const ROW_HEIGHT: i32 = 40;
 /// セクション見出し行の高さ。通常項目より詰めて、区切りだと分かる程度にする。
-pub(crate) const HEADER_HEIGHT: i32 = 32;
+pub(crate) const HEADER_HEIGHT: i32 = 26;
 /// ウィンドウ下端の操作ヒント帯の高さ。
-pub(crate) const FOOTER_HEIGHT: i32 = 32;
+pub(crate) const FOOTER_HEIGHT: i32 = 30;
 /// リストと操作ヒント帯の間の隙間。
 pub(crate) const FOOTER_GAP: i32 = 6;
-/// モードバッジ ("BOOKMARKS" 等) 用に検索窓の右側へ確保する幅。
-pub(crate) const BADGE_WIDTH: i32 = 92;
+/// モードバッジ ("BOOKMARKS" 等) と時計用に検索窓の右側へ確保する幅。
+/// 旧 92px では時計 ("9/27 Sun 16:41") や "Ctrl+Enter  Live" が両端で欠けていた。
+pub(crate) const BADGE_WIDTH: i32 = 140;
 /// 検索窓の左端に描く虫眼鏡アイコンのために、入力欄を右へずらす幅。
 pub(crate) const SEARCH_ICON_WIDTH: i32 = 30;
 /// 候補行のアイコン一辺。
-pub(crate) const ICON_SIZE: i32 = 26;
+pub(crate) const ICON_SIZE: i32 = 22;
 /// アイコンの左端 (行の左端からの距離)。
 pub(crate) const ICON_LEFT: i32 = 12;
 /// アイコンからテキストまでの隙間。
-pub(crate) const ICON_TEXT_GAP: i32 = 12;
+pub(crate) const ICON_TEXT_GAP: i32 = 10;
 /// テキストの開始位置 (行の左端からの距離)。
 pub(crate) const TEXT_LEFT: i32 = ICON_LEFT + ICON_SIZE + ICON_TEXT_GAP;
 /// 行の右端に置くタグ (種別・ブランチ・実行操作) の右余白。

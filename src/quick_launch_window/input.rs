@@ -109,6 +109,8 @@ pub(super) fn select_at(list: Option<HWND>, index: usize) {
             None,
         );
     }
+    // LB_SETCURSEL は LBN_SELCHANGE を送らないので、ヒント帯はここで更新する
+    super::draw_footer::invalidate_footer();
 }
 
 /// 選択を相対移動する。借用は最初に済ませ、以降は Win32 のみ触る。
