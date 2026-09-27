@@ -5,6 +5,7 @@ use crate::quick_launch::{Action, Entry};
 
 fn entry(breadcrumb: &str, path: &str, action: Action) -> Entry {
     Entry {
+        azure: None,
         name: "x".into(),
         breadcrumb: breadcrumb.into(),
         path: path.into(),

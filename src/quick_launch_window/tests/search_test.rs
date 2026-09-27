@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 fn folder_entry(name: &str) -> Entry {
     Entry {
+        azure: None,
         name: name.to_string(),
         breadcrumb: String::new(),
         path: format!(r"C:\{name}"),
@@ -228,6 +229,7 @@ fn combined_live_search_merges_results_as_they_arrive() {
 
     fn entry(name: &str) -> Entry {
         Entry {
+            azure: None,
             name: name.to_string(),
             breadcrumb: String::new(),
             path: String::new(),
@@ -286,6 +288,7 @@ fn combined_live_search_reports_empty_only_when_all_kinds_finish() {
 #[test]
 fn azure_item_id_query_without_an_exact_hit_is_reported_missing() {
     let pull_request = |name: &str| Entry {
+        azure: None,
         name: name.into(),
         breadcrumb: "Azure DevOps — org/Waypoint — active".into(),
         path: "https://dev.azure.com/org/Waypoint/_git/app/pullrequest/1".into(),
@@ -321,6 +324,7 @@ fn azure_item_id_query_without_an_exact_hit_is_reported_missing() {
 #[test]
 fn cross_search_by_number_only_counts_pull_requests_as_a_hit() {
     let entry = |name: &str| Entry {
+        azure: None,
         name: name.into(),
         breadcrumb: String::new(),
         path: String::new(),

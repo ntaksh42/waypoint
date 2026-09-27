@@ -43,6 +43,7 @@ fn previously_selected_entry_ranks_before_same_score_siblings() {
     // 両方とも prefix 一致で同スコアになる 2 件。並び順 (order) だけなら
     // Alpha が先に出るはずだが、Beta の選択履歴があれば逆転する
     let alpha = Entry {
+        azure: None,
         name: "Alpha Tools".into(),
         breadcrumb: String::new(),
         path: r"C:\Alpha".into(),
@@ -50,6 +51,7 @@ fn previously_selected_entry_ranks_before_same_score_siblings() {
         branch: None,
     };
     let beta = Entry {
+        azure: None,
         name: "Alpha Utils".into(),
         breadcrumb: String::new(),
         path: r"C:\Beta".into(),
@@ -333,6 +335,7 @@ fn sections_cap_each_source_at_the_section_limit() {
     let mut index = index();
     index.entries = (0..10)
         .map(|n| Entry {
+            azure: None,
             name: format!("Folder {n}"),
             breadcrumb: String::new(),
             path: format!(r"C:\folder{n}"),

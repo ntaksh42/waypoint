@@ -286,6 +286,7 @@ pub(crate) fn pull_request_cached_row_to_candidate(
     row: &CachedRow,
 ) -> Candidate {
     Candidate {
+        work_item_type: None,
         kind: Kind::PullRequest,
         status: row.status.clone(),
         name: row.name.clone(),
@@ -314,6 +315,7 @@ pub(crate) fn pipeline_cached_row_to_candidate(
     row: &CachedRow,
 ) -> Candidate {
     Candidate {
+        work_item_type: None,
         kind: Kind::Pipeline,
         status: row.status.clone(),
         name: row.name.clone(),
@@ -358,6 +360,7 @@ pub(crate) fn work_item_candidate(
         .or_else(|| fields["System.WorkItemType"].as_str())
         .unwrap_or("Work Item");
     Some(Candidate {
+        work_item_type: Some(kind.to_string()),
         kind: Kind::WorkItem,
         status: state.to_string(),
         name: format!("{id}: {title}"),

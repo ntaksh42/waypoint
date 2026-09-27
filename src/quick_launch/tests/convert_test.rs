@@ -69,6 +69,7 @@ fn submenu_show_branch_is_inherited_by_child_folders() {
 #[test]
 fn open_folder_entry_converts_to_folder_item_with_same_open_mode() {
     let entry = Entry {
+        azure: None,
         name: "Docs".into(),
         breadcrumb: String::new(),
         path: r"E:\waypoint\docs".into(),
@@ -93,6 +94,7 @@ fn open_folder_entry_converts_to_folder_item_with_same_open_mode() {
 #[test]
 fn window_and_url_entries_are_not_addable() {
     let window = Entry {
+        azure: None,
         name: "Notepad".into(),
         breadcrumb: String::new(),
         path: String::new(),
@@ -100,6 +102,7 @@ fn window_and_url_entries_are_not_addable() {
         branch: None,
     };
     let url = Entry {
+        azure: None,
         name: "Example".into(),
         breadcrumb: String::new(),
         path: "https://example.com/".into(),
@@ -115,6 +118,7 @@ fn window_and_url_entries_are_not_addable() {
 #[test]
 fn everything_result_becomes_folder_item_when_path_is_a_directory() {
     let entry = Entry {
+        azure: None,
         name: "src".into(),
         breadcrumb: String::new(),
         path: format!("{}\\src", env!("CARGO_MANIFEST_DIR")),
@@ -128,6 +132,7 @@ fn everything_result_becomes_folder_item_when_path_is_a_directory() {
 #[test]
 fn everything_result_becomes_file_item_when_path_is_not_a_directory() {
     let entry = Entry {
+        azure: None,
         name: "Cargo.toml".into(),
         breadcrumb: String::new(),
         path: format!("{}\\Cargo.toml", env!("CARGO_MANIFEST_DIR")),
@@ -141,6 +146,7 @@ fn everything_result_becomes_file_item_when_path_is_not_a_directory() {
 #[test]
 fn launch_app_entry_converts_to_file_item() {
     let entry = Entry {
+        azure: None,
         name: "Visual Studio Code".into(),
         breadcrumb: String::new(),
         path: r"C:\Start Menu\Visual Studio Code.lnk".into(),

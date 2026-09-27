@@ -11,11 +11,12 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::UI::Controls::{DRAWITEMSTRUCT, ODS_SELECTED};
 
-use super::badge::{action_tag, action_tag_color, action_verb, azure_icon_color, azure_icon_kind};
+use super::azure_detail::{DOT, azure_detail};
+use super::azure_tile::draw_azure_tile;
+use super::badge::{action_tag, action_tag_color, action_verb, azure_tile};
 use super::draw::{draw_text, draw_text_path, measured_width};
 use super::draw_icons::{
-    FaviconFallback, draw_azure_icon, draw_command_icon, draw_favicon_icon, draw_path_icon,
-    draw_window_icon,
+    FaviconFallback, draw_command_icon, draw_favicon_icon, draw_path_icon, draw_window_icon,
 };
 use super::layout::scale;
 use super::row_parts::{TagStyle, draw_section_header, draw_tag_right_aligned};
@@ -147,7 +148,7 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
             let _ = DeleteObject(card_pen.into());
         }
 
-        draw_entry_icon(draw, &entry, badge, dpi, fonts.name);
+        draw_entry_icon(draw, &entry, badge, selected, dpi, fonts.name);
         let text_right =
             draw_trailing_tags(draw, &entry, badge, selected, sectioned, dpi, fonts.tag);
 
@@ -164,12 +165,20 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
             };
             let ranges = crate::quick_launch::highlight_ranges(&entry.name, &highlight_term);
             let highlight_color = if selected { SELECTED_HIGHLIGHT } else { ACCENT };
+            // 完了済みの Azure DevOps 候補 (Completed PR 等) は名前も沈めて、
+            // 日常的に開く未完了の候補と見分けやすくする。選択行は読めることを優先する。
+            let closed = entry.azure.as_ref().is_some_and(|meta| meta.is_closed());
+            let name_color = if closed && !selected {
+                TEXT_SECONDARY
+            } else {
+                TEXT_PRIMARY
+            };
             super::highlight::draw_text_highlighted(
                 draw.hDC,
                 &entry.name,
                 &ranges,
                 &mut rect,
-                TEXT_PRIMARY,
+                name_color,
                 highlight_color,
                 fonts.highlight,
             );
@@ -191,6 +200,22 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
             } else {
                 (TEXT_SECONDARY, TEXT_MUTED)
             };
+            if let Some(detail) = azure_detail(&entry) {
+                // どのプロジェクト / リポジトリの項目かを先頭に色を変えて出す。
+                SetTextColor(draw.hDC, if selected { SELECTED_HIGHLIGHT } else { ACCENT });
+                let location_width = measured_width(draw.hDC, &detail.location, &rect);
+                draw_text(draw.hDC, &detail.location, &mut rect);
+                if !detail.rest.is_empty() {
+                    let mut rest_rect = rect;
+                    rest_rect.left = (rect.left + location_width).min(rect.right);
+                    if rest_rect.left < rest_rect.right {
+                        SetTextColor(draw.hDC, primary_color);
+                        draw_text(draw.hDC, &format!("{DOT}{}", detail.rest), &mut rest_rect);
+                    }
+                }
+                SelectObject(draw.hDC, old);
+                return;
+            }
             SetTextColor(draw.hDC, primary_color);
             let primary = detail_primary(&entry);
             let primary_width = measured_width(draw.hDC, &primary, &rect);
@@ -217,13 +242,14 @@ unsafe fn draw_entry_icon(
     draw: &DRAWITEMSTRUCT,
     entry: &Entry,
     badge: Option<&str>,
+    selected: bool,
     dpi: u32,
     name_font: Option<HFONT>,
 ) {
     unsafe {
-        if let Some(kind) = azure_icon_kind(badge, &entry.path) {
-            let color = azure_icon_color(kind);
-            draw_azure_icon(draw.hDC, kind, color, draw.rcItem, dpi, name_font);
+        if let Some(tile) = azure_tile(badge, entry) {
+            let row_bg = if selected { SELECTED_BG } else { BACKGROUND };
+            draw_azure_tile(draw.hDC, &tile, draw.rcItem, dpi, name_font, row_bg);
             return;
         }
         match entry.action {
@@ -387,6 +413,8 @@ pub(super) fn detail_primary(entry: &Entry) -> String {
         display_path(&entry.path)
     } else if let Some(process) = entry.breadcrumb.strip_prefix(OPEN_WINDOWS_PREFIX) {
         process.to_string()
+    } else if let Some(detail) = azure_detail(entry) {
+        detail.joined()
     } else {
         entry.breadcrumb.clone()
     }

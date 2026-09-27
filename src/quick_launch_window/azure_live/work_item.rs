@@ -74,6 +74,7 @@ pub(in crate::quick_launch_window) fn start_azure_work_item_query(
 /// キャッシュ検索が 0 件だったときにリストへ足す、ライブ検索への入口。
 fn live_work_item_search_entry(query: &str) -> Entry {
     Entry {
+        azure: None,
         name: format!("Search Azure DevOps for \"{query}\""),
         breadcrumb: "Not in cache — press Enter to search live".to_string(),
         path: String::new(),
@@ -186,6 +187,7 @@ pub(in crate::quick_launch_window) fn handle_azure_work_item_results(reply_id: u
             .into_iter()
             .take(MAX_LIST_RESULTS)
             .map(|candidate| Entry {
+                azure: Some(crate::quick_launch::AzureMeta::from_candidate(&candidate)),
                 name: candidate.name,
                 breadcrumb: candidate.detail,
                 path: candidate.url.clone(),

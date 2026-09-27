@@ -302,6 +302,7 @@ pub(super) fn handle_everything_results(reply_id: u32, data: &[u8]) {
         state.results = parsed
             .into_iter()
             .map(|item| crate::quick_launch::Entry {
+                azure: None,
                 name: item.name,
                 breadcrumb: String::new(),
                 path: item.path,

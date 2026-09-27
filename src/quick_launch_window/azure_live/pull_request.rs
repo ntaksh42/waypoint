@@ -34,6 +34,7 @@ pub(in crate::quick_launch_window) fn live_pull_request_search_entry(
         )
     };
     Entry {
+        azure: None,
         name: label,
         breadcrumb: breadcrumb.to_string(),
         path: String::new(),
@@ -180,6 +181,7 @@ pub(in crate::quick_launch_window) fn handle_azure_pull_request_results(reply_id
             .into_iter()
             .take(MAX_LIST_RESULTS)
             .map(|candidate| Entry {
+                azure: Some(crate::quick_launch::AzureMeta::from_candidate(&candidate)),
                 name: candidate.name,
                 breadcrumb: candidate.detail,
                 path: candidate.url.clone(),

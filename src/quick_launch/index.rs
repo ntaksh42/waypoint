@@ -24,6 +24,7 @@ impl Index {
             crate::bookmarks::scan()
                 .into_iter()
                 .map(|bookmark| Entry {
+                    azure: None,
                     name: bookmark.name,
                     breadcrumb: bookmark.breadcrumb,
                     path: bookmark.url.clone(),
@@ -39,6 +40,7 @@ impl Index {
             crate::browser_history::scan()
                 .into_iter()
                 .map(|visit| Entry {
+                    azure: None,
                     name: visit.title,
                     breadcrumb: format!("{} History", visit.browser),
                     path: visit.url.clone(),
@@ -57,6 +59,7 @@ impl Index {
             crate::apps::scan()
                 .into_iter()
                 .map(|app| Entry {
+                    azure: None,
                     name: app.name,
                     breadcrumb: String::new(),
                     path: app.shortcut_path,
@@ -194,6 +197,7 @@ impl Index {
         self.tabs = tabs
             .iter()
             .map(|(browser, tab)| Entry {
+                azure: None,
                 name: if !tab.title.trim().is_empty() {
                     tab.title.clone()
                 } else {
@@ -286,6 +290,7 @@ fn dynamic_entries(
     let mut entries = config_entries.to_vec();
     if settings.include_recent_folders {
         entries.extend(dynamic.recent_folders.iter().map(|item| Entry {
+            azure: None,
             name: item.name.clone(),
             breadcrumb: "Recent Folders".to_string(),
             path: item.path.clone(),
@@ -295,6 +300,7 @@ fn dynamic_entries(
     }
     if settings.include_frequent_folders {
         entries.extend(dynamic.frequent_folders.iter().map(|item| Entry {
+            azure: None,
             name: item.name.clone(),
             breadcrumb: "Frequent Folders".to_string(),
             path: item.path.clone(),
@@ -307,6 +313,7 @@ fn dynamic_entries(
             .all_windows
             .iter()
             .map(|window| Entry {
+                azure: None,
                 name: window.title.clone(),
                 // プロセス名も breadcrumb に含めて検索対象にする。
                 // タイトルにアプリ名が出ないウィンドウも `w chrome` で探せる。
@@ -338,6 +345,7 @@ fn terminal_folder_entries(entries: &[Entry]) -> (Vec<Entry>, Vec<super::search:
         .iter()
         .filter(|entry| matches!(entry.action, Action::OpenFolder(_)))
         .map(|entry| Entry {
+            azure: None,
             name: entry.name.clone(),
             breadcrumb: entry.breadcrumb.clone(),
             path: entry.path.clone(),
@@ -359,6 +367,7 @@ fn editor_folder_entries(
         .iter()
         .filter(|entry| matches!(entry.action, Action::OpenFolder(_)))
         .map(|entry| Entry {
+            azure: None,
             name: entry.name.clone(),
             breadcrumb: entry.breadcrumb.clone(),
             path: entry.path.clone(),
@@ -378,6 +387,7 @@ fn claude_code_folder_entries(entries: &[Entry]) -> (Vec<Entry>, Vec<super::sear
         .iter()
         .filter(|entry| matches!(entry.action, Action::OpenFolder(_)))
         .map(|entry| Entry {
+            azure: None,
             name: entry.name.clone(),
             breadcrumb: entry.breadcrumb.clone(),
             path: entry.path.clone(),
@@ -397,6 +407,7 @@ fn codex_folder_entries(entries: &[Entry]) -> (Vec<Entry>, Vec<super::search::Lo
         .iter()
         .filter(|entry| matches!(entry.action, Action::OpenFolder(_)))
         .map(|entry| Entry {
+            azure: None,
             action: Action::OpenCodex,
             ..entry.clone()
         })
@@ -430,6 +441,7 @@ fn collect_items(
                         .then(|| crate::git::branch_of(&path))
                         .flatten();
                     entries.push(Entry {
+                        azure: None,
                         name: name.clone(),
                         breadcrumb: parents.join(" > "),
                         path,
@@ -441,6 +453,7 @@ fn collect_items(
             Item::File { name, path, .. } => {
                 if let Some(path) = crate::config::expand(path, variables) {
                     entries.push(Entry {
+                        azure: None,
                         name: name.clone(),
                         breadcrumb: parents.join(" > "),
                         path,
@@ -456,6 +469,7 @@ fn collect_items(
             } => {
                 if let Some(path) = crate::known_folder::resolve(known_folder) {
                     entries.push(Entry {
+                        azure: None,
                         name: name.clone(),
                         breadcrumb: parents.join(" > "),
                         path,
@@ -466,6 +480,7 @@ fn collect_items(
             }
             Item::Shell { name, target } => {
                 entries.push(Entry {
+                    azure: None,
                     name: name.clone(),
                     breadcrumb: parents.join(" > "),
                     path: target.clone(),
@@ -515,6 +530,7 @@ mod tests {
 
     fn candidate(kind: Kind, status: &str, is_mine: bool) -> Candidate {
         Candidate {
+            work_item_type: None,
             kind,
             status: status.to_string(),
             name: String::new(),

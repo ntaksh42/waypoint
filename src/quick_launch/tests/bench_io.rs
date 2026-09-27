@@ -320,6 +320,7 @@ fn bench_dynamic_refresh() {
 fn bench_history_record() {
     use std::time::Instant;
     let entry = Entry {
+        azure: None,
         name: "Waypoint".into(),
         breadcrumb: "Projects".into(),
         path: r"E:\waypoint".into(),
@@ -348,6 +349,7 @@ fn bench_history_record_breakdown() {
     use std::time::Instant;
 
     let entry = Entry {
+        azure: None,
         name: "Waypoint".into(),
         breadcrumb: "Projects".into(),
         path: r"E:\waypoint".into(),
@@ -385,6 +387,7 @@ fn bench_history_record_breakdown() {
 fn bench_record_async_persists() {
     use std::time::Instant;
     let entry = Entry {
+        azure: None,
         name: "Waypoint".into(),
         breadcrumb: "Projects".into(),
         path: r"E:\waypoint".into(),

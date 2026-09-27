@@ -8,6 +8,7 @@ mod tests {
 
     fn candidate(kind: Kind, name: &str) -> Candidate {
         Candidate {
+            work_item_type: None,
             kind,
             status: String::new(),
             name: name.into(),
@@ -130,6 +131,7 @@ fn pr_history_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
                 .get(&project_key(&row.organization, &row.project))?
                 .clone();
             Some(Candidate {
+                work_item_type: None,
                 kind: Kind::PullRequest,
                 status: row.status,
                 name: row.name,
@@ -280,6 +282,7 @@ fn read_candidate_groups(
                         let source_branch = row.source_ref_name.trim_start_matches("refs/heads/");
                         let target_branch = row.target_ref_name.trim_start_matches("refs/heads/");
                         pull_requests.push(Candidate {
+                            work_item_type: None,
                             kind: Kind::PullRequest,
                             name: format!("PR {}: {}", row.pull_request_id, row.title),
                             detail: match &row.created_by {
@@ -324,6 +327,7 @@ fn read_candidate_groups(
                         let kind = row.work_item_type.as_deref().unwrap_or("Work Item");
                         let state = row.state.as_deref().unwrap_or("");
                         work_items.push(Candidate {
+                            work_item_type: Some(kind.to_string()),
                             kind: Kind::WorkItem,
                             status: state.to_string(),
                             name: format!("{}: {}", row.id, row.title),

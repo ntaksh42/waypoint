@@ -19,6 +19,9 @@ use crate::quick_launch_history::Ranking;
 pub(super) enum Fuzzy {
     Include,
     Skip,
+    /// fuzzy は名前にだけ当てる。`az` 検索用 — breadcrumb と URL は長く、
+    /// 語の文字が順に散らばって含まれるだけで大半の候補が一致してしまう。
+    NameOnly,
 }
 
 /// 安価なティア (0〜5) の一致がこの件数に達したら、fuzzy を評価しない。
@@ -188,6 +191,8 @@ pub(super) fn score_entry(
         let score = match fuzzy {
             Fuzzy::Include => match_score(name, breadcrumb, path, term)?,
             Fuzzy::Skip => match_score_cheap(name, breadcrumb, path, term)?,
+            Fuzzy::NameOnly => match_score_cheap(name, breadcrumb, path, term)
+                .or_else(|| match_score(name, "", None, term))?,
         };
         result = Some(match result {
             Some(acc) => std::cmp::max_by_key(acc, score, |(tier, fuzzy_score)| {

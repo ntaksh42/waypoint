@@ -20,6 +20,7 @@ pub(super) fn index() -> Index {
     let mut index = Index {
         entries: vec![
             Entry {
+                azure: None,
                 name: "Release".into(),
                 breadcrumb: "Projects > waypoint".into(),
                 path: r"E:\waypoint\target\release".into(),
@@ -27,6 +28,7 @@ pub(super) fn index() -> Index {
                 branch: None,
             },
             Entry {
+                azure: None,
                 name: "Waypoint docs".into(),
                 breadcrumb: "Projects".into(),
                 path: r"E:\waypoint\docs".into(),
@@ -34,6 +36,7 @@ pub(super) fn index() -> Index {
                 branch: None,
             },
             Entry {
+                azure: None,
                 name: "Old waypoint".into(),
                 breadcrumb: "Archive".into(),
                 path: r"E:\archive\waypoint".into(),
@@ -43,6 +46,7 @@ pub(super) fn index() -> Index {
         ],
         bookmarks: vec![
             Entry {
+                azure: None,
                 name: "GitHub".into(),
                 breadcrumb: "Work".into(),
                 path: "https://github.com/".into(),
@@ -50,6 +54,7 @@ pub(super) fn index() -> Index {
                 branch: None,
             },
             Entry {
+                azure: None,
                 name: "Example".into(),
                 breadcrumb: String::new(),
                 path: "https://example.com/".into(),
@@ -58,6 +63,7 @@ pub(super) fn index() -> Index {
             },
         ],
         history: vec![Entry {
+            azure: None,
             name: "WayPoint pull request".into(),
             breadcrumb: "Chrome History".into(),
             path: "https://github.com/example/waypoint/pull/1".into(),
@@ -66,6 +72,7 @@ pub(super) fn index() -> Index {
         }],
         azure: {
             let entry = Entry {
+                azure: None,
                 name: "PR 42: Add Azure search".into(),
                 breadcrumb: "Azure DevOps — org/Waypoint — active — wp".into(),
                 path: "https://dev.azure.com/org/Waypoint/_git/app/pullrequest/42".into(),
@@ -92,6 +99,7 @@ pub(super) fn index() -> Index {
         azure_work_items: Vec::new(),
         azure_work_items_lower: Vec::new(),
         windows: vec![Entry {
+            azure: None,
             name: "waypoint - Notepad".into(),
             breadcrumb: "Open Windows".into(),
             path: String::new(),
@@ -99,6 +107,7 @@ pub(super) fn index() -> Index {
             branch: None,
         }],
         apps: vec![Entry {
+            azure: None,
             name: "Visual Studio Code".into(),
             breadcrumb: String::new(),
             path: r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Visual Studio Code.lnk"
@@ -120,6 +129,7 @@ pub(super) fn index() -> Index {
         .iter()
         .filter(|entry| matches!(entry.action, Action::OpenFolder(_)))
         .map(|entry| Entry {
+            azure: None,
             action: Action::OpenInTerminal,
             ..entry.clone()
         })
@@ -131,6 +141,7 @@ pub(super) fn index() -> Index {
         .iter()
         .filter(|entry| matches!(entry.action, Action::OpenFolder(_)))
         .map(|entry| Entry {
+            azure: None,
             action: Action::OpenInEditor("code".into()),
             ..entry.clone()
         })
@@ -141,6 +152,7 @@ pub(super) fn index() -> Index {
         .iter()
         .filter(|entry| matches!(entry.action, Action::OpenFolder(_)))
         .map(|entry| Entry {
+            azure: None,
             action: Action::ReplaceQuery(format!("{}{} ", CLAUDE_CODE_PREFIX, entry.path)),
             ..entry.clone()
         })
@@ -152,6 +164,7 @@ pub(super) fn index() -> Index {
         .iter()
         .filter(|entry| matches!(entry.action, Action::OpenFolder(_)))
         .map(|entry| Entry {
+            azure: None,
             action: Action::OpenCodex,
             ..entry.clone()
         })

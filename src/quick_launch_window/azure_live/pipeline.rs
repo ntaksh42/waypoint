@@ -23,6 +23,7 @@ pub(in crate::quick_launch_window) fn live_pipeline_search_entry(
         format!("Search Azure DevOps pipelines matching \"{query}\"")
     };
     Entry {
+        azure: None,
         name: label,
         breadcrumb: "Press Enter to search live".to_string(),
         path: String::new(),
@@ -138,6 +139,7 @@ pub(in crate::quick_launch_window) fn handle_azure_pipeline_results(reply_id: u3
             .into_iter()
             .take(MAX_LIST_RESULTS)
             .map(|candidate| Entry {
+                azure: Some(crate::quick_launch::AzureMeta::from_candidate(&candidate)),
                 name: candidate.name,
                 breadcrumb: candidate.detail,
                 path: candidate.url.clone(),

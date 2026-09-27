@@ -18,6 +18,7 @@ fn fuzzy_skip_does_not_change_results() {
     // 打ち切られない経路の両方を通す。
     let entries: Vec<Entry> = (0..200)
         .map(|i| Entry {
+            azure: None,
             name: format!("Project Folder {i}"),
             breadcrumb: format!("Projects > Group {}", i % 8),
             path: format!(r"E:\projects\group{}\proj-{i}", i % 8),
@@ -25,6 +26,7 @@ fn fuzzy_skip_does_not_change_results() {
             branch: None,
         })
         .chain((0..40).map(|i| Entry {
+            azure: None,
             name: format!("Zebra Archive {i}"),
             breadcrumb: "Archive".into(),
             path: format!(r"D:\archive\zebra-{i}"),

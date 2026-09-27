@@ -11,6 +11,7 @@ use std::time::Instant;
 pub(super) fn large_index(entries: usize, bookmarks: usize, history: usize, apps: usize) -> Index {
     fn folder(i: usize) -> Entry {
         Entry {
+            azure: None,
             name: format!("Project Folder {i}"),
             breadcrumb: format!("Projects > Group {}", i % 32),
             path: format!(r"E:\projects\group{}\project-{i}\src", i % 32),
@@ -21,6 +22,7 @@ pub(super) fn large_index(entries: usize, bookmarks: usize, history: usize, apps
     fn url(i: usize, kind: &str) -> Entry {
         let u = format!("https://example{}.com/{kind}/page/{i}?q=value", i % 64);
         Entry {
+            azure: None,
             name: format!("{kind} Bookmark Title Number {i}"),
             breadcrumb: format!("{kind} > Folder {}", i % 16),
             path: u.clone(),
@@ -30,6 +32,7 @@ pub(super) fn large_index(entries: usize, bookmarks: usize, history: usize, apps
     }
     fn app(i: usize) -> Entry {
         Entry {
+            azure: None,
             name: format!("Application Number {i}"),
             breadcrumb: String::new(),
             path: format!(r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\App{i}.lnk"),

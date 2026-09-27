@@ -276,6 +276,7 @@ pub(crate) fn azure_command_entries() -> &'static [Entry] {
         ]
         .into_iter()
         .map(|(name, breadcrumb)| Entry {
+            azure: None,
             name: name.to_string(),
             breadcrumb: breadcrumb.to_string(),
             path: String::new(),
@@ -360,6 +361,7 @@ pub(crate) fn azure_shortcut_entries(settings: &crate::config::AzureDevOpsSettin
 
 fn azure_shortcut(name: &str, breadcrumb: &str, query: &str) -> Entry {
     Entry {
+        azure: None,
         name: name.to_string(),
         breadcrumb: breadcrumb.to_string(),
         path: String::new(),
@@ -373,6 +375,7 @@ fn azure_shortcut(name: &str, breadcrumb: &str, query: &str) -> Entry {
 /// Project / Iteration の優先度をバックグラウンドで自動更新する。
 pub(crate) fn azure_suggest_entry() -> Entry {
     Entry {
+        azure: None,
         name: "az optimize".to_string(),
         breadcrumb: "Automatically rank projects & iterations from recent activity".to_string(),
         path: String::new(),
@@ -383,6 +386,7 @@ pub(crate) fn azure_suggest_entry() -> Entry {
 
 pub(crate) fn azure_candidate_entry(candidate: crate::azure_devops::Candidate) -> Entry {
     Entry {
+        azure: Some(super::AzureMeta::from_candidate(&candidate)),
         name: candidate.name,
         breadcrumb: if candidate.aliases.is_empty() {
             candidate.detail

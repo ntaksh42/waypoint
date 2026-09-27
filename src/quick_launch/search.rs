@@ -1,7 +1,7 @@
 //! 検索・スコアリング。
 
 use super::azure::{AzureCommand, azure_command, azure_command_entries};
-use super::rank::{search_entries, search_entries_cached, search_entries_cached_multi};
+use super::rank::{search_entries_cached, search_entries_cached_multi};
 use super::{
     APPS_PREFIX, AZURE_DEVOPS_PREFIX, BOOKMARK_PREFIX, CLAUDE_CODE_PREFIX, CODEX_PREFIX,
     EDITOR_PREFIX, Entry, HISTORY_PREFIX, Index, TABS_PREFIX, TERMINAL_PREFIX, WINDOW_PREFIX,
@@ -49,7 +49,11 @@ impl LowerKeys {
     pub(crate) fn new(entry: &Entry) -> Self {
         Self {
             name: entry.name.to_lowercase(),
-            breadcrumb: entry.breadcrumb.to_lowercase(),
+            breadcrumb: if entry.azure.is_some() {
+                azure_breadcrumb_key(entry)
+            } else {
+                entry.breadcrumb.to_lowercase()
+            },
             path: entry.path.to_lowercase(),
         }
     }
@@ -73,6 +77,23 @@ impl LowerKeys {
             })
             .collect()
     }
+}
+
+/// Azure DevOps 候補の breadcrumb の検索キー。全候補に共通の前置き
+/// `Azure DevOps — ` を外し (`az azure` で全件が一致しないように)、
+/// PR の source branch を足す (Completed の PR 履歴やライブ検索の結果は
+/// breadcrumb にブランチを含まないため)。
+fn azure_breadcrumb_key(entry: &Entry) -> String {
+    let breadcrumb = entry.breadcrumb.to_lowercase();
+    let mut key = breadcrumb
+        .strip_prefix("azure devops — ")
+        .map(str::to_string)
+        .unwrap_or(breadcrumb);
+    if let Some(branch) = &entry.branch {
+        key.push_str(" — ");
+        key.push_str(&branch.to_lowercase());
+    }
+    key
 }
 
 impl Index {
@@ -194,8 +215,17 @@ impl Index {
                 .collect();
         }
         if let Some(command_text) = super::azure::incomplete_azure_command(query) {
-            let completions =
-                search_entries(azure_command_entries(), command_text, false, &self.ranking);
+            // コマンド名だけで照合する。説明文も対象にすると `az alice` が
+            // `az optimize` の説明 "Automatically rank ... activity" に fuzzy で
+            // 一致し、検索結果の代わりに補完候補だけが出てしまう。
+            let commands = azure_command_entries();
+            let completions = search_entries_cached(
+                commands,
+                &LowerKeys::build_for_names(commands),
+                command_text,
+                false,
+                &self.ranking,
+            );
             if !completions.is_empty() {
                 return completions;
             }

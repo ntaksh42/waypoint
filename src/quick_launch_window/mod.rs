@@ -1,6 +1,8 @@
 //! 標準 Win32 コントロールだけで構成する Quick Launch 画面。
 
+mod azure_detail;
 mod azure_live;
+mod azure_tile;
 mod badge;
 mod dispatch;
 mod draw;

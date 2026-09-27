@@ -209,6 +209,8 @@ pub struct Candidate {
     pub is_draft: bool,
     pub ready_to_complete: bool,
     pub is_stale: bool,
+    /// Work Item の `System.WorkItemType`。Work Item 以外は `None`。
+    pub work_item_type: Option<String>,
 }
 
 /// Quick Launch と設定画面に出す、キャッシュの鮮度と最後の同期結果。
@@ -227,6 +229,7 @@ pub fn project_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
         .iter()
         .filter(|project| valid_project(project))
         .map(|project| Candidate {
+            work_item_type: None,
             kind: Kind::Project,
             status: String::new(),
             name: project.project.trim().to_string(),

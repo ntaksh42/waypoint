@@ -8,6 +8,7 @@ use crate::config::{Item, OpenMode};
 use crate::quick_launch_history::Ranking;
 
 mod azure;
+mod azure_meta;
 mod azure_search;
 mod index;
 mod rank;
@@ -21,6 +22,7 @@ pub use azure::{
     azure_live_request,
 };
 pub(crate) use azure::{azure_shortcut_entries, azure_suggest_entry};
+pub use azure_meta::AzureMeta;
 pub(crate) use rank::search_entries;
 pub(crate) use scoring::highlight_ranges;
 
@@ -139,6 +141,7 @@ pub(crate) fn builtin_command_entries() -> (&'static [Entry], &'static [search::
     static ENTRIES: std::sync::LazyLock<Vec<Entry>> = std::sync::LazyLock::new(|| {
         vec![
             Entry {
+                azure: None,
                 name: "Settings".to_string(),
                 breadcrumb: "Open waypoint settings".to_string(),
                 path: String::new(),
@@ -146,6 +149,7 @@ pub(crate) fn builtin_command_entries() -> (&'static [Entry], &'static [search::
                 branch: None,
             },
             Entry {
+                azure: None,
                 name: "Help".to_string(),
                 breadcrumb: "Open waypoint help".to_string(),
                 path: String::new(),
@@ -175,6 +179,7 @@ pub(crate) fn claude_code_entry(query: &str) -> Option<Entry> {
     }
     let session_name = (!session_name.is_empty()).then(|| session_name.to_string());
     Some(Entry {
+        azure: None,
         name: match &session_name {
             Some(session_name) => format!("Claude Code — {session_name}"),
             None => "Claude Code".to_string(),
@@ -253,6 +258,8 @@ pub struct Entry {
     pub action: Action,
     /// showBranch が真の Folder 項目のみ。構築時にまとめて読む。
     pub branch: Option<String>,
+    /// `az ` モードの Azure DevOps 候補だけが持つ種別・状態。
+    pub azure: Option<AzureMeta>,
 }
 
 impl Entry {
@@ -361,6 +368,7 @@ pub fn kill_process_entries() -> Vec<Entry> {
     crate::process::list_processes()
         .into_iter()
         .map(|process| Entry {
+            azure: None,
             name: process.name,
             breadcrumb: format!("Kill Process — PID {}", process.pid),
             path: String::new(),
@@ -377,6 +385,7 @@ pub fn kill_process_entries() -> Vec<Entry> {
 pub fn web_search_entry(engine: crate::web_search::Engine, query: &str) -> Entry {
     let query = query.trim();
     Entry {
+        azure: None,
         name: if query.is_empty() {
             engine.label().to_string()
         } else {

@@ -4,6 +4,7 @@ use super::super::*;
 #[test]
 fn fuzzy_subsequence_matches_scattered_letters() {
     let entries = vec![Entry {
+        azure: None,
         name: "Waypoint docs".into(),
         breadcrumb: String::new(),
         path: r"E:\waypoint\docs".into(),
@@ -26,6 +27,7 @@ fn fuzzy_subsequence_matches_scattered_letters() {
 fn fuzzy_match_ranks_below_substring_match() {
     let entries = vec![
         Entry {
+            azure: None,
             name: "Weird Document Cache".into(),
             breadcrumb: String::new(),
             path: r"C:\wdc".into(),
@@ -33,6 +35,7 @@ fn fuzzy_match_ranks_below_substring_match() {
             branch: None,
         },
         Entry {
+            azure: None,
             name: "wdc exact".into(),
             breadcrumb: String::new(),
             path: r"C:\exact".into(),
@@ -55,6 +58,7 @@ fn fuzzy_match_ranks_below_substring_match() {
 #[test]
 fn romaji_query_matches_kana_name() {
     let entries = vec![Entry {
+        azure: None,
         name: "かいはつしつ".into(),
         breadcrumb: String::new(),
         path: r"E:\dev".into(),
@@ -74,6 +78,7 @@ fn romaji_query_matches_kana_name() {
 #[test]
 fn romaji_query_does_not_match_kanji_name() {
     let entries = vec![Entry {
+        azure: None,
         name: "開発室".into(),
         breadcrumb: String::new(),
         path: r"E:\dev".into(),

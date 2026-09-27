@@ -7,6 +7,7 @@ use crate::dynamic::{Menus, WindowEntry};
 
 fn azure_candidate(kind: crate::azure_devops::Kind, name: &str) -> crate::azure_devops::Candidate {
     crate::azure_devops::Candidate {
+        work_item_type: None,
         kind,
         status: if kind == crate::azure_devops::Kind::PullRequest {
             "active".into()
@@ -45,6 +46,7 @@ fn refresh_dynamic_replaces_windows_but_keeps_apps_bookmarks_and_history() {
     // 無効化しているので、ここでは保持されることを確認するためのダミー
     // データを直接差し込む (`fixture::index` と同じ手法)。
     index.apps = vec![Entry {
+        azure: None,
         name: "Visual Studio Code".into(),
         breadcrumb: String::new(),
         path: r"C:\Start Menu\Visual Studio Code.lnk".into(),
@@ -53,6 +55,7 @@ fn refresh_dynamic_replaces_windows_but_keeps_apps_bookmarks_and_history() {
     }];
     index.apps_lower = search::LowerKeys::build_for(&index.apps);
     index.bookmarks = vec![Entry {
+        azure: None,
         name: "GitHub".into(),
         breadcrumb: String::new(),
         path: "https://github.com/".into(),
@@ -130,6 +133,7 @@ fn refresh_azure_keeps_apps_bookmarks_history_and_folders() {
 
     // 実マシンをスキャンしない設定なので、保持を確かめる対象を直接差し込む
     index.apps = vec![Entry {
+        azure: None,
         name: "Visual Studio Code".into(),
         breadcrumb: String::new(),
         path: r"C:\Start Menu\Visual Studio Code.lnk".into(),
@@ -138,6 +142,7 @@ fn refresh_azure_keeps_apps_bookmarks_history_and_folders() {
     }];
     index.apps_lower = search::LowerKeys::build_for(&index.apps);
     index.bookmarks = vec![Entry {
+        azure: None,
         name: "GitHub".into(),
         breadcrumb: String::new(),
         path: "https://github.com/".into(),
@@ -146,6 +151,7 @@ fn refresh_azure_keeps_apps_bookmarks_history_and_folders() {
     }];
     index.bookmarks_lower = search::LowerKeys::build_for(&index.bookmarks);
     index.history = vec![Entry {
+        azure: None,
         name: "Rust docs".into(),
         breadcrumb: "Chrome History".into(),
         path: "https://doc.rust-lang.org/".into(),
@@ -202,6 +208,7 @@ fn refresh_config_items_adds_new_item_and_keeps_apps() {
 
     // 実マシンをスキャンしない設定なので、保持を確かめる対象を直接差し込む
     index.apps = vec![Entry {
+        azure: None,
         name: "Visual Studio Code".into(),
         breadcrumb: String::new(),
         path: r"C:\Start Menu\Visual Studio Code.lnk".into(),

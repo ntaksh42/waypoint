@@ -2,8 +2,10 @@
 
 use windows::Win32::Foundation::COLORREF;
 
+use super::azure_tile::AzureTile;
 use super::{ACCENT, TAG_TEXT, rgb};
-use crate::quick_launch::Action;
+use crate::azure_devops::Kind;
+use crate::quick_launch::{Action, AzureMeta, Entry};
 
 /// モードバッジの背景色。プレフィックスごとに見分けは付けるが、
 /// 彩度・明度は揃えた寒色2トーンに統一し、原色の乱立を避ける。
@@ -115,20 +117,64 @@ pub(super) fn azure_icon_kind(badge: Option<&str>, path: &str) -> Option<AzureIc
     }
 }
 
-pub(super) fn azure_icon_color(kind: AzureIconKind) -> COLORREF {
+fn kind_style(kind: AzureIconKind) -> (COLORREF, &'static str) {
     match kind {
-        AzureIconKind::PullRequest => rgb(191, 90, 242), // 紫
-        AzureIconKind::WorkItem => rgb(0, 120, 212),     // 青
-        AzureIconKind::Pipeline => rgb(52, 199, 89),     // 緑
-        AzureIconKind::Project => rgb(48, 176, 199),     // シアン
+        AzureIconKind::PullRequest => (rgb(191, 90, 242), "⇄"), // 紫
+        AzureIconKind::WorkItem => (rgb(0, 120, 212), "◆"),     // 青
+        AzureIconKind::Pipeline => (rgb(52, 199, 89), "▶"),     // 緑
+        AzureIconKind::Project => (rgb(48, 176, 199), "▦"),     // シアン
     }
 }
 
-pub(super) fn azure_icon_label(kind: AzureIconKind) -> &'static str {
-    match kind {
-        AzureIconKind::PullRequest => "⇄",
-        AzureIconKind::WorkItem => "◆",
-        AzureIconKind::Pipeline => "▶",
-        AzureIconKind::Project => "▦",
+/// Work Item Type ごとの色 (Azure DevOps 本家の配色に合わせる) と記号。
+/// 未知の Type (プロセステンプレート独自の型など) は従来の Work Item の青。
+pub(super) fn work_item_style(work_item_type: &str) -> (COLORREF, &'static str) {
+    match work_item_type.to_ascii_lowercase().as_str() {
+        "bug" => (rgb(204, 41, 61), "✱"),      // 赤
+        "task" => (rgb(216, 169, 0), "✓"),     // 黄
+        "feature" => (rgb(119, 59, 147), "★"), // 紫
+        "epic" => (rgb(255, 123, 0), "♛"),     // 橙
+        _ => kind_style(AzureIconKind::WorkItem),
     }
+}
+
+/// 自分のレビュー待ち (橙) > Pipeline の失敗 (赤) > Draft (灰) の順に 1 つだけ。
+pub(super) fn marker_color(meta: &AzureMeta) -> Option<COLORREF> {
+    if meta.needs_my_review {
+        Some(rgb(255, 149, 0))
+    } else if meta.is_failed_pipeline() {
+        Some(rgb(229, 72, 77))
+    } else if meta.is_draft {
+        Some(rgb(142, 142, 147))
+    } else {
+        None
+    }
+}
+
+/// `az ` モードの行頭アイコン。候補が種別・状態 (`Entry::azure`) を持てば
+/// それを使い、持たなければ従来どおり URL から種別だけを推定する。
+pub(super) fn azure_tile(badge: Option<&str>, entry: &Entry) -> Option<AzureTile> {
+    let url_kind = azure_icon_kind(badge, &entry.path)?;
+    let Some(meta) = &entry.azure else {
+        let (color, glyph) = kind_style(url_kind);
+        return Some(AzureTile {
+            color,
+            glyph,
+            marker: None,
+            closed: false,
+        });
+    };
+    let (color, glyph) = match (meta.kind, meta.work_item_type.as_deref()) {
+        (Kind::WorkItem, Some(work_item_type)) => work_item_style(work_item_type),
+        (Kind::WorkItem, None) => kind_style(AzureIconKind::WorkItem),
+        (Kind::PullRequest, _) => kind_style(AzureIconKind::PullRequest),
+        (Kind::Pipeline, _) => kind_style(AzureIconKind::Pipeline),
+        (Kind::Project, _) => kind_style(AzureIconKind::Project),
+    };
+    Some(AzureTile {
+        color,
+        glyph,
+        marker: marker_color(meta),
+        closed: meta.is_closed(),
+    })
 }

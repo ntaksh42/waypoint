@@ -36,6 +36,7 @@ fn azure_title_phrase_ranks_before_the_same_words_in_a_different_order() {
         "PR 11: Payment service rollout",
     ] {
         let entry = Entry {
+            azure: None,
             name: name.into(),
             breadcrumb: "Azure DevOps — org/Waypoint — active".into(),
             path: format!("https://dev.azure.com/org/Waypoint/_git/app/{name}"),
@@ -83,6 +84,7 @@ fn azure_pull_request_number_ranks_the_exact_id_first() {
     ] {
         let url = format!("https://dev.azure.com/org/Waypoint/_git/app/{name}");
         let entry = Entry {
+            azure: None,
             name: name.into(),
             breadcrumb: "Azure DevOps — org/Waypoint — active".into(),
             path: url.clone(),
@@ -122,6 +124,7 @@ fn azure_pull_request_number_ranks_the_exact_id_first() {
 fn cached_work_items_are_searchable_without_live_api() {
     let mut index = index();
     index.azure_work_items = vec![Entry {
+        azure: None,
         name: "91: Cache WIT results".into(),
         breadcrumb: "Azure DevOps — org/Waypoint — Bug Active".into(),
         path: "https://dev.azure.com/org/Waypoint/_workitems/edit/91".into(),

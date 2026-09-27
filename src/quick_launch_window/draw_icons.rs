@@ -6,7 +6,6 @@ use windows::Win32::Graphics::Gdi::{
     HDC, HFONT, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
 };
 
-use super::badge::{AzureIconKind, azure_icon_label};
 use super::draw::draw_text_centered;
 use super::layout::scale;
 use super::{ACCENT, ICON_LEFT, ICON_SIZE};
@@ -20,33 +19,6 @@ pub(super) fn backdrop_tint(color: COLORREF) -> COLORREF {
         mix(((color.0 >> 8) & 0xff) as u8),
         mix(((color.0 >> 16) & 0xff) as u8),
     )
-}
-
-/// Azure DevOps の種別を小さなグリフとして描く。外部アイコンの読込を
-/// 増やさず、PR / WIT / Pipeline / Project を色と形で区別する。
-pub(super) unsafe fn draw_azure_icon(
-    hdc: HDC,
-    kind: AzureIconKind,
-    color: COLORREF,
-    rect: RECT,
-    dpi: u32,
-    font: Option<HFONT>,
-) {
-    let Some(font) = font else { return };
-    unsafe {
-        let size = scale(ICON_SIZE, dpi);
-        let mut icon_rect = RECT {
-            left: rect.left + scale(ICON_LEFT, dpi),
-            top: rect.top + (rect.bottom - rect.top - size) / 2,
-            right: rect.left + scale(ICON_LEFT, dpi) + size,
-            bottom: rect.top + (rect.bottom - rect.top - size) / 2 + size,
-        };
-        let old_font = SelectObject(hdc, font.into());
-        SetBkMode(hdc, TRANSPARENT);
-        SetTextColor(hdc, color);
-        draw_text_centered(hdc, azure_icon_label(kind), &mut icon_rect);
-        SelectObject(hdc, old_font);
-    }
 }
 
 /// コマンド候補は URL やファイルの実体を持たないため、補完操作であることを
