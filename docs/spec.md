@@ -162,6 +162,7 @@ Quick Access Popup の全機能を分解し、本プロジェクトでの扱い�
 - **FR-7.5** 手編集を想定し、インデント 2 桁・日本語は非エスケープ・**項目順を保存で入れ替えない**（`serde_json` の `preserve_order`）
 - **FR-7.6** Recent Items の利用回数は `%APPDATA%\waypoint\history.json` にローカル保存する。外部へ送信しない
 - **FR-7.7** 設定保存時、環境非依存な `settings`（Quick Launch・Azure DevOps プロジェクト一覧）を `%APPDATA%\waypoint\shared.json` へも複製書き出しする。起動時、`shared.json` が存在すれば `config.json` 読み込み後にその `settings` で上書きする（`shared.json` が同期の正とする）。`items`・`variables` は環境依存のため対象外。ユーザーが `shared.json` を Git やクラウド同期フォルダへ置くことで複数マシン間の設定持ち出しに使う。waypoint 自身は同期処理（Git 操作・アップロード等）を行わない
+- **FR-7.8** 登録済みの `folder` / `file` 項目（メニュー階層全体）のうち、パスが存在しなくなったものを config から削除し、Quick Launch の候補からも外す。起動時と以後 10 分おきにバックグラウンドスレッドで存在確認し、UI スレッドでは結果の反映と保存だけを行う（トリガー経路には入れない）。ドライブ未接続・VPN 切断などの一時的な不在で消さないよう、**パスのルート（`C:\` や `\\server\share\`）が存在するのに対象だけが無い場合に限り**削除する。ルートが見えない項目・変数を解決できない項目・相対パスは判定せず残す。削除した項目はログへ残す
 
 ### FR-8 常駐とライフサイクル
 

@@ -86,6 +86,7 @@ fn main() {
 
     tray::refresh_azure_devops(hwnd);
     tray::start_azure_full_refresh_timer(hwnd);
+    tray::start_prune_timer(hwnd);
 
     run_message_loop();
 

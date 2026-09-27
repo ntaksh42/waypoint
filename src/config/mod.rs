@@ -5,6 +5,7 @@
 
 mod expand;
 mod item;
+mod prune;
 #[cfg(test)]
 mod tests;
 
@@ -15,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 pub use expand::expand;
 pub use item::{Item, OpenMode};
+pub use prune::find_missing;
 
 /// 検索画面を出すモニター (FR-9.12.1)。モニター内の位置は常に中央で、
 /// 絶対座標は持たない (解像度・モニター構成の変更で画面外へ出るため)。

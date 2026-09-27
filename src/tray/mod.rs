@@ -8,6 +8,7 @@
 //!   メッセージ専用ウィンドウは列挙・検索の対象外になる。
 
 mod actions;
+mod prune;
 mod window;
 
 use std::cell::RefCell;
@@ -27,6 +28,7 @@ use crate::config::{Config, LoadOutcome};
 use crate::quick_launch_window;
 use crate::trigger::{self, Registration};
 
+pub use prune::start_prune_timer;
 use window::wnd_proc;
 
 /// トレイアイコンからの通知。WM_APP 以降はアプリが自由に使える。

@@ -124,3 +124,58 @@ fn azure_project_missing_organization_does_not_fail_the_whole_config() {
     assert_eq!(projects[0].organization, "");
     assert_eq!(projects[1].organization, "contoso");
 }
+
+fn folder(name: &str, path: &str) -> crate::config::Item {
+    crate::config::Item::Folder {
+        name: name.to_string(),
+        path: path.to_string(),
+        open: None,
+        icon: None,
+        show_branch: false,
+    }
+}
+
+#[test]
+fn find_missing_skips_paths_whose_root_is_unavailable() {
+    use std::path::Path;
+    let paths = vec![
+        r"C:\gone".to_string(),
+        r"C:\here".to_string(),
+        r"E:\unplugged".to_string(),
+        r"\\server\share\gone".to_string(),
+        r"relative\path".to_string(),
+    ];
+    let existing = [r"C:\", r"C:\here", r"\\server\share\"];
+    let exists = |p: &Path| existing.iter().any(|e| Path::new(e) == p);
+
+    let missing = crate::config::find_missing(&paths, exists);
+
+    assert_eq!(missing, vec![r"C:\gone", r"\\server\share\gone"]);
+}
+
+#[test]
+fn remove_paths_removes_matching_items_inside_submenus() {
+    let mut cfg = Config::default();
+    cfg.variables
+        .insert("ROOT".to_string(), r"C:\work".to_string());
+    cfg.items = vec![
+        folder("Keep", r"C:\keep"),
+        crate::config::Item::Submenu {
+            name: "Sub".to_string(),
+            items: vec![folder("Gone", r"{ROOT}\gone"), folder("Keep2", r"C:\keep2")],
+            show_branch: false,
+        },
+    ];
+
+    assert_eq!(
+        cfg.item_paths(),
+        vec![r"C:\keep", r"C:\work\gone", r"C:\keep2"]
+    );
+    let removed = cfg.remove_paths(&[r"c:\WORK\gone".to_string()]);
+
+    assert_eq!(
+        removed,
+        vec![("Gone".to_string(), r"C:\work\gone".to_string())]
+    );
+    assert_eq!(cfg.item_paths(), vec![r"C:\keep", r"C:\keep2"]);
+}

@@ -195,6 +195,14 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
             refresh_azure_devops(hwnd);
             LRESULT(0)
         }
+        WM_TIMER if wparam.0 == super::prune::PRUNE_TIMER_ID => {
+            super::prune::scan_async(hwnd);
+            LRESULT(0)
+        }
+        super::prune::WM_MISSING_ITEMS_FOUND => {
+            super::prune::apply_missing();
+            LRESULT(0)
+        }
         WM_COPYDATA if lparam.0 != 0 => {
             unsafe {
                 let copy_data =
