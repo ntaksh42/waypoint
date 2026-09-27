@@ -149,8 +149,9 @@ impl PipelineFilter {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PullRequestStatus {
+    #[default]
     All,
     Active,
     Completed,

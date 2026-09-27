@@ -10,11 +10,13 @@ use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 use crate::config::AzureDevOpsSettings;
 use crate::quick_launch::PullRequestFilter;
 
-use super::super::api::{current_user_id, fetch_pull_requests_live, http_client};
+use super::super::api::{
+    current_user_id, fetch_pull_request_by_id, fetch_pull_requests_live, http_client,
+};
 use super::super::auth_cache::OrganizationValues;
 use super::super::convert::{pull_request_cached_row_to_candidate, valid_project};
 use super::super::credential::load_pat;
-use super::super::{Candidate, title_match_quality};
+use super::super::{Candidate, is_item_id_query, title_match_quality};
 use super::common::{join_worker, lock_recovering};
 use super::work_items::WorkItemReply;
 
@@ -45,6 +47,15 @@ pub fn search_pull_requests_live_async(
     message: u32,
 ) {
     let notify = notify.0 as isize;
+    // 番号指定 (`az pr 68` / `az 68`) は一覧をスキャンせず PR 単体の API を
+    // 直接叩く。一覧の打ち切りより古い PR も拾え、リクエストもプロジェクト
+    // ごとに 1 本で済む。番号は状態より強い指定なので状態ごとには分けない
+    let item_id = is_item_id_query(&query).then(|| query.trim().to_string());
+    let statuses: &'static [&'static str] = if item_id.is_some() {
+        &["by id"]
+    } else {
+        statuses
+    };
     thread::spawn(move || {
         let mut results = Vec::new();
         let mut failures = Vec::new();
@@ -68,6 +79,7 @@ pub fn search_pull_requests_live_async(
                         .map(|&(project, status)| {
                             let client = &client;
                             let auth = &auth;
+                            let item_id = item_id.as_deref();
                             scope.spawn(move || {
                                 let outcome = match auth.get_or_init(&project.organization, || {
                                     load_pat(&project.organization).map(|pat| {
@@ -77,13 +89,23 @@ pub fn search_pull_requests_live_async(
                                         (pat, user)
                                     })
                                 }) {
-                                    Some(Ok((pat, user))) => fetch_pull_requests_live(
-                                        client,
-                                        project,
-                                        pat,
-                                        user.as_deref(),
-                                        status,
-                                    )
+                                    Some(Ok((pat, user))) => match item_id {
+                                        Some(id) => fetch_pull_request_by_id(
+                                            client,
+                                            project,
+                                            pat,
+                                            user.as_deref(),
+                                            id,
+                                        )
+                                        .map(|row| row.into_iter().collect::<Vec<_>>()),
+                                        None => fetch_pull_requests_live(
+                                            client,
+                                            project,
+                                            pat,
+                                            user.as_deref(),
+                                            status,
+                                        ),
+                                    }
                                     .map(|rows| {
                                         rows.iter()
                                             .map(|row| {
@@ -166,7 +188,10 @@ pub fn search_pull_requests_live_async(
         failures.dedup();
         let empty_message = if results.is_empty() {
             if failures.is_empty() {
-                Some("No matching pull requests.".to_string())
+                Some(match &item_id {
+                    Some(id) => format!("PR {id} was not found in the watched projects."),
+                    None => "No matching pull requests.".to_string(),
+                })
             } else {
                 Some(format!(
                     "Azure DevOps search unavailable ({})",

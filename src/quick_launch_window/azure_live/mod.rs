@@ -28,7 +28,7 @@ pub(super) use pipeline::{
 };
 pub(super) use pull_request::{
     handle_azure_pull_request_results, live_pull_request_search_entry,
-    start_azure_pull_request_live_search,
+    missing_azure_item_id, missing_azure_pull_request_id, start_azure_pull_request_live_search,
 };
 pub(super) use work_item::{
     handle_azure_work_item_results, start_azure_work_item_live_search, start_azure_work_item_query,

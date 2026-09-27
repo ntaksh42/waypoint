@@ -15,14 +15,27 @@ pub(in crate::quick_launch_window) fn live_pull_request_search_entry(
     filter: crate::quick_launch::PullRequestFilter,
     query: &str,
 ) -> Entry {
-    let label = if query.is_empty() {
-        "Search Azure DevOps for older pull requests".to_string()
+    // 番号指定は一覧の検索ではなく PR 単体の API を直接叩く
+    // (`search_pull_requests_live_async`)。何が起きるかを文言で区別する
+    let (label, breadcrumb) = if crate::azure_devops::is_item_id_query(query) {
+        (
+            format!("Look up PR {} on Azure DevOps", query.trim()),
+            "Not in cache — press Enter to fetch it by number",
+        )
+    } else if query.is_empty() {
+        (
+            "Search Azure DevOps for older pull requests".to_string(),
+            "Not in cache — press Enter to search live (widens to 1 year)",
+        )
     } else {
-        format!("Search Azure DevOps for pull requests matching \"{query}\"")
+        (
+            format!("Search Azure DevOps for pull requests matching \"{query}\""),
+            "Not in cache — press Enter to search live (widens to 1 year)",
+        )
     };
     Entry {
         name: label,
-        breadcrumb: "Not in cache — press Enter to search live (widens to 1 year)".to_string(),
+        breadcrumb: breadcrumb.to_string(),
         path: String::new(),
         action: crate::quick_launch::Action::AzureLivePullRequestSearch {
             filter,
@@ -30,6 +43,31 @@ pub(in crate::quick_launch_window) fn live_pull_request_search_entry(
         },
         branch: None,
     }
+}
+
+/// 項目 ID 指定 (数字だけの検索語) なのに、先頭 ID が完全一致する候補が
+/// 一覧に無いか。番号指定がキャッシュで取りこぼされたかの判定。
+pub(in crate::quick_launch_window) fn missing_azure_item_id(
+    results: &[Entry],
+    query: &str,
+) -> bool {
+    crate::azure_devops::is_item_id_query(query)
+        && !results
+            .iter()
+            .any(|entry| crate::azure_devops::matches_item_id(&entry.name, query))
+}
+
+/// `az <番号>` 用。横断検索には Work Item (`12345: <title>`) も並ぶので、
+/// 同じ番号の Work Item が居ても PR (`PR 12345: <title>`) が無ければ取りこぼし。
+pub(in crate::quick_launch_window) fn missing_azure_pull_request_id(
+    results: &[Entry],
+    query: &str,
+) -> bool {
+    crate::azure_devops::is_item_id_query(query)
+        && !results.iter().any(|entry| {
+            entry.name.starts_with("PR ")
+                && crate::azure_devops::matches_item_id(&entry.name, query)
+        })
 }
 
 /// `AzureLivePullRequestSearch` が選ばれた。ウィンドウは閉じずにその場で

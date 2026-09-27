@@ -40,7 +40,9 @@ pub enum AzureCommand {
 /// `az pr` の状態・自分との関係を表す絞り込み条件。
 /// `#[derive(...)]` は Rust の属性構文で、Debug（表示用）、Clone / Copy（複製）、
 /// PartialEq / Eq（比較）の標準 trait 実装をコンパイラに自動生成させる。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// `Default` は絞り込み無し (状態 all・属性なし)。`az <番号>` から PR を
+/// 直接引くときに使う。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PullRequestFilter {
     pub(crate) status: crate::azure_devops::PullRequestStatus,
     pub(crate) status_explicit: bool,

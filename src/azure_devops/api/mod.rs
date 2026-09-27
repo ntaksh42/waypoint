@@ -3,6 +3,7 @@
 mod areas;
 mod http;
 mod pipelines;
+mod pull_request_by_id;
 mod pull_requests;
 mod work_items;
 
@@ -16,6 +17,7 @@ pub use areas::{fetch_area_nodes, fetch_my_area_suggestions};
 pub use pull_requests::list_repository_names;
 
 pub(crate) use pipelines::fetch_pipelines;
+pub(crate) use pull_request_by_id::fetch_pull_request_by_id;
 pub(crate) use pull_requests::fetch_pull_requests_live;
 pub(crate) use work_items::{RecentActivityPaths, fetch_recent_activity_paths, fetch_work_items};
 

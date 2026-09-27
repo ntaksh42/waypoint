@@ -1,9 +1,9 @@
 use super::super::azure_live::{
-    accepts_azure_work_item_reply, invalidate_azure_live_searches, start_azure_work_item_query,
+    accepts_azure_work_item_reply, invalidate_azure_live_searches, live_pull_request_search_entry,
+    missing_azure_item_id, missing_azure_pull_request_id, start_azure_work_item_query,
 };
 use super::super::search::{
-    accepts_everything_reply, build_rows, missing_azure_item_id, next_everything_reply_id,
-    refinable_search_term,
+    accepts_everything_reply, build_rows, next_everything_reply_id, refinable_search_term,
 };
 use super::super::{RowKind, STATE, State};
 use crate::config::OpenMode;
@@ -314,4 +314,45 @@ fn azure_item_id_query_without_an_exact_hit_is_reported_missing() {
     // 数字以外の検索語は ID 指定ではないので、この経路では足さない。
     assert!(!missing_azure_item_id(&near_misses, "rollout"));
     assert!(!missing_azure_item_id(&near_misses, ""));
+}
+
+/// `az <番号>` は Work Item と PR が同じ一覧に並ぶ。同じ番号の Work Item が
+/// 居ても、PR が無ければ PR を直接引く入口を出す。
+#[test]
+fn cross_search_by_number_only_counts_pull_requests_as_a_hit() {
+    let entry = |name: &str| Entry {
+        name: name.into(),
+        breadcrumb: String::new(),
+        path: String::new(),
+        action: Action::OpenUrl(String::new()),
+        branch: None,
+    };
+    assert!(missing_azure_pull_request_id(
+        &[entry("68: Cache WIT results")],
+        "68"
+    ));
+    assert!(!missing_azure_pull_request_id(
+        &[entry("PR 68: Add launcher shortcut")],
+        "68"
+    ));
+    assert!(!missing_azure_pull_request_id(&[], "rollout"));
+}
+
+/// 番号指定の入口は一覧の検索ではなく番号での取得だと分かる文言にする。
+#[test]
+fn live_pull_request_entry_for_a_number_says_it_fetches_by_number() {
+    let entry = live_pull_request_search_entry(Default::default(), "68");
+    assert_eq!(entry.name, "Look up PR 68 on Azure DevOps");
+    assert!(
+        entry.breadcrumb.contains("by number"),
+        "{}",
+        entry.breadcrumb
+    );
+
+    let entry = live_pull_request_search_entry(Default::default(), "rollout");
+    assert!(
+        entry.name.contains("matching \"rollout\""),
+        "{}",
+        entry.name
+    );
 }
