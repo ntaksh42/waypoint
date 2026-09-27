@@ -41,15 +41,18 @@ pub(super) unsafe fn draw_section_header(
         // 見出しは次の項目行に寄せ、上側を広く空けて区分の切れ目を作る
         let mut text_rect = RECT {
             left: rect.left + scale(ICON_LEFT, dpi),
-            top: rect.top + scale(12, dpi),
+            top: rect.top + scale(8, dpi),
             right: rect.right - scale(TAG_RIGHT, dpi),
-            bottom: rect.bottom - scale(4, dpi),
+            bottom: rect.bottom - scale(2, dpi),
         };
         let label = label.to_uppercase();
         let old_font = SelectObject(hdc, header_font.into());
         let old_extra = SetTextCharacterExtra(hdc, scale(1, dpi));
         SetTextColor(hdc, HEADER_TEXT);
-        let label_width = measured_width(hdc, &label, &text_rect);
+        // DT_CALCRECT は SetTextCharacterExtra の字間を幅に含めないため、
+        // 字数ぶんを足さないと件数がラベル末尾に食い込む ("FOLDERS6")
+        let label_width =
+            measured_width(hdc, &label, &text_rect) + scale(1, dpi) * label.chars().count() as i32;
         draw_text(hdc, &label, &mut text_rect);
         SetTextCharacterExtra(hdc, old_extra);
         SelectObject(hdc, old_font);

@@ -4,9 +4,9 @@ use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{FillRect, HDC, SetBkColor, SetTextColor};
 use windows::Win32::UI::Controls::{DRAWITEMSTRUCT, MEASUREITEMSTRUCT};
 use windows::Win32::UI::WindowsAndMessaging::{
-    DefWindowProcW, EN_CHANGE, GetClientRect, LBN_DBLCLK, MoveWindow, WM_ACTIVATE, WM_CLOSE,
-    WM_COMMAND, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_DRAWITEM, WM_ERASEBKGND, WM_MEASUREITEM,
-    WM_PAINT, WM_SIZE,
+    DefWindowProcW, EN_CHANGE, GetClientRect, LBN_DBLCLK, LBN_SELCHANGE, MoveWindow, WM_ACTIVATE,
+    WM_CLOSE, WM_COMMAND, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_DRAWITEM, WM_ERASEBKGND,
+    WM_MEASUREITEM, WM_PAINT, WM_SIZE,
 };
 
 use super::azure_live::{
@@ -35,6 +35,9 @@ pub(super) fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM)
                 STATE.with(update_results);
             } else if is_list && notification == LBN_DBLCLK {
                 queue_selected();
+            } else if is_list && notification == LBN_SELCHANGE {
+                // マウスでの選択変更。ヒント帯を選択中の候補に合わせる
+                super::draw_footer::invalidate_footer();
             }
             LRESULT(0)
         }

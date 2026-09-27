@@ -48,7 +48,7 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
     if draw.itemID == u32::MAX {
         return;
     }
-    let Some((row, entry, empty_message, fonts, dpi, badge, highlight_term, count)) =
+    let Some((row, entry, empty_message, fonts, dpi, badge, highlight_term, count, sectioned)) =
         STATE.with(|state| {
             let state = state.borrow();
             let row = state.rows.get(draw.itemID as usize).copied()?;
@@ -75,6 +75,10 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
                 state.badge,
                 state.highlight_term.clone(),
                 count,
+                state
+                    .rows
+                    .iter()
+                    .any(|row| matches!(row, super::RowKind::Header(_))),
             ))
         })
     else {
@@ -144,7 +148,8 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
         }
 
         draw_entry_icon(draw, &entry, badge, dpi, fonts.name);
-        let text_right = draw_trailing_tags(draw, &entry, badge, selected, dpi, fonts.tag);
+        let text_right =
+            draw_trailing_tags(draw, &entry, badge, selected, sectioned, dpi, fonts.tag);
 
         SetBkMode(draw.hDC, TRANSPARENT);
         let text_left = draw.rcItem.left + scale(TEXT_LEFT, dpi);
@@ -153,9 +158,9 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
             let old = SelectObject(draw.hDC, font.into());
             let mut rect = RECT {
                 left: text_left,
-                top: draw.rcItem.top + scale(5, dpi),
+                top: draw.rcItem.top + scale(3, dpi),
                 right: text_right,
-                bottom: draw.rcItem.top + scale(27, dpi),
+                bottom: draw.rcItem.top + scale(22, dpi),
             };
             let ranges = crate::quick_launch::highlight_ranges(&entry.name, &highlight_term);
             let highlight_color = if selected { SELECTED_HIGHLIGHT } else { ACCENT };
@@ -175,9 +180,9 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
             let old = SelectObject(draw.hDC, font.into());
             let mut rect = RECT {
                 left: text_left,
-                top: draw.rcItem.top + scale(26, dpi),
+                top: draw.rcItem.top + scale(21, dpi),
                 right: text_right,
-                bottom: draw.rcItem.top + scale(44, dpi),
+                bottom: draw.rcItem.top + scale(37, dpi),
             };
             // breadcrumb を主、path を一段暗い色の補足として続ける。
             // 長いパスは中央を省略し、末尾のフォルダ名・ファイル名を残す。
@@ -189,7 +194,7 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
             SetTextColor(draw.hDC, primary_color);
             let primary = detail_primary(&entry);
             let primary_width = measured_width(draw.hDC, &primary, &rect);
-            if entry.breadcrumb.is_empty() {
+            if detail_primary_is_path(&entry) {
                 draw_text_path(draw.hDC, &primary, &mut rect);
             } else {
                 draw_text(draw.hDC, &primary, &mut rect);
@@ -276,11 +281,14 @@ unsafe fn draw_entry_icon(
 /// 右から順に描き、名前・詳細テキストが使える右端の x 座標を返す。
 /// ブランチは旧描画では名前の後ろに `[main]` と連結していたが、
 /// 長い名前だと省略記号で消えるため独立したタグにした。
+/// 区分見出し付きの一覧 (`sectioned`) では、種別は見出しが既に示しているので
+/// 非選択行の種別タグを省き、その幅を詳細行 (パス) に回す。
 unsafe fn draw_trailing_tags(
     draw: &DRAWITEMSTRUCT,
     entry: &Entry,
     badge: Option<&str>,
     selected: bool,
+    sectioned: bool,
     dpi: u32,
     font: Option<HFONT>,
 ) -> i32 {
@@ -309,8 +317,11 @@ unsafe fn draw_trailing_tags(
                 },
             )
         };
-        let mut left =
-            draw_tag_right_aligned(draw.hDC, label, text_right, draw.rcItem, dpi, font, style);
+        let mut left = if selected || !sectioned {
+            draw_tag_right_aligned(draw.hDC, label, text_right, draw.rcItem, dpi, font, style)
+        } else {
+            text_right + scale(8, dpi)
+        };
         if let Some(branch) = entry.branch.as_deref() {
             let style = if selected {
                 TagStyle {
@@ -339,9 +350,43 @@ unsafe fn draw_trailing_tags(
     }
 }
 
+/// 開いているウィンドウの breadcrumb の接頭辞 (`index.rs`)。区分見出し・種別
+/// タグと重複するので、詳細行ではプロセス名だけを出す (検索対象としては残す)。
+const OPEN_WINDOWS_PREFIX: &str = "Open Windows — ";
+
+/// breadcrumb がパスの先頭部分そのもの (`E:\` と `E:\waypoint` 等) か。
+/// そのまま 2 つ並べると同じ情報が 2 度出るだけなので、パスに一本化する。
+fn breadcrumb_is_path_prefix(entry: &Entry) -> bool {
+    let crumb = &entry.breadcrumb;
+    !crumb.is_empty()
+        && entry.path.len() >= crumb.len()
+        && entry.path.is_char_boundary(crumb.len())
+        && entry.path[..crumb.len()].eq_ignore_ascii_case(crumb)
+}
+
+/// 詳細行の主表示がパス (中央省略で描く対象) か。
+pub(super) fn detail_primary_is_path(entry: &Entry) -> bool {
+    entry.breadcrumb.is_empty() || breadcrumb_is_path_prefix(entry)
+}
+
+/// スタートメニューの `Programs` フォルダ。アプリ候補のパスは全件これで
+/// 始まり、詳細行の幅を食うだけで識別に役立たないので表示上は短縮する。
+const START_MENU_PROGRAMS: &str = r"\Microsoft\Windows\Start Menu\Programs\";
+
+/// 詳細行に出すパス。スタートメニュー配下は `Start Menu\…` に縮める
+/// (Enter・コピーで使う実パスは変えない)。
+pub(super) fn display_path(path: &str) -> String {
+    match path.find(START_MENU_PROGRAMS) {
+        Some(at) => format!(r"Start Menu\{}", &path[at + START_MENU_PROGRAMS.len()..]),
+        None => path.to_string(),
+    }
+}
+
 pub(super) fn detail_primary(entry: &Entry) -> String {
-    if entry.breadcrumb.is_empty() {
-        entry.path.clone()
+    if detail_primary_is_path(entry) {
+        display_path(&entry.path)
+    } else if let Some(process) = entry.breadcrumb.strip_prefix(OPEN_WINDOWS_PREFIX) {
+        process.to_string()
     } else {
         entry.breadcrumb.clone()
     }
@@ -352,10 +397,10 @@ pub(super) fn detail_primary(entry: &Entry) -> String {
 /// Azure DevOps 項目は breadcrumb 自体に作成者などの有益情報を持つため、
 /// 冗長でしかない URL は表示しない。
 pub(super) fn detail_secondary(entry: &Entry) -> Option<String> {
-    (!entry.breadcrumb.is_empty()
+    (!detail_primary_is_path(entry)
         && !entry.path.is_empty()
         && !entry.breadcrumb.starts_with("Azure DevOps —"))
-    .then(|| format!("  \u{00B7}  {}", entry.path))
+    .then(|| format!("  \u{00B7}  {}", display_path(&entry.path)))
 }
 
 /// リストボックスへ渡すプレーンラベル用の補足テキスト。

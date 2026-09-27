@@ -434,6 +434,7 @@ pub(super) fn populate_list(list: HWND, labels: &[HSTRING], rows: &[RowKind]) {
         }
     }
     resize_to_rows(rows);
+    super::draw_footer::invalidate_footer();
 }
 
 /// `populate_list` から呼ぶ、ウィンドウ再配置の実処理。表示中でなければ何もしない。
