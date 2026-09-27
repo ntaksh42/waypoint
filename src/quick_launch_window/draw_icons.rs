@@ -91,7 +91,9 @@ pub(super) unsafe fn draw_path_icon(hdc: HDC, path: &str, rect: RECT, dpi: u32) 
 
 pub(super) unsafe fn draw_window_icon(hdc: HDC, hwnd: HWND, rect: RECT, dpi: u32) {
     let size = scale(ICON_SIZE, dpi);
-    let Some(bitmap) = crate::icon::bitmap_for_window_sized(hwnd, size) else {
+    let bitmap = crate::icon::bitmap_for_window_sized(hwnd, size)
+        .or_else(|| crate::icon::bitmap_for_asset_sized("window", ICON_WINDOW, size));
+    let Some(bitmap) = bitmap else {
         return;
     };
     unsafe { draw_icon_bitmap(hdc, bitmap, rect, dpi, size) };
@@ -102,6 +104,9 @@ const ICON_BOOKMARK: &[u8] = include_bytes!("../../assets/menu/bookmark.png");
 
 /// favicon が無い開いているタブに使う既定アイコン (ブラウザタブ形状)。
 const ICON_TAB: &[u8] = include_bytes!("../../assets/menu/tab.png");
+
+/// 実体のアイコンを取得できない開いているウィンドウに使う既定アイコン。
+const ICON_WINDOW: &[u8] = include_bytes!("../../assets/menu/window.png");
 
 /// favicon が見つからないときのフォールバック種別。
 #[derive(Clone, Copy)]

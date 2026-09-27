@@ -27,8 +27,8 @@ public partial class MainWindow
     {
         var organization = AzureConnectionOrganization.Text.Trim();
         if (organization.Length == 0) throw new InvalidDataException("Organization is required.");
-        var pat = AzurePat.Password.Length > 0 ? AzurePat.Password : CredentialStore.Load(organization);
         AzureConnectionStatus.Text = "Loading projects...";
+        var pat = await AzureCredential.ResolveAsync(organization, AzurePat.Password);
         var available = await AzureClient.LoadProjectsAsync(organization, pat);
         AzureConnectionStatus.Text = $"Loaded {available.Count} project(s).";
         var picker = new AzureProjectPickerWindow(available) { Owner = this };
@@ -54,7 +54,7 @@ public partial class MainWindow
     {
         try
         {
-            var (organization, project, pat) = AzureProjectConnection();
+            var (organization, project, pat) = await AzureProjectConnection();
             AzureConnectionStatus.Text = "Loading repositories...";
             var picker = new MultiSelectWindow("Interest repositories", "Choose repositories to include. Leave everything unchecked to search all repositories.", await AzureClient.LoadRepositoriesAsync(organization, project, pat), LinesToArray(AzureRepositories.Text).Select(value => value!.GetValue<string>())) { Owner = this };
             if (picker.ShowDialog() != true) return;
@@ -69,7 +69,7 @@ public partial class MainWindow
     {
         try
         {
-            var (organization, project, pat) = AzureProjectConnection();
+            var (organization, project, pat) = await AzureProjectConnection();
             AzureConnectionStatus.Text = "Loading area paths...";
             var picker = new MultiSelectWindow("Interest areas", "Choose Area Paths to include. Filter searches the whole path; indentation shows the hierarchy.", await AzureClient.LoadAreasAsync(organization, project, pat), LinesToArray(AzureAreas.Text).Select(value => value!.GetValue<string>())) { Owner = this };
             if (picker.ShowDialog() != true) return;
@@ -84,7 +84,7 @@ public partial class MainWindow
     {
         try
         {
-            var (organization, project, pat) = AzureProjectConnection();
+            var (organization, project, pat) = await AzureProjectConnection();
             AzureConnectionStatus.Text = "Finding your assigned work items...";
             var suggestions = await AzureClient.LoadAssignedAreaSuggestionsAsync(organization, project, pat);
             var paths = suggestions.Select(value => value[..value.LastIndexOf(" (", StringComparison.Ordinal)]).ToList();
@@ -107,8 +107,8 @@ public partial class MainWindow
             var activity = new List<(AzureProjectRow Project, int Count)>();
             foreach (var project in _azureProjects)
             {
-                var pat = AzurePat.Password.Length > 0 && project.Organization.Equals(AzureConnectionOrganization.Text.Trim(), StringComparison.OrdinalIgnoreCase)
-                    ? AzurePat.Password : CredentialStore.Load(project.Organization);
+                var pat = await AzureCredential.ResolveAsync(project.Organization, project.Organization.Equals(AzureConnectionOrganization.Text.Trim(), StringComparison.OrdinalIgnoreCase)
+                    ? AzurePat.Password : "");
                 activity.Add((project, await AzureClient.CountRecentAssignedWorkItemsAsync(project.Organization, project.Project, pat)));
             }
             foreach (var (project, priority) in activity.OrderByDescending(value => value.Count).ThenBy(value => value.Project.Project, StringComparer.OrdinalIgnoreCase).Select((value, index) => (value.Project, index)))
@@ -120,14 +120,14 @@ public partial class MainWindow
         catch (Exception error) { AzureConnectionStatus.Text = error.Message; }
     }
 
-    private (string Organization, string Project, string Pat) AzureProjectConnection()
+    private async Task<(string Organization, string Project, string Pat)> AzureProjectConnection()
     {
         CommitAzureProject();
         var organization = AzureOrganization.Text.Trim();
         var project = AzureProject.Text.Trim();
         if (organization.Length == 0 || project.Length == 0) throw new InvalidDataException("Select a watched project first.");
-        var pat = AzurePat.Password.Length > 0 && organization.Equals(AzureConnectionOrganization.Text.Trim(), StringComparison.OrdinalIgnoreCase)
-            ? AzurePat.Password : CredentialStore.Load(organization);
+        var pat = await AzureCredential.ResolveAsync(organization, organization.Equals(AzureConnectionOrganization.Text.Trim(), StringComparison.OrdinalIgnoreCase)
+            ? AzurePat.Password : "");
         return (organization, project, pat);
     }
 

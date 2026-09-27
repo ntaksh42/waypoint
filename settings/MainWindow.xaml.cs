@@ -71,7 +71,7 @@ public partial class MainWindow : Window
         EditorCommand.Text = Text(quick, "editorCommand", "code");
         VisibleResults.Text = (quick["visibleResults"]?.GetValue<int?>() ?? 12).ToString();
         SelectByTag(MonitorChoice, Text(quick, "monitor", "primary"));
-        AzureEnabled.IsChecked = Bool(AzureSettings(), "enabled");
+        AzureEnabled.IsChecked = Bool(AzureSettings(), "enabled", true);
         LoadAzureProjects();
         _variables.Clear();
         foreach (var pair in _store.Variables) _variables.Add(new VariableRow(pair.Key, pair.Value?.GetValue<string>() ?? ""));

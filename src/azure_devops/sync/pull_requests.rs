@@ -15,7 +15,7 @@ use super::super::api::{
 };
 use super::super::auth_cache::OrganizationValues;
 use super::super::convert::{pull_request_cached_row_to_candidate, valid_project};
-use super::super::credential::load_pat;
+use super::super::credential::load_credential;
 use super::super::{Candidate, is_item_id_query, title_match_quality};
 use super::common::{join_worker, lock_recovering};
 use super::work_items::WorkItemReply;
@@ -82,7 +82,7 @@ pub fn search_pull_requests_live_async(
                             let item_id = item_id.as_deref();
                             scope.spawn(move || {
                                 let outcome = match auth.get_or_init(&project.organization, || {
-                                    load_pat(&project.organization).map(|pat| {
+                                    load_credential(&project.organization).map(|pat| {
                                         let user =
                                             current_user_id(client, &project.organization, &pat)
                                                 .ok();

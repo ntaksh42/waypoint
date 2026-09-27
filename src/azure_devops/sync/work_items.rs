@@ -13,7 +13,7 @@ use super::super::Candidate;
 use super::super::api::{fetch_work_items, http_client};
 use super::super::auth_cache::OrganizationValues;
 use super::super::convert::valid_project;
-use super::super::credential::load_pat;
+use super::super::credential::load_credential;
 use super::common::{join_worker, lock_recovering};
 
 #[derive(Debug, Clone, Default)]
@@ -62,7 +62,7 @@ pub fn search_work_items_async(
                             let query = &query;
                             scope.spawn(move || {
                                 let outcome = match pats.get_or_init(&project.organization, || {
-                                    load_pat(&project.organization)
+                                    load_credential(&project.organization)
                                 }) {
                                     Some(Ok(pat)) => fetch_work_items(client, project, pat, query),
                                     Some(Err(_)) | None => {

@@ -10,7 +10,9 @@ public static class AzureClient
     private static HttpClient CreateClient(string pat)
     {
         var client = new HttpClient();
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($":{pat}")));
+        client.DefaultRequestHeaders.Authorization = pat.StartsWith(AzureCredential.BearerPrefix, StringComparison.Ordinal)
+            ? new AuthenticationHeaderValue("Bearer", pat[AzureCredential.BearerPrefix.Length..])
+            : new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($":{pat}")));
         return client;
     }
 
@@ -90,6 +92,51 @@ public static class AzureClient
         var path = parent.Length == 0 ? name : $"{parent}\\{name}";
         if (parent.Length > 0) names.Add(path);
         foreach (var child in (node["children"] as JsonArray ?? []).OfType<JsonObject>()) CollectNodes(child, path, names);
+    }
+}
+
+/// <summary>
+/// 入力中の PAT → 保存済みの PAT → `az login` 済みの Azure CLI のトークンの順に
+/// 認証情報を決める (FR-9.18.2)。Azure CLI のトークンは <see cref="BearerPrefix"/>
+/// 付きで返し、<c>CreateClient</c> が Bearer として送る。PAT は空白を含まないので取り違えない。
+/// </summary>
+public static class AzureCredential
+{
+    public const string BearerPrefix = "Bearer ";
+    private const string AzureDevOpsResource = "499b84ac-1321-427f-aa17-267ca6975798";
+
+    public static async Task<string> ResolveAsync(string organization, string typedPat)
+    {
+        if (typedPat.Length > 0) return typedPat;
+        try { return CredentialStore.Load(organization); }
+        catch (InvalidOperationException patError)
+        {
+            try { return BearerPrefix + await AzureCliTokenAsync(); }
+            catch (Exception cliError) { throw new InvalidOperationException($"{patError.Message} {cliError.Message}"); }
+        }
+    }
+
+    private static async Task<string> AzureCliTokenAsync()
+    {
+        // az の実体は az.cmd なので cmd.exe 経由で起動する
+        var start = new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c az account get-access-token --resource {AzureDevOpsResource} --query accessToken --output tsv")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        using var process = System.Diagnostics.Process.Start(start) ?? throw new InvalidOperationException("Could not run Azure CLI.");
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        var token = (await output).Trim();
+        if (process.ExitCode != 0 || token.Length == 0)
+        {
+            var reason = (await error).Split('\n').Select(line => line.Trim()).FirstOrDefault(line => line.Length > 0);
+            throw new InvalidOperationException(reason is null ? "Azure CLI sign-in is not available. Run `az login`." : $"Azure CLI sign-in is not available: {reason}");
+        }
+        return token;
     }
 }
 

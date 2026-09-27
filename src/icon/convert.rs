@@ -3,8 +3,8 @@
 use windows::Win32::Foundation::SIZE;
 use windows::Win32::Graphics::Gdi::{BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER};
 use windows::Win32::Graphics::Gdi::{
-    CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetObjectW,
-    HBITMAP, HGDIOBJ, SelectObject,
+    CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, GdiFlush,
+    GetObjectW, HBITMAP, HDC, HGDIOBJ, SelectObject,
 };
 use windows::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_FLAGS_AND_ATTRIBUTES,
@@ -15,7 +15,9 @@ use windows::Win32::UI::Shell::{
     SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGFI_PIDL, SHGFI_SMALLICON, SHGFI_SYSICONINDEX,
     SHGFI_USEFILEATTRIBUTES, SHGetFileInfoW, SHGetImageList, SHParseDisplayName,
 };
-use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, ICONINFO};
+use windows::Win32::UI::WindowsAndMessaging::{
+    DI_NORMAL, DestroyIcon, DrawIconEx, GetIconInfo, HICON, ICONINFO,
+};
 use windows::core::{HSTRING, PCWSTR};
 
 use super::scale::image_list_for;
@@ -201,21 +203,95 @@ fn draw_icon_at(icon: HICON, size: SIZE) -> Option<HBITMAP> {
         };
 
         let old: HGDIOBJ = SelectObject(hdc, bitmap.into());
-        let drawn = windows::Win32::UI::WindowsAndMessaging::DrawIconEx(
-            hdc,
-            0,
-            0,
-            icon,
-            size.cx,
-            size.cy,
-            0,
-            None,
-            windows::Win32::UI::WindowsAndMessaging::DI_NORMAL,
-        );
+        let drawn = draw_icon(hdc, icon, size);
+        if drawn {
+            restore_missing_alpha(hdc, icon, size, bits.cast::<u8>());
+        }
         SelectObject(hdc, old);
         let _ = DeleteDC(hdc);
 
-        drawn.is_ok().then_some(bitmap)
+        if drawn {
+            Some(bitmap)
+        } else {
+            let _ = DeleteObject(bitmap.into());
+            None
+        }
+    }
+}
+
+/// `hdc` に選択済みの DIB へアイコンを等倍で描き、GDI の描画を DIB の
+/// ビットへ反映させる (バッチされた描画が残ったままビットを読まない)。
+unsafe fn draw_icon(hdc: HDC, icon: HICON, size: SIZE) -> bool {
+    unsafe {
+        let drawn = DrawIconEx(hdc, 0, 0, icon, size.cx, size.cy, 0, None, DI_NORMAL);
+        let _ = GdiFlush();
+        drawn.is_ok()
+    }
+}
+
+/// アルファチャネルを持たない旧形式のアイコンに、マスクからアルファを補う。
+///
+/// 24bit 以下のアイコン (色ビットマップ + AND マスク) を 32bit DIB へ
+/// `DrawIconEx` すると、色は描かれるがアルファは 0 のまま残る。
+/// 候補行はこれを `AlphaBlend` (`AC_SRC_ALPHA`) で重ねるため全面透明と
+/// みなされ、アイコンが丸ごと消える。古いアプリの実行ファイルや
+/// `WM_GETICON` が返すウィンドウアイコンで起きる。
+///
+/// 黒地と白地に描いた結果の差が透過部分を表すので、そこからアルファを
+/// 復元する。黒地の結果はそのままプリマルチプライド済みの色になる。
+///
+/// `bits` は `hdc` に選択済みの DIB のビット。GDI が書き込む間は
+/// スライスを握らないよう、描画の前後でその都度作り直す。
+unsafe fn restore_missing_alpha(hdc: HDC, icon: HICON, size: SIZE, bits: *mut u8) {
+    let len = size.cx as usize * size.cy as usize * 4;
+    let on_black = {
+        let pixels = unsafe { std::slice::from_raw_parts_mut(bits, len) };
+        if has_alpha(pixels) {
+            return;
+        }
+        let on_black = pixels.to_vec();
+        pixels.fill(0xff);
+        on_black
+    };
+    let redrawn = unsafe { draw_icon(hdc, icon, size) };
+    let pixels = unsafe { std::slice::from_raw_parts_mut(bits, len) };
+    if redrawn {
+        alpha_from_backgrounds(&on_black, pixels);
+    } else {
+        pixels.copy_from_slice(&on_black);
+    }
+}
+
+/// どこか 1 画素でもアルファを持っているか。
+fn has_alpha(pixels: &[u8]) -> bool {
+    pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0)
+}
+
+/// 黒地 (`on_black`) と白地 (`on_white`) に描いた BGRA から、
+/// プリマルチプライド済みの BGRA を `on_white` へ書き戻す。
+///
+/// 不透明な画素は地の色に依らず同じ値になり、透明な画素は黒地で 0・
+/// 白地で 255 になる。その差を透過度として読む。
+fn alpha_from_backgrounds(on_black: &[u8], on_white: &mut [u8]) {
+    for (black, white) in on_black
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(on_white.as_chunks_mut::<4>().0)
+    {
+        let spread = black[..3]
+            .iter()
+            .zip(&white[..3])
+            .map(|(dark, light)| light.saturating_sub(*dark))
+            .max()
+            .unwrap_or(0);
+        let alpha = 255 - spread;
+        // XOR で反転表示する画素は差が色と噛み合わないことがあるので、
+        // プリマルチプライドの前提 (色 <= アルファ) を崩さないよう丸める
+        for (target, source) in white[..3].iter_mut().zip(&black[..3]) {
+            *target = (*source).min(alpha);
+        }
+        white[3] = alpha;
     }
 }
 
@@ -322,5 +398,21 @@ mod tests {
                 let _ = DestroyIcon(icon.unwrap());
             }
         }
+    }
+
+    /// アルファを持たないアイコンでも、マスクで抜いた部分以外は不透明になる。
+    #[test]
+    fn restores_alpha_from_black_and_white_backgrounds() {
+        // 1 画素目: 不透明な赤 (BGR = 0,0,200)。2 画素目: 透過部分
+        let on_black = [0, 0, 200, 0, 0, 0, 0, 0];
+        let mut on_white = [0, 0, 200, 0, 255, 255, 255, 0];
+        alpha_from_backgrounds(&on_black, &mut on_white);
+        assert_eq!(on_white, [0, 0, 200, 255, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn detects_whether_any_pixel_has_alpha() {
+        assert!(!has_alpha(&[10, 20, 30, 0, 40, 50, 60, 0]));
+        assert!(has_alpha(&[10, 20, 30, 0, 40, 50, 60, 1]));
     }
 }

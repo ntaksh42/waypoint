@@ -8,7 +8,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use super::cached_bitmap;
-use super::convert::icon_to_bitmap;
+use super::convert::{icon_to_bitmap, load_bitmap};
 
 /// Current Windows の各項目にそのウィンドウのアイコンを付ける。
 ///
@@ -26,10 +26,22 @@ pub(crate) fn bitmap_for_window_sized(hwnd: HWND, size: i32) -> Option<HBITMAP> 
     let key = format!("window-icon:{size}:{}:{process_id}", hwnd.0 as isize);
     cached_bitmap(&key, || unsafe {
         let large_first = size > 16;
-        let icon = window_icon_via_message(hwnd, large_first)
-            .or_else(|| window_icon_via_class(hwnd, large_first))?;
-        icon_to_bitmap(icon, SIZE { cx: size, cy: size })
+        window_icon_via_message(hwnd, large_first)
+            .or_else(|| window_icon_via_class(hwnd, large_first))
+            .and_then(|icon| icon_to_bitmap(icon, SIZE { cx: size, cy: size }))
+            .or_else(|| window_icon_via_executable(hwnd, size))
     })
+}
+
+/// ウィンドウ自身もクラスもアイコンを持たないときは、所有プロセスの
+/// 実行ファイルのアイコンで代用する。
+///
+/// `WM_GETICON` にもクラスアイコンにも何も無いウィンドウは珍しくない
+/// (UWP の `ApplicationFrameWindow`、アイコンを登録しないツール類、
+/// 応答が 100ms を超えたウィンドウ)。代用しないと候補行のアイコンが空になる。
+fn window_icon_via_executable(hwnd: HWND, size: i32) -> Option<HBITMAP> {
+    let path = crate::process::process_path_of(hwnd)?;
+    load_bitmap(&path, size)
 }
 
 /// `WM_GETICON` でウィンドウ自身が渡すアイコンを取る。

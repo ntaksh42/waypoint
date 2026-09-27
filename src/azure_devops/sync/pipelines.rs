@@ -12,7 +12,7 @@ use crate::config::AzureDevOpsSettings;
 use super::super::api::{fetch_pipelines, http_client};
 use super::super::auth_cache::OrganizationValues;
 use super::super::convert::{pipeline_cached_row_to_candidate, valid_project};
-use super::super::credential::load_pat;
+use super::super::credential::load_credential;
 use super::super::{Candidate, title_match_quality};
 use super::common::{join_worker, lock_recovering};
 use super::work_items::WorkItemReply;
@@ -57,7 +57,7 @@ pub fn search_pipelines_live_async(
                             let pats = &pats;
                             scope.spawn(move || {
                                 let outcome = match pats.get_or_init(&project.organization, || {
-                                    load_pat(&project.organization)
+                                    load_credential(&project.organization)
                                 }) {
                                     Some(Ok(pat)) => {
                                         fetch_pipelines(client, project, pat).map(|rows| {

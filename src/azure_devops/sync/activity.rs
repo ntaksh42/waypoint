@@ -8,7 +8,7 @@ use crate::config::AzureDevOpsSettings;
 use super::super::api::{RecentActivityPaths, fetch_recent_activity_paths, http_client};
 use super::super::auth_cache::OrganizationValues;
 use super::super::convert::valid_project;
-use super::super::credential::load_pat;
+use super::super::credential::load_credential;
 use super::common::join_worker;
 
 /// 監視プロジェクト 1 件分の、直近アクティビティ件数。
@@ -55,7 +55,7 @@ pub fn suggest_priorities_async(
                         let pats = &pats;
                         scope.spawn(move || {
                             let outcome = match pats.get_or_init(&project.organization, || {
-                                load_pat(&project.organization)
+                                load_credential(&project.organization)
                             }) {
                                 Some(Ok(pat)) => fetch_recent_activity_paths(client, project, pat),
                                 Some(Err(_)) | None => {

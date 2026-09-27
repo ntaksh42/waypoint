@@ -192,6 +192,9 @@ fn parse_response_bytes(bytes: &[u8]) -> Result<Value, String> {
 }
 
 fn authorization(pat: &str) -> String {
+    if pat.starts_with(super::super::credential::BEARER_PREFIX) {
+        return pat.to_string();
+    }
     format!("Basic {}", STANDARD.encode(format!(":{pat}")))
 }
 
@@ -223,6 +226,12 @@ mod tests {
             response_retry_delay(&reqwest::header::HeaderMap::new(), 1),
             Duration::from_millis(700)
         );
+    }
+
+    #[test]
+    fn azure_cli_token_is_sent_as_bearer_and_pat_as_basic() {
+        assert_eq!(authorization("Bearer abc"), "Bearer abc");
+        assert_eq!(authorization("pat"), "Basic OnBhdA==");
     }
 
     #[test]

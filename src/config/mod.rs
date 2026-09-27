@@ -89,13 +89,23 @@ impl Default for QuickLaunchSettings {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AzureDevOpsSettings {
-    #[serde(default)]
+    /// 監視プロジェクトが空なら同期も検索も起きないので、既定で有効にしておく。
+    #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default)]
     pub projects: Vec<AzureDevOpsProject>,
+}
+
+impl Default for AzureDevOpsSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            projects: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

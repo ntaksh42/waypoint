@@ -13,7 +13,7 @@ use super::super::api::{http_client, refresh_project};
 use super::super::auth_cache::OrganizationValues;
 use super::super::cache;
 use super::super::convert::valid_project;
-use super::super::credential::load_pat;
+use super::super::credential::load_credential;
 use super::super::{CachedCandidateGroups, prune_cache, try_cached_candidate_groups};
 
 /// poisoned でも中身を取り出してロックする。
@@ -144,12 +144,12 @@ pub fn refresh_async(settings: AzureDevOpsSettings, notify: HWND, message: u32) 
                                 scope.spawn(move || {
                                     let Some(Ok(pat)) = pats
                                         .get_or_init(&project.organization, || {
-                                            load_pat(&project.organization)
+                                            load_credential(&project.organization)
                                         })
                                     else {
                                         let _ = cache::record_project_error(
                                             project,
-                                            "No PAT is saved for this organization.",
+                                            "No PAT is saved and Azure CLI sign-in is not available.",
                                         );
                                         return;
                                     };
@@ -244,7 +244,10 @@ mod tests {
 
     #[test]
     fn disabled_refresh_still_plans_background_pruning_without_remote_sync() {
-        let settings = AzureDevOpsSettings::default();
+        let settings = AzureDevOpsSettings {
+            enabled: false,
+            projects: Vec::new(),
+        };
 
         assert_eq!(
             super::refresh_work(&settings),
@@ -318,7 +321,7 @@ mod tests {
     #[test]
     fn reply_candidates_are_rejected_when_settings_changed() {
         let source_settings = AzureDevOpsSettings {
-            enabled: true,
+            enabled: false,
             projects: Vec::new(),
         };
         let reply = RefreshReply {
