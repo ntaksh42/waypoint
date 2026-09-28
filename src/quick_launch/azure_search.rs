@@ -20,6 +20,8 @@ pub(super) fn search<'a>(
     ranking: &Ranking,
 ) -> Vec<&'a Entry> {
     let terms = lower_terms(query);
+    // `#<番号>` は番号の完全一致だけを返す。breadcrumb / URL 側の一致で残さない。
+    let exact_id = crate::azure_devops::is_exact_id_query(query);
     let mut matches = items
         .into_iter()
         .enumerate()
@@ -31,7 +33,9 @@ pub(super) fn search<'a>(
                 .path
                 .map(|path| path.strip_prefix(AZURE_URL_PREFIX).unwrap_or(path));
             let title_quality = crate::azure_devops::title_match_quality(&entry.name, query);
-            let general = score_entry(entry, fields, &terms, ranking, Fuzzy::NameOnly);
+            let general = (!exact_id)
+                .then(|| score_entry(entry, fields, &terms, ranking, Fuzzy::NameOnly))
+                .flatten();
             let (tier, fuzzy_score, usage) = general
                 .unwrap_or_else(|| (u8::MAX, 0, ranking.rank_lower(entry, fields.path_lower)));
             let state_rank = entry.azure.as_ref().map_or(1, |meta| meta.state_rank());

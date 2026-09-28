@@ -307,6 +307,9 @@ fn azure_item_id_query_without_an_exact_hit_is_reported_missing() {
         pull_request("PR 12345: Add launcher shortcut"),
     ];
     assert!(!missing_azure_item_id(&with_exact, "12345"));
+    // `#<番号>` も同じ ID 指定として扱う。
+    assert!(missing_azure_item_id(&near_misses, "#12345"));
+    assert!(!missing_azure_item_id(&with_exact, "#12345"));
 
     // Work Item は `12345: <title>` 形式。
     assert!(!missing_azure_item_id(

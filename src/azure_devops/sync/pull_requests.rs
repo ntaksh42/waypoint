@@ -16,7 +16,7 @@ use super::super::api::{
 use super::super::auth_cache::OrganizationValues;
 use super::super::convert::{pull_request_cached_row_to_candidate, valid_project};
 use super::super::credential::load_credential;
-use super::super::{Candidate, is_item_id_query, title_match_quality};
+use super::super::{Candidate, item_id_query, title_match_quality};
 use super::common::{join_worker, lock_recovering};
 use super::work_items::WorkItemReply;
 
@@ -50,7 +50,7 @@ pub fn search_pull_requests_live_async(
     // 番号指定 (`az pr 68` / `az 68`) は一覧をスキャンせず PR 単体の API を
     // 直接叩く。一覧の打ち切りより古い PR も拾え、リクエストもプロジェクト
     // ごとに 1 本で済む。番号は状態より強い指定なので状態ごとには分けない
-    let item_id = is_item_id_query(&query).then(|| query.trim().to_string());
+    let item_id = item_id_query(&query).map(str::to_string);
     let statuses: &'static [&'static str] = if item_id.is_some() {
         &["by id"]
     } else {

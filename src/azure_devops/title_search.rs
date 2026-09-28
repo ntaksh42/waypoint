@@ -18,6 +18,10 @@ pub(crate) fn match_quality(title: &str, query: &str) -> Option<u8> {
         if leading_id(title) == Some(id) {
             return Some(QUALITY_ID);
         }
+        // `#<番号>` は完全一致だけを求める明示的な指定。部分一致は拾わない。
+        if trimmed.starts_with('#') {
+            return None;
+        }
         // 入力途中の部分番号を拾うため部分一致は残すが、完全一致より下位に置く。
         // タイプミス許容は通さない — 数字の 1 文字違いは別の項目でしかない。
         return title.contains(id).then_some(QUALITY_TERMS);
@@ -64,10 +68,16 @@ const QUALITY_TYPO: u8 = 3;
 /// (`quick_launch::azure_search`)。
 pub(crate) const QUALITY_OTHER: u8 = 4;
 
-/// クエリが項目 ID の指定 (数字のみ) か。そうなら数字部分を返す。
-fn numeric_query(query: &str) -> Option<&str> {
+/// クエリが項目 ID の指定 (数字のみ、または `#<数字>`) か。そうなら数字部分を返す。
+pub(crate) fn numeric_query(query: &str) -> Option<&str> {
     let query = query.trim();
+    let query = query.strip_prefix('#').unwrap_or(query);
     (!query.is_empty() && query.bytes().all(|byte| byte.is_ascii_digit())).then_some(query)
+}
+
+/// `#<番号>` 形式の完全一致指定か。
+pub(crate) fn is_exact_id_query(query: &str) -> bool {
+    query.trim().starts_with('#') && numeric_query(query).is_some()
 }
 
 /// 候補名の先頭に現れる項目 ID。PR は `PR 12345: <title>`、Work Item は
@@ -79,7 +89,7 @@ fn leading_id(name: &str) -> Option<&str> {
     (!id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit())).then_some(id)
 }
 
-/// クエリが項目 ID の指定 (数字のみ) か。
+/// クエリが項目 ID の指定 (数字のみ、または `#<数字>`) か。
 pub(crate) fn is_item_id_query(query: &str) -> bool {
     numeric_query(query).is_some()
 }

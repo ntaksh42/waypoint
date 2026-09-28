@@ -4,11 +4,11 @@ use serde_json::json;
 
 use crate::config::AzureDevOpsProject;
 
-use super::super::Candidate;
 use super::super::convert::{
     encode_segment, json_i64, project_url, work_item_batch_candidates, work_item_candidates,
 };
 use super::super::shared_cache::{self, SharedWorkItem};
+use super::super::{Candidate, is_exact_id_query, item_id_query};
 use super::http::{API_VERSION, get_json, post_json};
 use super::pull_requests::SHARED_CACHE_FRESHNESS;
 
@@ -168,6 +168,12 @@ pub(crate) fn fetch_work_items(
     if query.trim().is_empty() {
         return fetch_recent_work_items(client, project, pat);
     }
+    // `#<番号>` は全文検索 (番号を本文に含む項目まで拾う) ではなく ID で直接引く。
+    if is_exact_id_query(query)
+        && let Some(id) = item_id_query(query)
+    {
+        return fetch_work_items_by_wiql(client, project, pat, &work_item_id_wiql(id), None);
+    }
     let url = format!(
         "https://almsearch.dev.azure.com/{}/{}/_apis/search/workitemsearchresults?api-version={API_VERSION}",
         encode_segment(&project.organization),
@@ -211,6 +217,14 @@ fn recent_work_items_wiql(project: &AzureDevOpsProject) -> String {
     format!(
         "SELECT [System.Id] FROM WorkItems WHERE {} ORDER BY [System.ChangedDate] DESC",
         clauses.join(" AND ")
+    )
+}
+
+/// ID 完全一致の WIQL。ID は組織内で一意なので、他プロジェクトの項目を
+/// このプロジェクトの URL で開かないよう `@project` で絞る。
+fn work_item_id_wiql(id: &str) -> String {
+    format!(
+        "SELECT [System.Id] FROM WorkItems WHERE [System.Id] = {id} AND [System.TeamProject] = @project"
     )
 }
 
@@ -415,6 +429,14 @@ mod tests {
         assert!(wiql.contains("[System.AreaPath] UNDER 'Waypoint\\Launcher'"));
         assert!(wiql.contains("[System.AreaPath] UNDER 'Waypoint\\Search'"));
         assert!(wiql.contains(" OR "));
+    }
+
+    #[test]
+    fn work_item_id_wiql_matches_the_id_exactly_within_the_project() {
+        assert_eq!(
+            work_item_id_wiql("12345"),
+            "SELECT [System.Id] FROM WorkItems WHERE [System.Id] = 12345 AND [System.TeamProject] = @project"
+        );
     }
 
     #[test]

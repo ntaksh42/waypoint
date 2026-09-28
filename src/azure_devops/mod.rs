@@ -44,8 +44,8 @@ use convert::{
 use credential::credential_for_request;
 use sync::{REFRESHING, RunningFlag};
 pub(crate) use title_search::{
-    QUALITY_OTHER as TITLE_QUALITY_OTHER, is_item_id_query, match_quality as title_match_quality,
-    matches_item_id,
+    QUALITY_OTHER as TITLE_QUALITY_OTHER, is_exact_id_query, is_item_id_query,
+    match_quality as title_match_quality, matches_item_id, numeric_query as item_id_query,
 };
 
 pub use api::{fetch_area_nodes, fetch_my_area_suggestions, list_repository_names};

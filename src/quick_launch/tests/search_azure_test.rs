@@ -118,6 +118,17 @@ fn azure_pull_request_number_ranks_the_exact_id_first() {
     // 入力途中の部分番号は引き続き拾う (完全一致より下位)。
     let partial = index.search("az pr 1234");
     assert!(partial.len() > 1);
+
+    // `#` を付けると番号の完全一致だけに絞る。
+    for query in ["az #12345", "az pr #12345"] {
+        let exact = index.search(query);
+        assert_eq!(
+            exact.iter().map(|entry| &entry.name).collect::<Vec<_>>(),
+            ["PR 12345: Add launcher shortcut"],
+            "{query}"
+        );
+    }
+    assert!(index.search("az #1234").is_empty());
 }
 
 #[test]
