@@ -28,7 +28,7 @@ pub(in crate::quick_launch_window) fn start_azure_work_item_query(
         // 残りも捨てる (`invalidate_azure_live_searches` と同じ理由)。
         state.azure_live_combined = None;
         state.previous_query = None;
-        state.highlight_term.clear();
+        state.highlight_term = crate::quick_launch::azure_highlight_term(text.trim()).to_string();
         state.results = state
             .index
             .search_cached_work_items(text)
@@ -108,7 +108,11 @@ pub(in crate::quick_launch_window) fn start_azure_work_item_live_search(
         state.azure_work_items_active = true;
         state.azure_work_item_reply_id = next_azure_reply_id(state.azure_work_item_reply_id);
         state.azure_work_item_query = query.trim().to_string();
-        state.highlight_term.clear();
+        // 集約モードは PR / Pipeline と一覧を共有するのでハイライトを付けない
+        if state.azure_live_combined.is_none() {
+            state.highlight_term =
+                crate::quick_launch::azure_highlight_term(query.trim()).to_string();
+        }
         // 集約モードでは 3 種の進捗を 1 行にまとめる (種別ごとの文言で
         // 上書きし合うと、どの検索が走っているか読めなくなる)
         state.empty_message = Some(if state.azure_live_combined.is_some() {

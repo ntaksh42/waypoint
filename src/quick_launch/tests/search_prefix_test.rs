@@ -32,6 +32,17 @@ fn web_search_term_ignores_space_after_marks() {
     assert_eq!(effective_search_term("??"), "");
 }
 
+/// `#` は候補名に現れないので、ハイライトには番号だけを渡す。
+#[test]
+fn azure_exact_id_term_drops_the_hash_for_highlighting() {
+    assert_eq!(effective_search_term("az #12345"), "12345");
+    assert_eq!(effective_search_term("az pr #12345"), "12345");
+    assert_eq!(azure_highlight_term("#12345"), "12345");
+    assert_eq!(azure_highlight_term("launcher"), "launcher");
+    assert_eq!(effective_search_term("az 12345"), "12345");
+    assert_eq!(effective_search_term("az #"), "#");
+}
+
 #[test]
 fn claude_code_command_builds_a_single_candidate() {
     let entry = claude_code_entry("cc E:\\waypoint review42").expect("candidate missing");
