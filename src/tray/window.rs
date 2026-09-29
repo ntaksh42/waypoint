@@ -199,6 +199,10 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
             super::prune::scan_async(hwnd);
             LRESULT(0)
         }
+        super::WM_INDEX_BUILT => {
+            super::index_build::apply(hwnd);
+            LRESULT(0)
+        }
         super::prune::WM_MISSING_ITEMS_FOUND => {
             super::prune::apply_missing();
             LRESULT(0)

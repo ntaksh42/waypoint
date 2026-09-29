@@ -48,6 +48,10 @@ The goal is to be the most capable general launcher on Windows — broader than 
   → `record_async` へ (15.1ms → 0.025ms)
 - `WM_SETTINGCHANGE` を lParam を見ずに全部処理していた
   → `"ImmersiveColorSet"` に限定 (無関係な設定変更ごとの 15ms を除去)
+- 起動時・設定の再読み込み時に `Index::build` と `dynamic::refresh` を UI スレッドで
+  同期実行していた (ウィンドウ作成後・メッセージループ開始前なので、ブロードキャストを
+  `SendMessage` した他プロセスまで待たされ、起動時に固まる)
+  → `tray/index_build.rs` でバックグラウンド構築し、`WM_INDEX_BUILT` で差し替えるだけに
 
 **試して駄目だったもの** (繰り返さないこと):
 
