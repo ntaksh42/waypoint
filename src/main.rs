@@ -69,7 +69,13 @@ fn main() {
         }
     };
 
-    tray::load_state();
+    // 結果を書いてすぐ終わる selftest だけは索引の完成を待つ。常駐時は
+    // 構築をバックグラウンドへ回し、メッセージループを早く回し始める
+    if selftest {
+        tray::load_state_blocking();
+    } else {
+        tray::load_state(hwnd);
+    }
 
     let quick_launch_hotkey = tray::register_quick_launch_hotkey_from_config(hwnd);
     tray::set_quick_launch_hotkey_failed(!quick_launch_hotkey.is_active());
@@ -84,7 +90,7 @@ fn main() {
         return;
     }
 
-    tray::refresh_azure_devops(hwnd);
+    // Azure DevOps の同期は索引の構築完了後に始まる (tray::index_build)
     tray::start_azure_full_refresh_timer(hwnd);
     tray::start_prune_timer(hwnd);
 

@@ -4,6 +4,7 @@ mod azure_detail;
 mod azure_live;
 mod azure_tile;
 mod badge;
+mod configure;
 mod dispatch;
 mod draw;
 mod draw_footer;
@@ -34,10 +35,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{PCWSTR, Result, w};
 
-use crate::config::Config;
-use crate::dynamic::Menus;
-use crate::quick_launch::{Entry, Index};
+use crate::quick_launch::Entry;
 use azure_live::{AzureLiveSearchStart, start_azure_live_search_for_query};
+pub(crate) use configure::configure_azure;
+pub use configure::{
+    configure, configure_config_items, configure_dynamic, configure_settings, install_index,
+    replace_browser_tabs,
+};
 use dispatch::dispatch;
 use input::{
     add_selected_to_favorites, close_selected_window, copy_selected_branch, copy_selected_path,
@@ -61,134 +65,6 @@ pub const WM_QUICK_LAUNCH_EXECUTE: u32 = WM_APP + 4;
 pub const WM_QUICK_LAUNCH_ADD_TO_FAVORITES: u32 = WM_APP + 6;
 /// Azure DevOps の Work Item 検索スレッドが結果を返す通知。
 pub const WM_QUICK_LAUNCH_AZURE_RESULTS: u32 = WM_APP + 7;
-
-pub fn configure(config: &Config, dynamic: &Menus) {
-    STATE.with(|state| {
-        // インデックスの差し替えだけ借用内で行い、描画は借用を解放してから
-        let has_window = {
-            let mut state = state.borrow_mut();
-            state.index = Index::build(config, dynamic);
-            let tabs = state.browser_tabs.clone();
-            state.index.set_browser_tabs(&tabs);
-            state.previous_query = None;
-            state.visible_results = config
-                .settings
-                .quick_launch
-                .visible_results
-                .clamp(12, MAX_LIST_RESULTS);
-            state.monitor = config.settings.quick_launch.monitor;
-            state.everything_enabled = config.settings.quick_launch.include_everything;
-            state.azure_devops = config.settings.quick_launch.azure_devops.clone();
-            state.window.is_some()
-        };
-        if has_window {
-            update_results(state);
-        }
-    });
-}
-
-/// `configure` の軽量版。Recent/Frequent Folders と開いているウィンドウの
-/// 一覧だけを差し替え、apps / bookmarks / history / azure* は保持する
-/// (`Index::refresh_dynamic` 参照)。
-///
-/// `tray::actions::refresh_dynamic` (メニューを閉じるたびに呼ばれる) から
-/// 使う。ここで `configure` と同じフル `Index::build` をやり直すと、
-/// スタートメニューの COM 解決やブラウザ履歴の SQLite クエリまで
-/// 道連れで再実行されて重い (実測)。
-pub fn configure_dynamic(config: &Config, dynamic: &Menus) {
-    STATE.with(|state| {
-        let has_window = {
-            let mut state = state.borrow_mut();
-            state.index.refresh_dynamic(config, dynamic);
-            let tabs = state.browser_tabs.clone();
-            state.index.set_browser_tabs(&tabs);
-            // Index の中身 (entries/windows) が変わったので、前回結果への
-            // 絞り込み最適化 (`refined_search_term`) をそのまま使い回さない
-            state.previous_query = None;
-            state.window.is_some()
-        };
-        if has_window {
-            update_results(state);
-        }
-    });
-}
-
-/// `configure` の軽量版その 3。config 由来の候補だけを差し替え、
-/// apps / bookmarks / history / azure* は保持する
-/// (`Index::refresh_config_items` 参照)。
-///
-/// Quick Launch からのお気に入り登録 (`Ctrl+Shift+Enter`) から使う。
-/// 項目が 1 件増えるだけの操作で、変わっていないスタートメニューの
-/// 再スキャン (実測で数十 ms) を UI スレッドで走らせない。
-///
-/// 設定エディターからの保存 (`WM_RELOAD_CONFIG`) はこちらではなく
-/// `configure` を使う。あちらは Quick Launch の設定 (include_apps など)
-/// 自体が変わり得るので、全体を組み直す必要がある。
-pub fn configure_config_items(config: &Config, dynamic: &Menus) {
-    STATE.with(|state| {
-        let has_window = {
-            let mut state = state.borrow_mut();
-            state.index.refresh_config_items(config, dynamic);
-            // Index の中身 (entries) が変わったので、前回結果への絞り込み
-            // 最適化 (`refined_search_term`) をそのまま使い回さない
-            state.previous_query = None;
-            state.window.is_some()
-        };
-        if has_window {
-            update_results(state);
-        }
-    });
-}
-
-/// `configure` の軽量版その 2。Azure DevOps の候補だけを差し替え、
-/// apps / bookmarks / history / Recent/Frequent は保持する。
-///
-/// バックグラウンド同期の完了通知 (`WM_AZURE_DEVOPS_REFRESHED`) から使う。
-/// SQLite の読み取りはバックグラウンドで完了済みなので、UI スレッドでは
-/// メモリ上の候補を検索索引へ適用するだけにする。
-pub(crate) fn configure_azure(config: &Config, groups: crate::azure_devops::CachedCandidateGroups) {
-    STATE.with(|state| {
-        let has_window = {
-            let mut state = state.borrow_mut();
-            state
-                .index
-                .refresh_azure_candidates(&config.settings.quick_launch, groups);
-            // Index の中身 (azure*) が変わったので、前回結果への絞り込み
-            // 最適化 (`refined_search_term`) をそのまま使い回さない
-            state.previous_query = None;
-            state.window.is_some()
-        };
-        if has_window {
-            update_results(state);
-        }
-    });
-}
-
-/// Native Messaging host が届けた 1 ブラウザ分のタブ一覧を入れ替える。
-///
-/// タブの変更通知時だけ呼ばれる。Quick Launch が表示中なら、現在の `t ` 検索結果も
-/// 即座に差し替えるが、ブラウザへ同期問い合わせは行わない。
-pub fn replace_browser_tabs(
-    browser: crate::browser_tabs::Browser,
-    tabs: Vec<crate::browser_tabs::Tab>,
-) {
-    STATE.with(|state| {
-        let has_window = {
-            let mut state = state.borrow_mut();
-            state.browser_tabs.retain(|(source, _)| *source != browser);
-            state
-                .browser_tabs
-                .extend(tabs.into_iter().map(|tab| (browser, tab)));
-            let tabs = state.browser_tabs.clone();
-            state.index.set_browser_tabs(&tabs);
-            state.previous_query = None;
-            state.window.is_some()
-        };
-        if has_window {
-            update_results(state);
-        }
-    });
-}
 
 pub fn show(owner: HWND, origin: Option<HWND>) -> Result<()> {
     ensure_window(owner)?;

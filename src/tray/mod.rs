@@ -8,6 +8,7 @@
 //!   メッセージ専用ウィンドウは列挙・検索の対象外になる。
 
 mod actions;
+mod index_build;
 mod prune;
 mod window;
 
@@ -28,6 +29,7 @@ use crate::config::{Config, LoadOutcome};
 use crate::quick_launch_window;
 use crate::trigger::{self, Registration};
 
+pub(crate) use index_build::WM_INDEX_BUILT;
 pub use prune::start_prune_timer;
 use window::wnd_proc;
 
@@ -78,8 +80,34 @@ pub(crate) fn with_state<R>(f: impl FnOnce(&RefCell<Option<AppState>>) -> R) -> 
     STATE.with(f)
 }
 
-/// 設定を読み込み、Quick Launch の候補を構築して保持する。
-pub fn load_state() {
+/// 設定を読み込み、Quick Launch の候補の構築を始める。
+///
+/// 重い部分 (検索インデックスと Recent/Frequent の列挙) はバックグラウンドで
+/// 行い、ここでは config 由来の候補だけを即座に反映して戻る
+/// (`index_build` 参照)。Azure DevOps の同期は索引の差し替え後に始まる。
+pub fn load_state(hwnd: HWND) {
+    let (config, load_error) = load_config();
+    let dynamic = with_state(|s| {
+        s.borrow()
+            .as_ref()
+            .map(|st| st.dynamic.clone())
+            .unwrap_or_default()
+    });
+    quick_launch_window::configure_settings(&config, &dynamic);
+    index_build::build_async(hwnd, config.clone());
+    crate::dynamic::refresh_async(hwnd, WM_DYNAMIC_REFRESHED);
+    store_state(config, dynamic, load_error);
+}
+
+/// `load_state` の同期版。結果を書き出してすぐ終了する `--selftest` 用。
+pub fn load_state_blocking() {
+    let (config, load_error) = load_config();
+    let dynamic = crate::dynamic::refresh();
+    quick_launch_window::configure(&config, &dynamic);
+    store_state(config, dynamic, load_error);
+}
+
+fn load_config() -> (Config, Option<String>) {
     let (config, load_error) = match crate::config::load() {
         LoadOutcome::Loaded(c) => {
             crate::panic_log::record(&format!("config loaded: {} items", c.items.len()));
@@ -99,8 +127,10 @@ pub fn load_state() {
     for (name, path) in crate::config::unresolved_items(&config) {
         crate::panic_log::record(&format!("unresolved variable in \"{name}\": {path}"));
     }
-    let dynamic = crate::dynamic::refresh();
-    quick_launch_window::configure(&config, &dynamic);
+    (config, load_error)
+}
+
+fn store_state(config: Config, dynamic: crate::dynamic::Menus, load_error: Option<String>) {
     STATE.with(|s| {
         *s.borrow_mut() = Some(AppState {
             config,
@@ -118,10 +148,9 @@ pub fn reload(hwnd: HWND) {
     // 項目のパスやアイコン指定が変わっている可能性がある。
     // 古いビットマップを使い回さないよう捨ててから組み直す
     crate::icon::clear_cache();
-    load_state();
+    load_state(hwnd);
     let quick_reg = register_quick_launch_hotkey_from_config(hwnd);
     set_quick_launch_hotkey_failed(!quick_reg.is_active());
-    refresh_azure_devops(hwnd);
 }
 
 /// Azure DevOps のキャッシュ同期を開始する。完了後の通知で Quick Launch の
