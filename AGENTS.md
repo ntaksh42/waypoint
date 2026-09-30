@@ -316,6 +316,7 @@ Recent/Frequent Folders・Open Windows (`w `) ・ブックマーク (`b `) ・�
 | `folder_import.rs` | フォルダ構造の設定項目への一括取り込み |
 | `romaji.rs` | ローマ字⇄かな/カナ変換 (Quick Launch のローマ字検索用、漢字は対象外) |
 | `apps.rs` | スタートメニューショートカット (`.lnk`) の列挙 (`a ` プレフィックス) |
+| `agent_sessions.rs` | Claude Code / Codex の過去セッションの読み取り (`cs ` プレフィックス)。Quick Launch の表示時にバックグラウンドで読む |
 | `help.rs` | 機能一覧 Help ページ (`help\index.html`、exe の隣) を開く (FR-9.22) |
 | `hotkey_capture.rs` / `trigger.rs` | ホットキー登録・`WH_KEYBOARD_LL` / `WH_MOUSE_LL` フック |
 | `tray/` | トレイアイコン・トレイメニュー |

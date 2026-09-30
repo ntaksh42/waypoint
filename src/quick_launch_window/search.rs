@@ -82,7 +82,13 @@ pub(super) fn update_results(state: &RefCell<State>) {
         return;
     }
     if let Some(rest) = query.strip_prefix(crate::quick_launch::KILL_PROCESS_PREFIX) {
-        show_kill_process_results(state, rest);
+        let processes = crate::quick_launch::kill_process_entries();
+        super::snapshot::show_snapshot_results(state, &processes, rest, false);
+        return;
+    }
+    if let Some(rest) = query.strip_prefix(crate::quick_launch::AGENT_SESSIONS_PREFIX) {
+        let sessions = crate::quick_launch::agent_session_entries();
+        super::snapshot::show_snapshot_results(state, &sessions, rest, true);
         return;
     }
     if let Some((crate::quick_launch::AzureCommand::WorkItems { .. }, rest)) =
@@ -230,31 +236,6 @@ pub(super) fn update_results(state: &RefCell<State>) {
     populate_list(list, &labels, &rows);
 }
 
-/// `k ` プレフィックスに入った。実行中プロセスのスナップショットを都度取り、
-/// 残りの文字列で絞り込む (FR-9.15.2)。Everything と違い外部 IPC を伴わない
-/// ローカル API 呼び出しなので、非同期にせずキー入力のたびに同期で完結する。
-pub(super) fn show_kill_process_results(state: &RefCell<State>, text: &str) {
-    let processes = crate::quick_launch::kill_process_entries();
-    let (list, labels, rows) = {
-        let mut state = state.borrow_mut();
-        state.previous_query = None;
-        state.highlight_term = text.to_string();
-        state.results =
-            crate::quick_launch::search_entries(&processes, text, false, &state.index.ranking)
-                .into_iter()
-                .take(MAX_LIST_RESULTS)
-                .cloned()
-                .collect();
-        let (labels, rows) = build_rows(&state.results, &[]);
-        state.rows = rows.clone();
-        (state.list, labels, rows)
-    };
-    let Some(list) = list else {
-        return;
-    };
-    populate_list(list, &labels, &rows);
-}
-
 /// `f ` プレフィックスに入った。Everything へ非同期クエリを送り、
 /// 結果が届くまでの間はリストを空にする。
 ///
@@ -377,6 +358,7 @@ fn local_search_scope(query: &str) -> Option<(&'static str, &str)> {
     if query.starts_with(crate::quick_launch::EVERYTHING_PREFIX)
         || query.starts_with(crate::quick_launch::AZURE_DEVOPS_PREFIX)
         || query.starts_with(crate::quick_launch::KILL_PROCESS_PREFIX)
+        || query.starts_with(crate::quick_launch::AGENT_SESSIONS_PREFIX)
     {
         return None;
     }

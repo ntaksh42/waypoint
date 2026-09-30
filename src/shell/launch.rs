@@ -84,12 +84,39 @@ pub fn open_claude_code(path: &str, session_name: Option<&str>) -> std::io::Resu
         Some(session_name) => format!("& claude --name '{}'", session_name.replace('\'', "''")),
         None => "& claude".to_string(),
     };
+    run_in_terminal(path, &command)
+}
 
+/// Claude Code / Codex の過去セッションを作業フォルダで再開する (`cs `、FR-9.15.6)。
+/// Claude Code はセッションを作業フォルダ単位で保存しているため、
+/// 記録に残っている作業フォルダで起動しないと id を見つけられない。
+pub fn resume_agent_session(
+    path: &str,
+    agent: crate::agent_sessions::Agent,
+    id: &str,
+) -> std::io::Result<()> {
+    if !Path::new(path).is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("folder not found: {path}"),
+        ));
+    }
+    let id = id.replace('\'', "''");
+    let command = match agent {
+        crate::agent_sessions::Agent::ClaudeCode => format!("& claude --resume '{id}'"),
+        crate::agent_sessions::Agent::Codex => format!("& codex resume '{id}'"),
+    };
+    run_in_terminal(path, &command)
+}
+
+/// Windows Terminal + PowerShell 7 で `path` を作業ディレクトリにして `command` を
+/// 実行する。見つからなければ Windows 標準の `powershell.exe` (5.1) で開く。
+fn run_in_terminal(path: &str, command: &str) -> std::io::Result<()> {
     if let Some(pwsh) = find_pwsh()
         && std::process::Command::new("wt.exe")
             .args(["-d", path])
             .arg(&pwsh)
-            .args(["-NoExit", "-Command", &command])
+            .args(["-NoExit", "-Command", command])
             .spawn()
             .is_ok()
     {
@@ -97,7 +124,7 @@ pub fn open_claude_code(path: &str, session_name: Option<&str>) -> std::io::Resu
     }
 
     std::process::Command::new("powershell.exe")
-        .args(["-NoExit", "-WorkingDirectory", path, "-Command", &command])
+        .args(["-NoExit", "-WorkingDirectory", path, "-Command", command])
         .spawn()
         .map(|_| ())
 }

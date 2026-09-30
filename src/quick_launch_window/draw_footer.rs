@@ -69,6 +69,7 @@ pub(super) fn footer_hints(entry: Option<&Entry>) -> Vec<(&'static str, &'static
         | Action::OpenInEditor(_)
         | Action::OpenClaudeCode(_)
         | Action::OpenCodex
+        | Action::ResumeAgentSession(..)
         | Action::ReplaceQuery(_)
             if has_path =>
         {

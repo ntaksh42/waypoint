@@ -15,6 +15,7 @@ fn prefix_badge_identifies_each_mode() {
     assert_eq!(prefix_badge("ed waypoint"), Some("EDITOR"));
     assert_eq!(prefix_badge("cc E:\\waypoint review"), Some("CLAUDE CODE"));
     assert_eq!(prefix_badge("cx waypoint"), Some("CODEX"));
+    assert_eq!(prefix_badge("cs waypoint"), Some("SESSIONS"));
     assert_eq!(prefix_badge("f cargo.toml"), Some("FILES"));
     assert_eq!(prefix_badge("k waypoint"), Some("KILL"));
     // `??` だけ末尾スペースを含まない (FR-9.21)
@@ -23,6 +24,11 @@ fn prefix_badge_identifies_each_mode() {
     assert_eq!(prefix_badge("??"), Some("WEB"));
     assert_eq!(prefix_badge("plain query"), None);
     assert_eq!(prefix_badge(""), None);
+}
+
+#[test]
+fn agent_sessions_term_drops_prefix_for_highlighting() {
+    assert_eq!(effective_search_term("cs waypoint"), "waypoint");
 }
 
 #[test]

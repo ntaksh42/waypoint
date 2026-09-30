@@ -19,7 +19,7 @@ use windows::core::{BSTR, HSTRING, Interface, w};
 use crate::config::OpenMode;
 
 mod launch;
-pub use launch::{open_claude_code, open_codex, open_editor, open_terminal};
+pub use launch::{open_claude_code, open_codex, open_editor, open_terminal, resume_agent_session};
 
 /// COM を STA で初期化する。プロセスで一度だけ呼ぶ。
 ///

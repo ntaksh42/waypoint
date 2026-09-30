@@ -15,6 +15,7 @@ mod input;
 mod layout;
 mod row_parts;
 mod search;
+mod snapshot;
 mod state;
 #[cfg(test)]
 mod tests;
@@ -68,6 +69,8 @@ pub const WM_QUICK_LAUNCH_AZURE_RESULTS: u32 = WM_APP + 7;
 
 pub fn show(owner: HWND, origin: Option<HWND>) -> Result<()> {
     ensure_window(owner)?;
+    // `cs ` (FR-9.15.6) 用。読み取りは専用スレッドで、表示を待たせない
+    crate::agent_sessions::refresh_async();
     let (window, edit) = STATE.with(|state| {
         let mut state = state.borrow_mut();
         state.owner = Some(owner);

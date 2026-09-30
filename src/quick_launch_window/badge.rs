@@ -11,7 +11,9 @@ use crate::quick_launch::{Action, AzureMeta, Entry};
 /// 彩度・明度は揃えた寒色2トーンに統一し、原色の乱立を避ける。
 pub(super) fn badge_color(badge: &str) -> COLORREF {
     match badge {
-        "WINDOWS" | "APPS" | "TERMINAL" | "CLAUDE CODE" | "CODEX" => rgb(143, 168, 118), // 緑寄りの寒色
+        "WINDOWS" | "APPS" | "TERMINAL" | "CLAUDE CODE" | "CODEX" | "SESSIONS" => {
+            rgb(143, 168, 118)
+        } // 緑寄りの寒色
         "BOOKMARKS" | "HISTORY" | "FILES" | "TABS" | "AZURE DEVOPS" | "WEB" => rgb(95, 157, 176), // 青寄りの寒色
         // kill は確認なしの即時破壊操作 (FR-9.15.2) なので、誤入力に気付けるよう
         // 他プレフィックスの寒色2トーンと区別できる警告色にする
@@ -47,6 +49,7 @@ pub(super) fn action_tag(action: &Action, badge: Option<&str>, path: &str) -> &'
         Action::OpenInEditor(_) => "Editor",
         Action::OpenClaudeCode(_) => "Claude Code",
         Action::OpenCodex => "Codex",
+        Action::ResumeAgentSession(agent, _) => agent.label(),
         // `cc ` のフォルダ候補は path を持つ ReplaceQuery (draw_row.rs 参照)
         Action::ReplaceQuery(_) if !path.is_empty() => "Folder",
         Action::ReplaceQuery(_)
@@ -82,6 +85,7 @@ pub(super) fn action_verb(action: &Action) -> &'static str {
         Action::AzureOptimize => "Run \u{21B5}",
         Action::LaunchApp | Action::OpenClaudeCode(_) | Action::OpenCodex => "Launch \u{21B5}",
         Action::KillProcess(_) => "Kill \u{21B5}",
+        Action::ResumeAgentSession(..) => "Resume \u{21B5}",
         Action::OpenFolder(_)
         | Action::OpenUrl(_)
         | Action::OpenWithDefaultHandler

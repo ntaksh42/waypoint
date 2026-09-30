@@ -61,6 +61,9 @@ pub const CLAUDE_CODE_PREFIX: &str = "cc ";
 /// フォルダを作業ディレクトリにして Codex CLI を起動する検索モードのプレフィックス
 /// (末尾の半角スペース込み、FR-9.15.5)。
 pub const CODEX_PREFIX: &str = "cx ";
+/// Claude Code / Codex の過去セッションを検索して再開するプレフィックス
+/// (末尾の半角スペース込み、FR-9.15.6)。
+pub const AGENT_SESSIONS_PREFIX: &str = "cs ";
 /// プロセス Kill 検索モードに入るプレフィックス (末尾の半角スペース込み、FR-9.15.2)。
 pub const KILL_PROCESS_PREFIX: &str = "k ";
 /// Web 検索モードに入るプレフィックス (FR-9.21)。
@@ -93,6 +96,8 @@ pub fn prefix_badge(query: &str) -> Option<&'static str> {
         Some("CLAUDE CODE")
     } else if query.starts_with(CODEX_PREFIX) {
         Some("CODEX")
+    } else if query.starts_with(AGENT_SESSIONS_PREFIX) {
+        Some("SESSIONS")
     } else if query.starts_with(EVERYTHING_PREFIX) {
         Some("FILES")
     } else if query.starts_with(KILL_PROCESS_PREFIX) {
@@ -119,6 +124,7 @@ pub fn effective_search_term(query: &str) -> &str {
         EDITOR_PREFIX,
         CLAUDE_CODE_PREFIX,
         CODEX_PREFIX,
+        AGENT_SESSIONS_PREFIX,
         KILL_PROCESS_PREFIX,
     ] {
         if let Some(rest) = query.strip_prefix(prefix) {
@@ -224,6 +230,9 @@ pub enum Action {
     OpenClaudeCode(Option<String>),
     /// Codex CLI を指定フォルダで起動する (`cx ` プレフィックス、FR-9.15.5)。
     OpenCodex,
+    /// Claude Code / Codex の過去セッションを作業フォルダ (`path`) で再開する
+    /// (`cs ` プレフィックス、FR-9.15.6)。`String` はセッション id。
+    ResumeAgentSession(crate::agent_sessions::Agent, String),
     /// 検索欄へコマンドを補完する。候補の選択時に外部操作は行わない。
     ReplaceQuery(String),
     /// `az wit` のローカルキャッシュ検索で見つからなかったとき、明示的な
@@ -307,6 +316,7 @@ impl Entry {
             | Action::OpenInEditor(_)
             | Action::OpenClaudeCode(_)
             | Action::OpenCodex
+            | Action::ResumeAgentSession(..)
             | Action::ReplaceQuery(_)
             | Action::AzureLiveWorkItemSearch(_)
             | Action::AzureLivePullRequestSearch { .. }
@@ -381,6 +391,29 @@ pub fn kill_process_entries() -> Vec<Entry> {
             breadcrumb: format!("Kill Process — PID {}", process.pid),
             path: String::new(),
             action: Action::KillProcess(process.pid),
+            branch: None,
+        })
+        .collect()
+}
+
+/// 直近に読み取った過去セッションから `cs ` の検索候補を作る (FR-9.15.6)。
+///
+/// 読み取りは `agent_sessions::refresh_async` が Quick Launch の表示時に
+/// 済ませており、ここではファイル I/O を行わない。
+pub fn agent_session_entries() -> Vec<Entry> {
+    let now = std::time::SystemTime::now();
+    crate::agent_sessions::latest()
+        .iter()
+        .map(|session| Entry {
+            azure: None,
+            name: session.title.clone(),
+            breadcrumb: format!(
+                "{} — {}",
+                session.agent.label(),
+                crate::agent_sessions::age_label(session.modified, now)
+            ),
+            path: session.cwd.clone(),
+            action: Action::ResumeAgentSession(session.agent, session.id.clone()),
             branch: None,
         })
         .collect()
