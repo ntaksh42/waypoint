@@ -1,6 +1,7 @@
 //! 検索・スコアリング。
 
-use super::azure::{AzureCommand, azure_command, azure_command_entries};
+use super::azure::{AzureCommand, azure_command};
+use super::azure_entries::azure_command_entries;
 use super::rank::{search_entries_cached, search_entries_cached_multi};
 use super::{
     APPS_PREFIX, AZURE_DEVOPS_PREFIX, BOOKMARK_PREFIX, CLAUDE_CODE_PREFIX, CODEX_PREFIX,
