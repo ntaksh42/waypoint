@@ -44,7 +44,7 @@ use convert::{
 use credential::credential_for_request;
 use sync::{REFRESHING, RunningFlag};
 pub(crate) use title_search::{
-    QUALITY_OTHER as TITLE_QUALITY_OTHER, is_exact_id_query, is_item_id_query,
+    QUALITY_OTHER as TITLE_QUALITY_OTHER, exact_id_query, is_item_id_query,
     match_quality as title_match_quality, matches_item_id, numeric_query as item_id_query,
 };
 

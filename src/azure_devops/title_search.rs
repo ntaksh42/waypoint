@@ -69,15 +69,18 @@ const QUALITY_TYPO: u8 = 3;
 pub(crate) const QUALITY_OTHER: u8 = 4;
 
 /// クエリが項目 ID の指定 (数字のみ、または `#<数字>`) か。そうなら数字部分を返す。
+/// Azure DevOps の ID は int32 なので、収まらない桁数は ID とみなさない
+/// (そのまま API へ渡すと全プロジェクトで HTTP 400 になる)。
 pub(crate) fn numeric_query(query: &str) -> Option<&str> {
     let query = query.trim();
     let query = query.strip_prefix('#').unwrap_or(query);
-    (!query.is_empty() && query.bytes().all(|byte| byte.is_ascii_digit())).then_some(query)
+    (query.bytes().all(|byte| byte.is_ascii_digit()) && query.parse::<i32>().is_ok())
+        .then_some(query)
 }
 
-/// `#<番号>` 形式の完全一致指定か。
-pub(crate) fn is_exact_id_query(query: &str) -> bool {
-    query.trim().starts_with('#') && numeric_query(query).is_some()
+/// `#<番号>` 形式の完全一致指定なら数字部分を返す。
+pub(crate) fn exact_id_query(query: &str) -> Option<&str> {
+    numeric_query(query).filter(|_| query.trim().starts_with('#'))
 }
 
 /// 候補名の先頭に現れる項目 ID。PR は `PR 12345: <title>`、Work Item は
@@ -142,4 +145,23 @@ fn one_edit_apart(left: &[u8], right: &[u8]) -> bool {
         longer_index += 1;
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn numeric_query_rejects_ids_outside_int32() {
+        assert_eq!(numeric_query("#2147483647"), Some("2147483647"));
+        assert_eq!(numeric_query("2147483648"), None);
+        assert_eq!(numeric_query("#123456789012"), None);
+    }
+
+    #[test]
+    fn exact_id_query_requires_the_hash() {
+        assert_eq!(exact_id_query(" #123 "), Some("123"));
+        assert_eq!(exact_id_query("123"), None);
+        assert_eq!(exact_id_query("#12a"), None);
+    }
 }

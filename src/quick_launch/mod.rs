@@ -135,10 +135,7 @@ pub fn effective_search_term(query: &str) -> &str {
 /// `az` サブコマンド以降の検索語のうち、ハイライトに使う部分。
 /// `#<番号>` の `#` は候補名に無く、そのままではハイライトが当たらない。
 pub fn azure_highlight_term(rest: &str) -> &str {
-    if crate::azure_devops::is_exact_id_query(rest) {
-        return crate::azure_devops::item_id_query(rest).unwrap_or(rest);
-    }
-    rest
+    crate::azure_devops::exact_id_query(rest).unwrap_or(rest)
 }
 
 /// waypoint 自身の操作を通常検索へ載せる固定候補 (FR-9.20)。

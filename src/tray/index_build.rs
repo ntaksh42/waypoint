@@ -29,7 +29,9 @@ pub(crate) const WM_INDEX_BUILT: u32 = WM_APP + 12;
 /// 最新の構築要求の番号。再読み込みが続いたとき、古い config で組んだ
 /// 索引が後から届いて新しい方を上書きしないよう、番号が一致した結果だけ使う。
 static GENERATION: AtomicU64 = AtomicU64::new(0);
-static RESULT: Mutex<Option<(u64, Index)>> = Mutex::new(None);
+/// 構築が panic した場合は `None` を置く。通知を送らないと `apply` が走らず、
+/// そこから始める Azure DevOps の同期まで止まってしまうため。
+static RESULT: Mutex<Option<(u64, Option<Index>)>> = Mutex::new(None);
 
 /// 索引の構築を別スレッドで始める。結果は `apply` で反映する。
 ///
@@ -42,7 +44,11 @@ pub(crate) fn build_async(hwnd: HWND, config: Config) {
     std::thread::spawn(move || {
         // apps::scan の IShellLink は STA を要求する
         let _com = crate::shell::ComGuard::new();
-        let index = Index::build(&config, &Menus::default());
+        // panic 時の記録は panic hook が行う
+        let index = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            Index::build(&config, &Menus::default())
+        }))
+        .ok();
         let mut slot = RESULT.lock().unwrap_or_else(|e| e.into_inner());
         // 後から始めた構築が先に終わっていたら、古い結果で上書きしない
         if slot.as_ref().is_none_or(|(stored, _)| *stored < generation) {
@@ -69,12 +75,14 @@ pub(crate) fn apply(hwnd: HWND) {
     if generation != GENERATION.load(Ordering::Acquire) {
         return;
     }
-    with_state(|s| {
-        let state = s.borrow();
-        if let Some(state) = state.as_ref() {
-            quick_launch_window::install_index(index, &state.config, &state.dynamic);
-        }
-    });
+    if let Some(index) = index {
+        with_state(|s| {
+            let state = s.borrow();
+            if let Some(state) = state.as_ref() {
+                quick_launch_window::install_index(index, &state.config, &state.dynamic);
+            }
+        });
+    }
     // Azure DevOps の同期は索引が揃ってから始める。先に同期結果が届くと、
     // 後から来た索引が構築時点の古いキャッシュで候補を上書きしてしまう
     refresh_azure_devops(hwnd);

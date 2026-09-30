@@ -21,7 +21,7 @@ pub(super) fn search<'a>(
 ) -> Vec<&'a Entry> {
     let terms = lower_terms(query);
     // `#<番号>` は番号の完全一致だけを返す。breadcrumb / URL 側の一致で残さない。
-    let exact_id = crate::azure_devops::is_exact_id_query(query);
+    let exact_id = crate::azure_devops::exact_id_query(query).is_some();
     let mut matches = items
         .into_iter()
         .enumerate()

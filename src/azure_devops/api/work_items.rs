@@ -8,7 +8,7 @@ use super::super::convert::{
     encode_segment, json_i64, project_url, work_item_batch_candidates, work_item_candidates,
 };
 use super::super::shared_cache::{self, SharedWorkItem};
-use super::super::{Candidate, is_exact_id_query, item_id_query};
+use super::super::{Candidate, exact_id_query};
 use super::http::{API_VERSION, get_json, post_json};
 use super::pull_requests::SHARED_CACHE_FRESHNESS;
 
@@ -169,10 +169,14 @@ pub(crate) fn fetch_work_items(
         return fetch_recent_work_items(client, project, pat);
     }
     // `#<番号>` は全文検索 (番号を本文に含む項目まで拾う) ではなく ID で直接引く。
-    if is_exact_id_query(query)
-        && let Some(id) = item_id_query(query)
-    {
-        return fetch_work_items_by_wiql(client, project, pat, &work_item_id_wiql(id), None);
+    if let Some(id) = exact_id_query(query) {
+        return fetch_work_items_by_wiql(
+            client,
+            project,
+            pat,
+            &work_item_id_wiql(project, id),
+            None,
+        );
     }
     let url = format!(
         "https://almsearch.dev.azure.com/{}/{}/_apis/search/workitemsearchresults?api-version={API_VERSION}",
@@ -189,10 +193,10 @@ pub(crate) fn fetch_work_items(
 
 /// Area / Iteration の関心パスが設定されていれば `UNDER` 条件で WIQL を絞り込む。
 /// 同じ種類のパスは OR、Area と Iteration の間は AND で結ぶ。どちらも空なら
-/// 従来どおりプロジェクト全体を対象にする。
+/// プロジェクト全体を対象にする。WIQL は URL にプロジェクトを入れても組織全体を
+/// 検索するので、`[System.TeamProject]` の条件は常に付ける。
 fn recent_work_items_wiql(project: &AzureDevOpsProject) -> String {
-    let base = "SELECT [System.Id] FROM WorkItems ORDER BY [System.ChangedDate] DESC";
-    let mut clauses = Vec::new();
+    let mut clauses = vec![team_project_clause(project)];
     if !project.interest_areas.is_empty() {
         let areas = project
             .interest_areas
@@ -211,9 +215,6 @@ fn recent_work_items_wiql(project: &AzureDevOpsProject) -> String {
             .join(" OR ");
         clauses.push(format!("({iterations})"));
     }
-    if clauses.is_empty() {
-        return base.to_string();
-    }
     format!(
         "SELECT [System.Id] FROM WorkItems WHERE {} ORDER BY [System.ChangedDate] DESC",
         clauses.join(" AND ")
@@ -221,11 +222,18 @@ fn recent_work_items_wiql(project: &AzureDevOpsProject) -> String {
 }
 
 /// ID 完全一致の WIQL。ID は組織内で一意なので、他プロジェクトの項目を
-/// このプロジェクトの URL で開かないよう `@project` で絞る。
-fn work_item_id_wiql(id: &str) -> String {
+/// このプロジェクトの URL で開かないようプロジェクトで絞る。WIQL REST API は
+/// `@project` マクロを展開しない (`fetch_recent_activity_paths` 参照) ため、
+/// プロジェクト名はリテラルで埋め込む。
+fn work_item_id_wiql(project: &AzureDevOpsProject, id: &str) -> String {
     format!(
-        "SELECT [System.Id] FROM WorkItems WHERE [System.Id] = {id} AND [System.TeamProject] = @project"
+        "SELECT [System.Id] FROM WorkItems WHERE [System.Id] = {id} AND {}",
+        team_project_clause(project)
     )
+}
+
+fn team_project_clause(project: &AzureDevOpsProject) -> String {
+    format!("[System.TeamProject] = '{}'", wiql_escape(&project.project))
 }
 
 /// WIQL の文字列リテラル内でシングルクォートをエスケープする。
@@ -415,9 +423,12 @@ mod tests {
     }
 
     #[test]
-    fn recent_work_items_wiql_has_no_where_clause_without_interest_areas() {
+    fn recent_work_items_wiql_is_limited_to_the_project_without_interest_areas() {
         let wiql = recent_work_items_wiql(&project(Vec::new()));
-        assert!(!wiql.contains("WHERE"));
+        assert_eq!(
+            wiql,
+            "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = 'project' ORDER BY [System.ChangedDate] DESC"
+        );
     }
 
     #[test]
@@ -434,8 +445,8 @@ mod tests {
     #[test]
     fn work_item_id_wiql_matches_the_id_exactly_within_the_project() {
         assert_eq!(
-            work_item_id_wiql("12345"),
-            "SELECT [System.Id] FROM WorkItems WHERE [System.Id] = 12345 AND [System.TeamProject] = @project"
+            work_item_id_wiql(&project(Vec::new()), "12345"),
+            "SELECT [System.Id] FROM WorkItems WHERE [System.Id] = 12345 AND [System.TeamProject] = 'project'"
         );
     }
 

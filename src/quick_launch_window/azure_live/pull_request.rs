@@ -100,7 +100,12 @@ pub(in crate::quick_launch_window) fn start_azure_pull_request_live_search(
         }
         state.azure_pull_requests_live_active = true;
         state.azure_pull_request_reply_id = next_azure_reply_id(state.azure_pull_request_reply_id);
-        state.highlight_term.clear();
+        // 集約モードは Work Item / Pipeline と一覧を共有するのでハイライトを付けない
+        state.highlight_term = if state.azure_live_combined.is_none() {
+            crate::quick_launch::azure_highlight_term(query.trim()).to_string()
+        } else {
+            String::new()
+        };
         // 集約モードでは 3 種の進捗を 1 行にまとめる (種別ごとの文言で
         // 上書きし合うと、どの検索が走っているか読めなくなる)
         state.empty_message = Some(if state.azure_live_combined.is_some() {
