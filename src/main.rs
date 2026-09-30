@@ -3,7 +3,7 @@
 // コンソールウィンドウを出さない
 #![windows_subsystem = "windows"]
 
-use waypoint::{autostart, panic_log, shell, single, tray, trigger};
+use waypoint::{autostart, panic_log, shell, single, startup_timing, tray, trigger};
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::HiDpi::{
@@ -33,6 +33,10 @@ fn main() {
     }
 
     let selftest = std::env::args().any(|a| a == "--selftest");
+    if std::env::args().any(|a| a == "--startup-timing") {
+        startup_timing::enable();
+        startup_timing::mark("diagnostic enabled");
+    }
     // メニューの座標は物理ピクセルで扱うため、モニタごとの DPI を
     // 自前で解釈する。ウィンドウを作る前に宣言する必要がある。
     unsafe {
@@ -54,11 +58,23 @@ fn main() {
 
     // Native Messaging host はブラウザが起動する。ここでは Chrome / Edge が
     // host を見つけられるよう登録だけを済ませ、手作業を発生させない。
-    let _ = waypoint::browser_tabs::register_native_host();
+    let native_host_started = startup_timing::enabled().then(std::time::Instant::now);
+    let native_host_result = waypoint::browser_tabs::register_native_host();
+    if let Some(started) = native_host_started {
+        startup_timing::mark_elapsed(
+            if native_host_result.is_ok() {
+                "Native Messaging host registered"
+            } else {
+                "Native Messaging host registration failed"
+            },
+            started.elapsed(),
+        );
+    }
 
     // トレイアイコンが見えてからホットキーが使えるまでの間に、ユーザーが
     // 触れる隙を作らない。先に受け口ウィンドウだけ作り (アイコンはまだ
     // 出ない)、設定読込とホットキー登録を終えてからアイコンを表示する。
+    let tray_window_started = startup_timing::enabled().then(std::time::Instant::now);
     let hwnd = match tray::create_window() {
         Ok(hwnd) => hwnd,
         Err(err) => {
@@ -68,6 +84,9 @@ fn main() {
             return;
         }
     };
+    if let Some(started) = tray_window_started {
+        startup_timing::mark_elapsed("tray window created", started.elapsed());
+    }
 
     // 結果を書いてすぐ終わる selftest だけは索引の完成を待つ。常駐時は
     // 構築をバックグラウンドへ回し、メッセージループを早く回し始める
@@ -79,9 +98,13 @@ fn main() {
 
     let quick_launch_hotkey = tray::register_quick_launch_hotkey_from_config(hwnd);
     tray::set_quick_launch_hotkey_failed(!quick_launch_hotkey.is_active());
+    startup_timing::mark("Quick Launch hotkey registered");
 
     if !selftest && tray::show_icon(hwnd).is_err() {
         return;
+    }
+    if !selftest {
+        startup_timing::mark("tray icon shown; entering message loop");
     }
 
     if selftest {

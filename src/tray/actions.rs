@@ -88,6 +88,7 @@ pub(crate) fn handle_dynamic_refreshed() {
         quick_launch_window::configure_dynamic(&state.config, &dynamic);
         state.dynamic = dynamic;
     });
+    crate::startup_timing::mark("background dynamic snapshot installed on UI thread");
 }
 
 /// トレイの右クリックメニュー (FR-8.2) 。

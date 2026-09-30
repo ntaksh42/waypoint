@@ -30,6 +30,7 @@ pub mod quick_launch_window;
 pub mod romaji;
 pub mod shell;
 pub mod single;
+pub mod startup_timing;
 pub mod tray;
 pub mod trigger;
 pub mod web_search;

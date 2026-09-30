@@ -42,6 +42,7 @@ pub(crate) fn build_async(hwnd: HWND, config: Config) {
     let generation = GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
     let notify = hwnd.0 as isize;
     std::thread::spawn(move || {
+        let started = crate::startup_timing::enabled().then(std::time::Instant::now);
         // apps::scan の IShellLink は STA を要求する
         let _com = crate::shell::ComGuard::new();
         // panic 時の記録は panic hook が行う
@@ -49,6 +50,12 @@ pub(crate) fn build_async(hwnd: HWND, config: Config) {
             Index::build(&config, &Menus::default())
         }))
         .ok();
+        if let Some(started) = started {
+            crate::startup_timing::mark_elapsed(
+                "background index build finished",
+                started.elapsed(),
+            );
+        }
         let mut slot = RESULT.lock().unwrap_or_else(|e| e.into_inner());
         // 後から始めた構築が先に終わっていたら、古い結果で上書きしない
         if slot.as_ref().is_none_or(|(stored, _)| *stored < generation) {
@@ -83,6 +90,7 @@ pub(crate) fn apply(hwnd: HWND) {
             }
         });
     }
+    crate::startup_timing::mark("background index installed on UI thread");
     // Azure DevOps の同期は索引が揃ってから始める。先に同期結果が届くと、
     // 後から来た索引が構築時点の古いキャッシュで候補を上書きしてしまう
     refresh_azure_devops(hwnd);

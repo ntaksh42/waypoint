@@ -13,6 +13,7 @@ mod prune;
 mod window;
 
 use std::cell::RefCell;
+use std::time::Instant;
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -86,7 +87,11 @@ pub(crate) fn with_state<R>(f: impl FnOnce(&RefCell<Option<AppState>>) -> R) -> 
 /// 行い、ここでは config 由来の候補だけを即座に反映して戻る
 /// (`index_build` 参照)。Azure DevOps の同期は索引の差し替え後に始まる。
 pub fn load_state(hwnd: HWND) {
+    let config_started = crate::startup_timing::enabled().then(Instant::now);
     let (config, load_error) = load_config();
+    if let Some(started) = config_started {
+        crate::startup_timing::mark_elapsed("config loaded", started.elapsed());
+    }
     let dynamic = with_state(|s| {
         s.borrow()
             .as_ref()
@@ -97,6 +102,7 @@ pub fn load_state(hwnd: HWND) {
     index_build::build_async(hwnd, config.clone());
     crate::dynamic::refresh_async(hwnd, WM_DYNAMIC_REFRESHED);
     store_state(config, dynamic, load_error);
+    crate::startup_timing::mark("background index and dynamic refresh started");
 }
 
 /// `load_state` の同期版。結果を書き出してすぐ終了する `--selftest` 用。

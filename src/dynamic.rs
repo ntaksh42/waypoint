@@ -104,8 +104,15 @@ pub fn refresh_async(notify: HWND, message: u32) -> bool {
     }
     let notify = notify.0 as isize;
     thread::spawn(move || {
+        let started = crate::startup_timing::enabled().then(std::time::Instant::now);
         let _guard = ComGuard::new();
         let menus = refresh();
+        if let Some(started) = started {
+            crate::startup_timing::mark_elapsed(
+                "background dynamic refresh finished",
+                started.elapsed(),
+            );
+        }
         RESULT.with_lock(|slot| *slot = Some(menus));
         REFRESHING.store(false, Ordering::Release);
         unsafe {
