@@ -236,8 +236,11 @@ fn parse_claude(head: &str, tail: &str) -> Option<Parsed> {
         json_string_last(tail, "\"cwd\":\"").or_else(|| json_string_last(head, "\"cwd\":\""))?;
     let title = ["\"customTitle\":\"", "\"aiTitle\":\""]
         .iter()
-        .find_map(|key| json_string_last(tail, key).or_else(|| json_string_last(head, key)))
-        .filter(|title| !title.trim().is_empty());
+        .find_map(|key| {
+            json_string_last(tail, key)
+                .or_else(|| json_string_last(head, key))
+                .filter(|title| !title.trim().is_empty())
+        });
     Some(Parsed { title, cwd })
 }
 
@@ -345,6 +348,15 @@ mod tests {
         assert_eq!(
             json_string_after(text, "\"cwd\":\"").as_deref(),
             Some(r"E:\work")
+        );
+    }
+
+    #[test]
+    fn blank_custom_title_falls_back_to_ai_title() {
+        let text = r#"{"cwd":"E:\\work","customTitle":"  ","aiTitle":"Review"}"#;
+        assert_eq!(
+            parse_claude(text, "").unwrap().title.as_deref(),
+            Some("Review")
         );
     }
 
