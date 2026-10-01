@@ -69,6 +69,9 @@ pub const WM_QUICK_LAUNCH_AZURE_RESULTS: u32 = WM_APP + 7;
 
 pub fn show(owner: HWND, origin: Option<HWND>) -> Result<()> {
     ensure_window(owner)?;
+    if let Some(window) = STATE.with(|state| state.borrow().window) {
+        crate::icon::set_notify(window);
+    }
     // `cs ` (FR-9.15.6) 用。読み取りは専用スレッドで、表示を待たせない
     crate::agent_sessions::refresh_async();
     let (window, edit) = STATE.with(|state| {

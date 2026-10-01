@@ -7,7 +7,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     ICON_SMALL, ICON_SMALL2, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_GETICON,
 };
 
-use super::cached_bitmap;
+use super::cached_bitmap_async;
 use super::convert::{icon_to_bitmap, load_bitmap};
 
 /// Current Windows の各項目にそのウィンドウのアイコンを付ける。
@@ -24,7 +24,9 @@ pub(crate) fn bitmap_for_window_sized(hwnd: HWND, size: i32) -> Option<HBITMAP> 
     let mut process_id = 0u32;
     unsafe { GetWindowThreadProcessId(hwnd, Some(&mut process_id)) };
     let key = format!("window-icon:{size}:{}:{process_id}", hwnd.0 as isize);
-    cached_bitmap(&key, || unsafe {
+    let raw = hwnd.0 as isize;
+    cached_bitmap_async(&key, move || unsafe {
+        let hwnd = HWND(raw as *mut _);
         let large_first = size > 16;
         window_icon_via_message(hwnd, large_first)
             .or_else(|| window_icon_via_class(hwnd, large_first))
@@ -93,5 +95,73 @@ unsafe fn window_icon_via_class(hwnd: HWND, large_first: bool) -> Option<HICON> 
             raw
         };
         (raw != 0).then_some(HICON(raw as *mut _))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+    use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, WS_POPUP};
+    use windows::core::w;
+
+    #[test]
+    fn unresponsive_window_icon_does_not_stall_drawing() {
+        let (created, window) = mpsc::channel();
+        let (finish, finished) = mpsc::channel();
+        let owner = std::thread::spawn(move || {
+            let hwnd = unsafe {
+                CreateWindowExW(
+                    Default::default(),
+                    w!("STATIC"),
+                    w!(""),
+                    WS_POPUP,
+                    0,
+                    0,
+                    1,
+                    1,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap()
+            };
+            created.send(hwnd.0 as isize).unwrap();
+            // メッセージを処理しないウィンドウで旧経路の待ちを再現する。
+            let _ = finished.recv();
+            unsafe {
+                let _ = DestroyWindow(hwnd);
+            }
+        });
+        let hwnd = HWND(window.recv_timeout(Duration::from_secs(5)).unwrap() as *mut _);
+        let started = Instant::now();
+        assert!(unsafe { window_icon_via_message(hwnd, true) }.is_none());
+        let blocking = started.elapsed();
+        let started = Instant::now();
+        assert!(bitmap_for_window_sized(hwnd, 32).is_none());
+        let drawing = started.elapsed();
+        println!("unresponsive window: synchronous={blocking:?}, drawing={drawing:?}");
+        // スケジューラの揺れを許容しても、外部応答の待ちが表示へ乗らない。
+        assert!(blocking >= Duration::from_millis(200));
+        assert!(drawing < blocking / 2);
+        let mut pid = 0;
+        unsafe {
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        }
+        let key = format!("window-icon:32:{}:{pid}", hwnd.0 as isize);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            super::super::apply_ready();
+            if super::super::CACHE.with(|cache| cache.borrow().contains_key(&key)) {
+                break;
+            }
+            assert!(Instant::now() < deadline, "icon result was not applied");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        finish.send(()).unwrap();
+        owner.join().unwrap();
+        super::super::clear_cache();
     }
 }

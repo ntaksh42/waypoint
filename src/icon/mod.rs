@@ -1,5 +1,6 @@
 //! Quick Launch とトレイのアイコン取得。
 
+mod async_load;
 mod convert;
 mod scale;
 mod window;
@@ -14,6 +15,7 @@ use windows::Win32::UI::Shell::ExtractIconExW;
 use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, HICON};
 use windows::core::HSTRING;
 
+pub(crate) use async_load::{WM_ICON_READY, apply_ready, set_notify};
 use convert::{icon_to_bitmap, load_bitmap, rgba_to_bitmap, shell_icon};
 pub(crate) use window::bitmap_for_window_sized;
 
@@ -64,6 +66,14 @@ pub(crate) fn bitmap_for_settings_sized(size: i32) -> Option<HBITMAP> {
 /// (要求寸法どおりのビットマップを直接取れば等倍コピーで済む)。
 pub(crate) fn bitmap_for_sized(path: &str, size: i32) -> Option<HBITMAP> {
     cached_bitmap(&format!("{size}:{path}"), || load_bitmap(path, size))
+}
+
+/// Quick Launch の描画では、キャッシュミスでも外部処理を待たない。
+pub(crate) fn bitmap_for_sized_async(path: &str, size: i32) -> Option<HBITMAP> {
+    let path = path.to_owned();
+    cached_bitmap_async(&format!("async:{size}:{path}"), move || {
+        load_bitmap(&path, size)
+    })
 }
 
 /// DLL に埋め込まれたアイコンをインデックス指定で取得する。
@@ -117,8 +127,9 @@ pub(crate) fn bitmap_for_asset_sized(key: &str, png: &[u8], size: i32) -> Option
 /// から得て Quick Launch 用ビットマップにする。見つからなければ None
 /// (呼び出し側が汎用のリンクアイコンへフォールバックする)。
 pub(crate) fn bitmap_for_favicon_sized(url: &str, size: i32) -> Option<HBITMAP> {
-    cached_bitmap(&format!("favicon:{size}:{url}"), || {
-        let png = crate::favicons::lookup(url)?;
+    let url = url.to_owned();
+    cached_bitmap_async(&format!("favicon:{size}:{url}"), move || {
+        let png = crate::favicons::lookup(&url)?;
         let image = image::load_from_memory(&png).ok()?.into_rgba8();
         let target = SIZE { cx: size, cy: size };
         let image = if image.width() as i32 == size && image.height() as i32 == size {
@@ -135,18 +146,39 @@ pub(crate) fn bitmap_for_favicon_sized(url: &str, size: i32) -> Option<HBITMAP> 
     })
 }
 
-fn cached_bitmap(key: &str, load: impl FnOnce() -> Option<HBITMAP>) -> Option<HBITMAP> {
+fn cached_value(key: &str) -> Option<Option<HBITMAP>> {
     // 「まだ引いていない」と「引いて駄目だった」を区別する。前者は
     // load へ進み、後者は期限が切れるまで None を返す
-    let cached = CACHE.with(|cache| match cache.borrow().get(key) {
-        Some(Cached::Bitmap(raw)) => Some(Some(*raw)),
-        Some(Cached::Failed(at)) if at.elapsed() < RETRY_AFTER => Some(None),
-        _ => None,
-    });
-    if let Some(hit) = cached {
-        return hit.map(|raw| HBITMAP(raw as *mut _));
+    CACHE
+        .with(|cache| match cache.borrow().get(key) {
+            Some(Cached::Bitmap(raw)) => Some(Some(*raw)),
+            Some(Cached::Failed(at)) if at.elapsed() < RETRY_AFTER => Some(None),
+            _ => None,
+        })
+        .map(|hit| hit.map(|raw| HBITMAP(raw as *mut _)))
+}
+
+fn cached_bitmap_async(
+    key: &str,
+    load: impl FnOnce() -> Option<HBITMAP> + Send + 'static,
+) -> Option<HBITMAP> {
+    if let Some(hit) = cached_value(key) {
+        return hit;
+    }
+    async_load::request(key, load);
+    None
+}
+
+fn cached_bitmap(key: &str, load: impl FnOnce() -> Option<HBITMAP>) -> Option<HBITMAP> {
+    if let Some(hit) = cached_value(key) {
+        return hit;
     }
     let bitmap = load();
+    store_bitmap(key, bitmap);
+    bitmap
+}
+
+fn store_bitmap(key: &str, bitmap: Option<HBITMAP>) {
     CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
         if cache.len() >= MAX_ENTRIES {
@@ -158,7 +190,6 @@ fn cached_bitmap(key: &str, load: impl FnOnce() -> Option<HBITMAP>) -> Option<HB
         };
         cache.insert(key.to_string(), entry);
     });
-    bitmap
 }
 
 /// 値の `HBITMAP` を解放しつつ全件捨てる。
@@ -179,8 +210,9 @@ fn drop_entries(cache: &mut HashMap<String, Cached>) {
 
 /// ファイルパスを持たないシェル名前空間項目のアイコンを得る。
 pub(crate) fn bitmap_for_shell_sized(target: &str, size: i32) -> Option<HBITMAP> {
-    cached_bitmap(&format!("shell-namespace:{size}:{target}"), || {
-        let icon = shell_icon(target, size)?;
+    let target = target.to_owned();
+    cached_bitmap_async(&format!("shell-namespace:{size}:{target}"), move || {
+        let icon = shell_icon(&target, size)?;
         let bitmap = icon_to_bitmap(icon, SIZE { cx: size, cy: size });
         unsafe {
             let _ = DestroyIcon(icon);
@@ -191,5 +223,6 @@ pub(crate) fn bitmap_for_shell_sized(target: &str, size: i32) -> Option<HBITMAP>
 
 /// キャッシュを捨てる。テーマ変更や設定再読み込みで呼ぶ。
 pub(crate) fn clear_cache() {
+    async_load::clear();
     CACHE.with(|cache| drop_entries(&mut cache.borrow_mut()));
 }

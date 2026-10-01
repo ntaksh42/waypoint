@@ -26,6 +26,16 @@ use super::{
 
 pub(super) fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match message {
+        crate::icon::WM_ICON_READY => {
+            crate::icon::apply_ready();
+            let list = STATE.with(|state| state.borrow().list);
+            if let Some(list) = list {
+                unsafe {
+                    let _ = windows::Win32::Graphics::Gdi::InvalidateRect(Some(list), None, false);
+                }
+            }
+            LRESULT(0)
+        }
         WM_COMMAND => {
             let notification = ((wparam.0 >> 16) & 0xffff) as u32;
             let control = HWND(lparam.0 as *mut _);

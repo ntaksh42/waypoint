@@ -53,7 +53,7 @@ pub(super) unsafe fn draw_path_icon(hdc: HDC, path: &str, rect: RECT, dpi: u32) 
     let bitmap = if is_shell_namespace(path) {
         crate::icon::bitmap_for_shell_sized(path, size)
     } else {
-        crate::icon::bitmap_for_sized(path, size)
+        crate::icon::bitmap_for_sized_async(path, size)
     };
     let Some(bitmap) = bitmap else {
         return;
