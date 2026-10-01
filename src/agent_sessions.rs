@@ -261,12 +261,21 @@ fn parse_codex_index(text: &str) -> HashMap<String, String> {
 /// 始まる・途中で切れることがあるため。本文中に同じ並びがあっても
 /// JSON 文字列の中では `\"` にエスケープされているので誤一致しない。
 fn json_string_last(text: &str, key: &str) -> Option<String> {
+    let key = key.strip_suffix(":\"")?;
     text.rmatch_indices(key)
-        .find_map(|(at, _)| json_string_at(&text[at + key.len()..]))
+        .find_map(|(at, _)| json_string_field(&text[at + key.len()..]))
 }
 
 fn json_string_after(text: &str, key: &str) -> Option<String> {
-    json_string_at(&text[text.find(key)? + key.len()..])
+    let key = key.strip_suffix(":\"")?;
+    text.match_indices(key)
+        .find_map(|(at, _)| json_string_field(&text[at + key.len()..]))
+}
+
+/// キーと値の間の JSON 空白を許容する。
+fn json_string_field(rest: &str) -> Option<String> {
+    let rest = rest.trim_start().strip_prefix(':')?;
+    json_string_at(rest.trim_start().strip_prefix('"')?)
 }
 
 /// 開き引用符の直後から、対応する閉じ引用符までを JSON 文字列として復号する。
@@ -325,6 +334,18 @@ mod tests {
         assert!(parse_claude("", r#"{"type":"ai-title","aiTitle":"t"}"#).is_none());
         let parsed = parse_claude(r#"{"cwd":"E:\\a"}"#, "").unwrap();
         assert_eq!(parsed.title, None);
+    }
+
+    #[test]
+    fn session_fields_allow_json_whitespace() {
+        let text = r#"{ "cwd" : "E:\\work", "aiTitle": "Review" }"#;
+        let parsed = parse_claude(text, "").unwrap();
+        assert_eq!(parsed.cwd, r"E:\work");
+        assert_eq!(parsed.title.as_deref(), Some("Review"));
+        assert_eq!(
+            json_string_after(text, "\"cwd\":\"").as_deref(),
+            Some(r"E:\work")
+        );
     }
 
     #[test]
