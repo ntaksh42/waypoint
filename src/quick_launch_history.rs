@@ -164,8 +164,12 @@ pub struct Ranking {
 
 impl Ranking {
     pub fn load() -> Self {
+        Self::from_history(load())
+    }
+
+    fn from_history(history: History) -> Self {
         let mut entries: HashMap<&'static str, HashMap<String, HistoryEntry>> = HashMap::new();
-        for (key, record) in load().entries {
+        for (key, record) in history.entries {
             if let Some((kind, path_lower)) = split_key(&key)
                 && let Some(kind) = normalize_kind(kind)
             {
@@ -214,15 +218,51 @@ impl Ranking {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_and_editor_history_survives_reload() {
+        for action in [Action::OpenInTerminal, Action::OpenInEditor("code".into())] {
+            let entry = Entry {
+                name: "Project".into(),
+                path: r"E:\Project".into(),
+                breadcrumb: String::new(),
+                action,
+                branch: None,
+                azure: None,
+            };
+            let history = History {
+                entries: HashMap::from([(
+                    key_for(&entry).unwrap(),
+                    HistoryEntry {
+                        count: 3,
+                        last_used: 42,
+                    },
+                )]),
+            };
+            let text = serde_json::to_string(&history).unwrap();
+            let ranking = Ranking::from_history(serde_json::from_str(&text).unwrap());
+            assert_eq!(
+                ranking.rank_lower(&entry, r"e:\project"),
+                (u64::MAX - 3, u64::MAX - 42)
+            );
+        }
+    }
+}
+
 /// `load()` (JSON 経由) が返す kind は `key_kind` と同じ固定文字列のはずだが、
 /// 版違いの永続化ファイルで不明な kind が混じっても `&'static str` の
-/// 表に正規化してから使う (未知の kind は握りつぶし、既知の 4 種のみ通す)。
+/// 表に正規化してから使う (未知の kind は握りつぶす)。
 fn normalize_kind(kind: &str) -> Option<&'static str> {
     match kind {
         "folder" => Some("folder"),
         "url" => Some("url"),
         "default" => Some("default"),
         "app" => Some("app"),
+        "terminal" => Some("terminal"),
+        "editor" => Some("editor"),
         _ => None,
     }
 }
