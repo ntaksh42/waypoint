@@ -31,10 +31,7 @@ pub fn open_terminal(path: &str) -> std::io::Result<()> {
         return Ok(());
     }
 
-    std::process::Command::new("powershell.exe")
-        .args(["-NoExit", "-WorkingDirectory", path])
-        .spawn()
-        .map(|_| ())
+    powershell_fallback(path, None).spawn().map(|_| ())
 }
 
 /// フォルダを指定されたエディターで開く (`ed ` プレフィックス)。
@@ -123,10 +120,7 @@ fn run_in_terminal(path: &str, command: &str) -> std::io::Result<()> {
         return Ok(());
     }
 
-    std::process::Command::new("powershell.exe")
-        .args(["-NoExit", "-WorkingDirectory", path, "-Command", command])
-        .spawn()
-        .map(|_| ())
+    powershell_fallback(path, Some(command)).spawn().map(|_| ())
 }
 
 /// Codex CLI を Windows Terminal + PowerShell 7 で指定フォルダを作業ディレクトリ
@@ -180,10 +174,21 @@ pub fn open_codex(path: &str) -> std::io::Result<()> {
         return Ok(());
     }
 
-    std::process::Command::new("powershell.exe")
-        .args(["-NoExit", "-WorkingDirectory", path, "-Command", &command])
+    powershell_fallback(path, Some(&command))
         .spawn()
         .map(|_| ())
+}
+
+/// PowerShell 7 が無い環境で使う Windows PowerShell の起動コマンド。
+fn powershell_fallback(path: &str, command: Option<&str>) -> std::process::Command {
+    let mut process = std::process::Command::new("powershell.exe");
+    // Windows PowerShell 5.1 は -WorkingDirectory を反映しないため、
+    // プロセスの作業ディレクトリとして渡す。
+    process.arg("-NoExit").current_dir(path);
+    if let Some(command) = command {
+        process.args(["-Command", command]);
+    }
+    process
 }
 
 /// 実行ファイル名から実体のフルパスを解決する。パス区切りを含む指定は
@@ -263,6 +268,21 @@ fn find_pwsh() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn powershell_fallback_runs_in_requested_directory() {
+        let path = format!("{}\\src", env!("CARGO_MANIFEST_DIR"));
+        let output = powershell_fallback(&path, Some("(Get-Location).Path; exit 0"))
+            .creation_flags(CREATE_NO_WINDOW.0)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), path);
+    }
 
     /// VS Code が PATH へ置くのは `code.cmd` だけ (拡張子なしの `code` は
     /// sh スクリプト)。`Command::new("code")` は CreateProcessW が PATHEXT を
