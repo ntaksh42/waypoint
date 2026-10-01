@@ -204,9 +204,12 @@ fn item_path(item: &Item) -> Option<&str> {
 
 fn contains_path(items: &[Item], path: &str, variables: &BTreeMap<String, String>) -> bool {
     items.iter().any(|item| match item {
-        Item::Folder { path: p, .. } | Item::File { path: p, .. } => expand(p, variables)
-            .unwrap_or_else(|| p.clone())
-            .eq_ignore_ascii_case(path),
+        Item::Folder { path: p, .. } | Item::File { path: p, .. } => {
+            expand(p, variables)
+                .unwrap_or_else(|| p.clone())
+                .to_lowercase()
+                == path.to_lowercase()
+        }
         Item::Submenu { items, .. } => contains_path(items, path, variables),
         _ => false,
     })

@@ -179,3 +179,13 @@ fn remove_paths_removes_matching_items_inside_submenus() {
     );
     assert_eq!(cfg.item_paths(), vec![r"C:\keep", r"C:\keep2"]);
 }
+
+#[test]
+fn unicode_path_case_is_consistent_for_favorites_and_pruning() {
+    let mut cfg = Config::default();
+    cfg.items.push(folder("Project", r"C:\Ärger"));
+    assert!(!cfg.add_item_if_new(folder("Again", r"c:\ärger")));
+    assert_eq!(cfg.items.len(), 1);
+    assert_eq!(cfg.remove_paths(&[r"c:\ärger".into()]).len(), 1);
+    assert!(cfg.items.is_empty());
+}

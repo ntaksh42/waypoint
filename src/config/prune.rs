@@ -53,7 +53,10 @@ fn remove_in(
             let Some(expanded) = expand(path, vars) else {
                 return true;
             };
-            if missing.iter().any(|m| m.eq_ignore_ascii_case(&expanded)) {
+            if missing
+                .iter()
+                .any(|m| m.to_lowercase() == expanded.to_lowercase())
+            {
                 removed.push((name.clone(), expanded));
                 false
             } else {
