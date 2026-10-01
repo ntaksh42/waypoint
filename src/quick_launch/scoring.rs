@@ -150,18 +150,13 @@ pub(crate) fn highlight_ranges(name: &str, term: &str) -> Vec<(usize, usize)> {
 /// 1 語ぶんのヒット範囲。連続部分一致 (tier0〜3 相当) を優先し、
 /// 無ければ fuzzy のサブシーケンス一致 (tier6 相当) を試す。
 fn term_ranges(name: &str, name_lower: &str, word: &str) -> Vec<(usize, usize)> {
-    // `name_lower` 上のバイト位置を `name` にそのまま流用してよいのは、
-    // `to_lowercase` がバイト長を変えなかったときだけ。`\u{130}` (I with dot)
-    // は 2 バイトから 3 バイトへ伸び、ケルビン記号 `\u{212A}` は 3 バイトから
-    // 1 バイトへ縮む。ずれた範囲で `name` をスライスすると、良くて無関係な
-    // 箇所を強調し、悪くすると文字境界の外で panic する (描画は
-    // `window_proc` の中なので unwind できず abort になる)。長さが変わった
-    // 場合は下の fuzzy 経路へ落とす。そちらは `name` 自身の文字境界表を
-    // 使うので、位置がずれても panic しない。
-    if name.len() == name_lower.len()
-        && let Some(start) = name_lower.find(word)
-    {
-        return vec![(start, start + word.len())];
+    if let Some(start) = name_lower.find(word) {
+        if name.is_ascii() {
+            return vec![(start, start + word.len())];
+        }
+        let first = name_lower[..start].chars().count();
+        let indices: Vec<_> = (first..first + word.chars().count()).collect();
+        return char_indices_to_byte_ranges(name, &indices);
     }
     let Some((_, char_indices)) = FUZZY_MATCHER.fuzzy_indices(name_lower, word) else {
         return Vec::new();
@@ -169,42 +164,19 @@ fn term_ranges(name: &str, name_lower: &str, word: &str) -> Vec<(usize, usize)> 
     char_indices_to_byte_ranges(name, &char_indices)
 }
 
-/// fuzzy_matcher が返す文字インデックス (昇順) を、連続する run 単位で
-/// `name` のバイト範囲へ変換する。飛び飛びのマッチをセグメントごとに
-/// 分けることで、VSCode 同様「実際に一致した文字だけ」を強調できる。
+/// 小文字化後の各文字を元の文字の範囲へ対応付ける。
+/// `İ` のように複数文字へ展開される場合も同じ元の範囲を使う。
 fn char_indices_to_byte_ranges(name: &str, char_indices: &[usize]) -> Vec<(usize, usize)> {
-    let mut byte_offsets: Vec<usize> = name.char_indices().map(|(byte, _)| byte).collect();
-    byte_offsets.push(name.len());
-    let mut ranges = Vec::new();
-    let mut iter = char_indices.iter().copied();
-    let Some(mut run_start) = iter.next() else {
-        return ranges;
-    };
-    let mut run_end = run_start + 1;
-    for idx in iter {
-        if idx == run_end {
-            run_end = idx + 1;
-        } else {
-            push_byte_range(&mut ranges, &byte_offsets, run_start, run_end);
-            run_start = idx;
-            run_end = idx + 1;
-        }
-    }
-    push_byte_range(&mut ranges, &byte_offsets, run_start, run_end);
-    ranges
-}
-
-/// `to_lowercase` で文字数が変わる極端なケース (独語 `ß` → `ss` 等) に
-/// 備え、`byte_offsets` の範囲外になる添字は捨てる。
-fn push_byte_range(
-    ranges: &mut Vec<(usize, usize)>,
-    byte_offsets: &[usize],
-    start: usize,
-    end: usize,
-) {
-    if let (Some(&start), Some(&end)) = (byte_offsets.get(start), byte_offsets.get(end)) {
-        ranges.push((start, end));
-    }
+    let spans: Vec<_> = name
+        .char_indices()
+        .flat_map(|(start, c)| c.to_lowercase().map(move |_| (start, start + c.len_utf8())))
+        .collect();
+    merge_ranges(
+        char_indices
+            .iter()
+            .filter_map(|&index| spans.get(index).copied())
+            .collect(),
+    )
 }
 
 /// 範囲を開始位置でソートし、隣接・重複する範囲を 1 つへ統合する。

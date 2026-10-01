@@ -180,3 +180,10 @@ fn highlight_ranges_respects_multibyte_boundaries() {
     // "発室" は "開発室" の 2〜3 文字目 (バイト位置は "開" が 3 バイトぶんずれる)
     assert_eq!(highlight_ranges("開発室", "発室"), vec![(3, 9)]);
 }
+
+#[test]
+fn highlight_ranges_maps_expanding_and_shrinking_lowercase_characters() {
+    assert_eq!(highlight_ranges("İİK", "k"), vec![(4, 7)]);
+    assert_eq!(highlight_ranges("İ deploy", "deploy"), vec![(3, 9)]);
+    assert_eq!(highlight_ranges("İx", "x"), vec![(2, 3)]);
+}
