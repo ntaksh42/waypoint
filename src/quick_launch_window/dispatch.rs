@@ -3,10 +3,11 @@
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{FillRect, HDC, SetBkColor, SetTextColor};
 use windows::Win32::UI::Controls::{DRAWITEMSTRUCT, MEASUREITEMSTRUCT};
+use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows::Win32::UI::WindowsAndMessaging::{
     DefWindowProcW, EN_CHANGE, GetClientRect, LBN_DBLCLK, LBN_SELCHANGE, MoveWindow, WM_ACTIVATE,
     WM_CLOSE, WM_COMMAND, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_DRAWITEM, WM_ERASEBKGND,
-    WM_MEASUREITEM, WM_PAINT, WM_SIZE,
+    WM_MEASUREITEM, WM_PAINT, WM_SETFOCUS, WM_SIZE,
 };
 
 use super::azure_live::{
@@ -26,6 +27,17 @@ use super::{
 
 pub(super) fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match message {
+        WM_SETFOCUS => {
+            // 遅れて届く WM_ACTIVATE の既定処理は親へフォーカスを置く。
+            // show() で設定済みでも、入力先を検索欄へ戻す必要がある。
+            let edit = STATE.with(|state| state.borrow().edit);
+            if let Some(edit) = edit {
+                unsafe {
+                    let _ = SetFocus(Some(edit));
+                }
+            }
+            LRESULT(0)
+        }
         crate::icon::WM_ICON_READY => {
             crate::icon::apply_ready();
             let list = STATE.with(|state| state.borrow().list);
