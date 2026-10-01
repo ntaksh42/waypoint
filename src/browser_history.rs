@@ -26,15 +26,21 @@ struct Profile {
 
 /// Chrome / Edge の既定プロファイルから、最新順の URL を集める。
 pub fn scan() -> Vec<Visit> {
+    scan_profiles(profile_paths())
+}
+
+fn scan_profiles(profiles: impl IntoIterator<Item = Profile>) -> Vec<Visit> {
     let mut by_url: HashMap<String, (i64, Visit)> = HashMap::new();
-    for profile in profile_paths() {
+    for profile in profiles {
         let Ok(visits) = read_profile(&profile) else {
             // ブラウザの更新中・ロック中でも Quick Launch 全体は使えるよう、
             // そのブラウザだけを無言でスキップする。
             continue;
         };
         for (last_visit, visit) in visits {
-            let key = visit.url.to_lowercase();
+            // URL のパス・クエリは大小文字を区別するので、Windows パスと
+            // 同じ小文字化でまとめると別ページの履歴が消えてしまう。
+            let key = visit.url.clone();
             if by_url
                 .get(&key)
                 .is_none_or(|(known, _)| *known < last_visit)
@@ -126,4 +132,49 @@ fn profile_paths() -> Vec<Profile> {
     .into_iter()
     .filter(|profile| profile.path.exists())
     .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn history_keeps_case_sensitive_urls_and_merges_exact_duplicates() {
+        let root = std::env::temp_dir().join(format!(
+            "waypoint-history-case-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let profiles: Vec<_> = ["Chrome", "Edge"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, browser)| {
+                let path = root.join(browser);
+                let connection = Connection::open(&path).unwrap();
+                connection
+                    .execute_batch(
+                        "CREATE TABLE urls (title TEXT, url TEXT, last_visit_time INTEGER);
+                INSERT INTO urls VALUES ('Upper', 'https://example.com/Repo?Key=A', 10);
+                INSERT INTO urls VALUES ('Lower', 'https://example.com/repo?Key=a', 20);",
+                    )
+                    .unwrap();
+                if index == 1 {
+                    connection
+                        .execute_batch("UPDATE urls SET last_visit_time = last_visit_time + 100;")
+                        .unwrap();
+                }
+                Profile { browser, path }
+            })
+            .collect();
+        let visits = scan_profiles(profiles);
+        assert_eq!(visits.len(), 2);
+        assert_eq!(visits[0].url, "https://example.com/repo?Key=a");
+        assert_eq!(visits[1].url, "https://example.com/Repo?Key=A");
+        assert!(visits.iter().all(|visit| visit.browser == "Edge"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
