@@ -82,13 +82,19 @@ fn key_kind(action: &Action) -> Option<&'static str> {
 /// Everything の検索結果など出所の違いで異なる大小文字で現れることが
 /// ある (`quick_launch::dedup_by_path` が索引側で行っている正規化と
 /// 同じ理由)。小文字化しないと同一対象の使用回数が分裂し、頻度ランキング
-/// が正しく積算されない
+/// が正しく積算されない。URL のパス・クエリは大小文字を区別するため元の綴りを使う。
 fn key_for(entry: &Entry) -> Option<String> {
     let kind = key_kind(&entry.action)?;
-    Some(format!("{kind}|{}", entry.path.to_lowercase()))
+    let path = if kind == "url" {
+        entry.path.clone()
+    } else {
+        entry.path.to_lowercase()
+    };
+    Some(format!("{kind}|{path}"))
 }
 
-/// JSON 永続化用のキー (`"{kind}|{path_lower}"`) を kind と path_lower に戻す。
+/// JSON 永続化用のキー (`"{kind}|{path}"`) を kind と path に戻す。
+/// パスは小文字化済みだが、URL は元の綴りを保持する。
 /// 保存側は既存フォーマットのまま (旧バージョンとの互換性)、`Ranking` の
 /// 内部表現だけを kind 別の `HashMap` に分けるための変換。
 fn split_key(key: &str) -> Option<(&str, &str)> {
@@ -190,16 +196,17 @@ impl Ranking {
     /// `LowerKeys` で path を事前計算済みのため、ここで
     /// `entry.path.to_lowercase()` を再アロケーションすると事前計算の意味が
     /// 薄れる (候補数百件規模でキー入力のたびに走る経路のため、実測で
-    /// 体感できる差になる)。
+    /// 体感できる差になる)。URL の場合は元の `entry.path` で参照する。
     pub fn rank_lower(&self, entry: &Entry, path_lower: &str) -> (u64, u64) {
         let Some(kind) = key_kind(&entry.action) else {
             return (u64::MAX, u64::MAX);
         };
-        match self
-            .entries
-            .get(kind)
-            .and_then(|by_path| by_path.get(path_lower))
-        {
+        let path = if kind == "url" {
+            &entry.path
+        } else {
+            path_lower
+        };
+        match self.entries.get(kind).and_then(|by_path| by_path.get(path)) {
             Some(record) => (u64::MAX - record.count, u64::MAX - record.last_used),
             None => (u64::MAX, u64::MAX),
         }
@@ -209,10 +216,15 @@ impl Ranking {
     #[cfg(test)]
     pub fn with_selection(mut self, entry: &Entry, count: u64, last_used: u64) -> Self {
         if let Some(kind) = key_kind(&entry.action) {
+            let path = if kind == "url" {
+                entry.path.clone()
+            } else {
+                entry.path.to_lowercase()
+            };
             self.entries
                 .entry(kind)
                 .or_default()
-                .insert(entry.path.to_lowercase(), HistoryEntry { count, last_used });
+                .insert(path, HistoryEntry { count, last_used });
         }
         self
     }
@@ -249,6 +261,47 @@ mod tests {
                 (u64::MAX - 3, u64::MAX - 42)
             );
         }
+    }
+
+    #[test]
+    fn url_history_keeps_distinct_case_sensitive_targets() {
+        let entry = |path: &str| Entry {
+            name: "Page".into(),
+            path: path.into(),
+            breadcrumb: String::new(),
+            action: Action::OpenUrl(path.into()),
+            branch: None,
+            azure: None,
+        };
+        let upper = entry("https://example.com/Repo?Key=A");
+        let lower = entry("https://example.com/repo?Key=a");
+        let history = History {
+            entries: HashMap::from([
+                (
+                    key_for(&upper).unwrap(),
+                    HistoryEntry {
+                        count: 9,
+                        last_used: 42,
+                    },
+                ),
+                (
+                    key_for(&lower).unwrap(),
+                    HistoryEntry {
+                        count: 2,
+                        last_used: 41,
+                    },
+                ),
+            ]),
+        };
+        let ranking = Ranking::from_history(history);
+        assert_eq!(
+            ranking.rank_lower(&upper, &upper.path.to_lowercase()),
+            (u64::MAX - 9, u64::MAX - 42)
+        );
+        assert_eq!(
+            ranking.rank_lower(&lower, &lower.path.to_lowercase()),
+            (u64::MAX - 2, u64::MAX - 41)
+        );
     }
 }
 
