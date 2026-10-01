@@ -32,6 +32,21 @@ fn stale_everything_reply_is_rejected_after_a_new_query() {
 }
 
 #[test]
+fn snapshot_search_rejects_pending_everything_replies() {
+    let state = std::cell::RefCell::new(State::default());
+    state.borrow_mut().everything_active = true;
+    state.borrow_mut().everything_reply_id = 123;
+    super::super::snapshot::show_snapshot_results(&state, &[folder_entry("session")], "", true);
+    let state = state.borrow();
+    assert!(!accepts_everything_reply(
+        state.everything_active,
+        state.everything_reply_id,
+        123
+    ));
+    assert_eq!(state.results[0].name, "session");
+}
+
+#[test]
 fn stale_azure_work_item_request_is_rejected_after_more_typing() {
     assert!(!accepts_azure_work_item_reply(true, 8, 7));
     assert!(!accepts_azure_work_item_reply(false, 8, 8));

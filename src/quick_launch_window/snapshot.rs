@@ -17,6 +17,8 @@ pub(super) fn show_snapshot_results(
 ) {
     let (list, labels, rows) = {
         let mut state = state.borrow_mut();
+        state.everything_active = false;
+        state.empty_message = None;
         state.previous_query = None;
         state.highlight_term = text.to_string();
         state.results =
