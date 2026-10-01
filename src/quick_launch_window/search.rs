@@ -343,14 +343,17 @@ pub(super) fn refinable_search_term<'a>(
 /// 前回の検索結果だけを対象にしても漏れがない場合の、今回の検索語を返す。
 ///
 /// 通常検索と `b ` / `h ` / `w ` / `a ` / `ps ` / `ed ` の同一モードでは、入力末尾への文字追加で
-/// 一致集合が広がらない。Everything と Azure DevOps は別経路なので対象外にする。
+/// ローマ字のかな変換も前方一致を保つ場合だけ再利用できる。
+/// Everything と Azure DevOps は別経路なので対象外にする。
 fn refined_search_term<'a>(previous: &str, current: &'a str) -> Option<&'a str> {
     let (previous_scope, previous_term) = local_search_scope(previous)?;
     let (current_scope, current_term) = local_search_scope(current)?;
     (previous_scope == current_scope
         && !previous_term.is_empty()
         && current_term.len() > previous_term.len()
-        && current_term.starts_with(previous_term))
+        && current_term.starts_with(previous_term)
+        && crate::romaji::to_hiragana(current_term)
+            .starts_with(&crate::romaji::to_hiragana(previous_term)))
     .then_some(current_term)
 }
 

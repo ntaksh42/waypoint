@@ -161,6 +161,18 @@ fn refined_search_is_skipped_when_previous_results_were_truncated() {
     );
 }
 
+#[test]
+fn refining_romaji_rechecks_candidates_when_syllables_change() {
+    let entries = [folder_entry("なまえ")];
+    let ranking = crate::quick_launch_history::Ranking::default();
+    assert!(crate::quick_launch::search_entries(&entries, "n", false, &ranking).is_empty());
+    assert_eq!(
+        crate::quick_launch::search_entries(&entries, "na", false, &ranking).len(),
+        1
+    );
+    assert_eq!(refinable_search_term(Some("n"), "na", 0), None);
+}
+
 /// リストへ流し込む上限は、ウィンドウに実際に映る行数 (`visible_results`
 /// の上限 24) 以上あれば足り、それを超えて作った行は画面に出ないまま
 /// 1 打鍵ごとの `LB_ADDSTRING` と `WM_MEASUREITEM` を増やすだけになる
