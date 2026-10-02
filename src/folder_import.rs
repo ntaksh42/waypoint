@@ -26,7 +26,7 @@ impl FolderNode {
         }
 
         let mut items = Vec::with_capacity(children.len() + 1);
-        items.push(folder_item("Open this folder".to_string(), &self.path));
+        items.push(folder_item(self.name.clone(), &self.path));
         items.extend(children);
         Some(Item::Submenu {
             name: self.name.clone(),
