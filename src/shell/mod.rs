@@ -6,19 +6,19 @@ use windows::Win32::Foundation::{ERROR_CANCELLED, HWND};
 use windows::Win32::System::Com::{
     CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
 };
-use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Shell::{IShellWindows, IWebBrowser2, ShellExecuteW, ShellWindows};
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 use windows::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic, IsWindow,
-    SW_RESTORE, SetForegroundWindow, ShowWindow,
+    IsIconic, SW_RESTORE, SetForegroundWindow, ShowWindowAsync,
 };
 use windows::core::{BSTR, HSTRING, Interface, w};
 
 use crate::config::OpenMode;
 
 mod launch;
+#[cfg(test)]
+mod tests;
 pub use launch::{open_claude_code, open_codex, open_editor, open_terminal, resume_agent_session};
 
 /// COM を STA で初期化する。プロセスで一度だけ呼ぶ。
@@ -73,51 +73,17 @@ pub fn open(path: &str, mode: OpenMode, origin: Option<HWND>) -> std::io::Result
 
 /// Current Windows で選んだウィンドウを復元して前面へ移す。
 ///
-/// `SetForegroundWindow` は、呼び出し元スレッドが対象ウィンドウと異なる
-/// フォアグラウンド系列に属する場合、Windows のフォーカス窃取防止規則に
-/// より無視されタスクバーが点滅するだけになる (Quick Launch / トレイ
-/// メニューいずれも waypoint 自身のスレッドから呼ぶため、対象が別スレッド
-/// なら毎回この状況になる)。現在のフォアグラウンドスレッドへ
-/// `AttachThreadInput` で一時的に入力を結合すると回避できる。
+/// 復元は相手の応答を待たず、前面化も入力キューを結合せずに依頼する。
+/// `AttachThreadInput` で対象と結合すると、相手が応答しないときに
+/// `SetForegroundWindow` まで同期的に待たされ、常駐部全体が固まる。
+/// Quick Launch / トレイメニューの選択はユーザー入力に由来するため、
+/// 通常の `SetForegroundWindow` の前面化条件を満たす。
 pub fn activate_window(hwnd: HWND) {
     unsafe {
         if IsIconic(hwnd).as_bool() {
-            let _ = ShowWindow(hwnd, SW_RESTORE);
+            let _ = ShowWindowAsync(hwnd, SW_RESTORE);
         }
-
-        let foreground = GetForegroundWindow();
-        if !IsWindow(Some(foreground)).as_bool() {
-            let _ = SetForegroundWindow(hwnd);
-            let _ = BringWindowToTop(hwnd);
-            return;
-        }
-
-        let mut fg_pid = 0u32;
-        let foreground_thread = GetWindowThreadProcessId(foreground, Some(&mut fg_pid));
-        let mut target_pid = 0u32;
-        let target_thread = GetWindowThreadProcessId(hwnd, Some(&mut target_pid));
-        let current_thread = GetCurrentThreadId();
-
-        if foreground_thread == 0 || target_thread == 0 || foreground_thread == target_thread {
-            let _ = SetForegroundWindow(hwnd);
-            let _ = BringWindowToTop(hwnd);
-            return;
-        }
-
-        let mut attached = Vec::new();
-        for thread in [foreground_thread, target_thread] {
-            if thread != current_thread && AttachThreadInput(current_thread, thread, true).as_bool()
-            {
-                attached.push(thread);
-            }
-        }
-
         let _ = SetForegroundWindow(hwnd);
-        let _ = BringWindowToTop(hwnd);
-
-        for thread in attached.into_iter().rev() {
-            let _ = AttachThreadInput(current_thread, thread, false);
-        }
     }
 }
 

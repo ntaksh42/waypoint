@@ -161,17 +161,6 @@ pub fn refresh() -> Menus {
     }
 }
 
-/// 開いているウィンドウの一覧だけを取り直す。
-///
-/// `refresh` の結果は「前回メニューを閉じた時点」のスナップショットなので、
-/// その後に開いたウィンドウやタイトルが変わったウィンドウは `w ` で
-/// 拾えなかった (実際に報告された不具合)。列挙は実測 0.15ms と軽く、
-/// Recent の COM 解決と違って表示経路で同期実行してよい。
-pub fn refresh_windows(menus: &mut Menus) {
-    menus.all_windows = enumerate_windows();
-    menus.current_windows = menus.all_windows.iter().take(ITEM_LIMIT).cloned().collect();
-}
-
 fn recent_entries(items: &[RecentItem], is_dir: bool) -> Vec<PathEntry> {
     items
         .iter()

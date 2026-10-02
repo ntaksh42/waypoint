@@ -19,15 +19,10 @@ use super::{
 
 pub(crate) fn show_quick_launch(hwnd: HWND) {
     let origin = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
-    with_state(|state| {
-        let mut state = state.borrow_mut();
-        if let Some(state) = state.as_mut() {
-            // 閉じた後の非同期列挙だけでは、その後に開いたウィンドウが漏れる
-            crate::dynamic::refresh_windows(&mut state.dynamic);
-            quick_launch_window::configure_config_items(&state.config, &state.dynamic);
-        }
-    });
     let _ = quick_launch_window::show(hwnd, Some(origin));
+    // 表示はキャッシュで済ませ、列挙中も入力と描画を止めない。
+    // 完了通知で現在の検索語を再評価し、新しいウィンドウも拾う。
+    refresh_dynamic(hwnd);
 }
 
 /// Quick Launch の `Ctrl+Shift+Enter` で選択した候補を config の
