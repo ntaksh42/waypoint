@@ -177,7 +177,7 @@ public partial class MainWindow
         row.Item.Remove("open");
         row.Item.Remove("icon");
         row.Item["type"] = "submenu";
-        var items = new JsonArray { new JsonObject { ["type"] = "folder", ["name"] = "Open this folder", ["path"] = path } };
+        var items = new JsonArray { new JsonObject { ["type"] = "folder", ["name"] = row.Item["name"]?.GetValue<string>() ?? "", ["path"] = path } };
         foreach (var child in children) items.Add(child);
         row.Item["items"] = items;
         Changed();

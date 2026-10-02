@@ -53,4 +53,5 @@ fn excluded_nodes_are_not_converted() {
         panic!("children should create a submenu");
     };
     assert_eq!(items.len(), 2);
+    assert!(matches!(&items[0], Item::Folder { name, .. } if name == "Root"));
 }

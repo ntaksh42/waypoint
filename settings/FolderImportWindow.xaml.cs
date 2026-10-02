@@ -81,7 +81,7 @@ public sealed class FolderImportNode(string name, string path) : INotifyProperty
         if (!Included) return null;
         var children = Children.Select(child => child.ToItem()).Where(child => child is not null).Cast<JsonObject>().ToList();
         if (children.Count == 0) return new JsonObject { ["type"] = "folder", ["name"] = Name, ["path"] = Path };
-        var items = new JsonArray { new JsonObject { ["type"] = "folder", ["name"] = "Open this folder", ["path"] = Path } };
+        var items = new JsonArray { new JsonObject { ["type"] = "folder", ["name"] = Name, ["path"] = Path } };
         foreach (var child in children) items.Add(child);
         return new JsonObject { ["type"] = "submenu", ["name"] = Name, ["items"] = items };
     }
