@@ -127,6 +127,28 @@ const WORK_ITEM_URL: &str = "https://dev.azure.com/org/project/_workitems/edit/1
 const PR_URL: &str = "https://dev.azure.com/org/project/_git/repo/pullrequest/1";
 
 #[test]
+fn azure_completions_and_review_shortcuts_have_icons_without_urls() {
+    for (query, glyph) in [
+        ("az pr ", "⇄"),
+        ("az pr active needs-review ", "⇄"),
+        ("az wit ", "◆"),
+        ("az pipeline ", "▶"),
+        ("az project ", "▦"),
+    ] {
+        let mut entry = azure_entry(meta(crate::azure_devops::Kind::PullRequest, None, ""), "");
+        entry.azure = None;
+        entry.action = Action::ReplaceQuery(query.into());
+        assert_eq!(
+            azure_tile(Some("AZURE DEVOPS"), &entry).unwrap().glyph,
+            glyph
+        );
+        assert!(azure_tile(Some("BOOKMARKS"), &entry).is_none());
+        entry.action = Action::AzureOptimize;
+        assert_eq!(azure_tile(Some("AZURE DEVOPS"), &entry).unwrap().glyph, "★");
+    }
+}
+
+#[test]
 fn work_item_types_get_their_own_colors() {
     use crate::azure_devops::Kind;
     let tile = |work_item_type| {

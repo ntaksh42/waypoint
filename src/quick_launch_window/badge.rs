@@ -207,7 +207,32 @@ fn owned_style((color, glyph): (COLORREF, &'static str)) -> (COLORREF, Cow<'stat
 /// `az ` モードの行頭アイコン。候補が種別・状態 (`Entry::azure`) を持てば
 /// それを使い、持たなければ従来どおり URL から種別だけを推定する。
 pub(super) fn azure_tile(badge: Option<&str>, entry: &Entry) -> Option<AzureTile> {
-    let url_kind = azure_icon_kind(badge, &entry.path)?;
+    if badge != Some("AZURE DEVOPS") {
+        return None;
+    }
+    let command_kind = match &entry.action {
+        Action::ReplaceQuery(query) if entry.path.is_empty() => {
+            crate::quick_launch::azure_command(query).map(|(command, _)| match command {
+                crate::quick_launch::AzureCommand::PullRequests(_) => AzureIconKind::PullRequest,
+                crate::quick_launch::AzureCommand::WorkItems { .. } => AzureIconKind::WorkItem,
+                crate::quick_launch::AzureCommand::Pipelines(_) => AzureIconKind::Pipeline,
+                _ => AzureIconKind::Project,
+            })
+        }
+        Action::AzureLiveWorkItemSearch(_) => Some(AzureIconKind::WorkItem),
+        Action::AzureLivePullRequestSearch { .. } => Some(AzureIconKind::PullRequest),
+        Action::AzureLivePipelineSearch { .. } => Some(AzureIconKind::Pipeline),
+        _ => None,
+    };
+    if entry.action == Action::AzureOptimize {
+        return Some(AzureTile {
+            color: ACCENT,
+            glyph: Cow::Borrowed("★"),
+            marker: None,
+            closed: false,
+        });
+    }
+    let url_kind = command_kind.or_else(|| azure_icon_kind(badge, &entry.path))?;
     let Some(meta) = &entry.azure else {
         let (color, glyph) = kind_style(url_kind);
         return Some(AzureTile {

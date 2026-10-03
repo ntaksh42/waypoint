@@ -48,9 +48,24 @@ pub(super) fn azure_detail(entry: &Entry) -> Option<AzureDetail> {
         },
         _ => scope.to_string(),
     };
+    let mut fields: Vec<String> = parts
+        .map(|part| match part {
+            "active" => "Active".into(),
+            "completed" => "Completed".into(),
+            "abandoned" => "Abandoned".into(),
+            "succeeded" => "Succeeded".into(),
+            "failed" => "Failed".into(),
+            "canceled" => "Canceled".into(),
+            "inProgress" => "Running".into(),
+            "notStarted" => "Queued".into(),
+            other => other.to_string(),
+        })
+        .collect();
+    // ブランチは長くなりやすいので、人物や状態を先に読める順にする。
+    fields.sort_by_key(|field| field.contains('→'));
     Some(AzureDetail {
         location,
-        rest: parts.collect::<Vec<_>>().join(DOT),
+        rest: fields.join(DOT),
     })
 }
 
@@ -120,7 +135,7 @@ mod tests {
         assert_eq!(detail.location, "TestProject/TestRepos");
         assert_eq!(
             detail.rest,
-            "active  \u{00B7}  fix/a → main  \u{00B7}  by naoto"
+            "Active  \u{00B7}  by naoto  \u{00B7}  fix/a → main"
         );
     }
 
@@ -132,7 +147,7 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(detail.location, "Project Name/My Repo");
-        assert_eq!(detail.rest, "completed  \u{00B7}  by Bob");
+        assert_eq!(detail.rest, "Completed  \u{00B7}  by Bob");
     }
 
     #[test]

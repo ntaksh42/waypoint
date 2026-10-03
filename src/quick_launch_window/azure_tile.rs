@@ -3,7 +3,7 @@
 //! GDI の `RoundRect` / `Ellipse` はアンチエイリアスが効かず、22px 程度の
 //! タイルでは縁がギザギザになる。GDI+ も持ち込んでいないため、形状は
 //! 4x4 のスーパーサンプリングで乗算済み BGRA のピクセル列を作り、
-//! `AlphaBlend` で重ねる。記号は従来どおり `DrawText` で描く。
+//! `AlphaBlend` で重ねる。主要な種別は文字フォントに依存しない図形で描く。
 
 use windows::Win32::Foundation::{COLORREF, RECT};
 use windows::Win32::Graphics::Gdi::{
@@ -74,6 +74,51 @@ pub(super) fn tile_pixels(size: usize, color: COLORREF) -> Vec<u32> {
     render(size, |x, y| {
         in_rounded_rect(x, y, side, radius).then_some(color)
     })
+}
+
+/// 小さい表示でも識別できるよう、タイル内の座標を 0..1 に揃えて描く。
+fn glyph_contains(glyph: &str, x: f32, y: f32) -> bool {
+    let line = |ax: f32, ay: f32, bx: f32, by: f32| {
+        let dx = bx - ax;
+        let dy = by - ay;
+        let t = ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy);
+        let t = t.clamp(0.0, 1.0);
+        (x - ax - t * dx).powi(2) + (y - ay - t * dy).powi(2) < 0.0016
+    };
+    let circle = |cx: f32, cy: f32| {
+        let distance = (x - cx).powi(2) + (y - cy).powi(2);
+        (0.0012..0.0100).contains(&distance)
+    };
+    match glyph {
+        "⇄" => {
+            circle(0.32, 0.27)
+                || circle(0.32, 0.73)
+                || circle(0.70, 0.27)
+                || line(0.32, 0.36, 0.32, 0.64)
+                || line(0.70, 0.36, 0.70, 0.50)
+                || line(0.70, 0.50, 0.32, 0.60)
+        }
+        "▶" => (0.30..0.72).contains(&x) && (y - 0.5).abs() < (0.72 - x) * 0.72,
+        "✓" => line(0.27, 0.51, 0.43, 0.68) || line(0.43, 0.68, 0.73, 0.31),
+        "✱" => {
+            let body = ((x - 0.5) / 0.15).powi(2) + ((y - 0.53) / 0.22).powi(2) < 1.0;
+            body || circle(0.5, 0.28)
+                || [0.40, 0.53, 0.66]
+                    .into_iter()
+                    .any(|cy| line(0.26, cy - 0.05, 0.39, cy) || line(0.61, cy, 0.74, cy - 0.05))
+        }
+        "▦" => [0.27, 0.55].into_iter().any(|left| {
+            [0.27, 0.55]
+                .into_iter()
+                .any(|top| (left..left + 0.19).contains(&x) && (top..top + 0.19).contains(&y))
+        }),
+        "◆" => (x - 0.5).abs() + (y - 0.5).abs() < 0.28,
+        _ => false,
+    }
+}
+
+fn has_drawn_glyph(glyph: &str) -> bool {
+    matches!(glyph, "⇄" | "▶" | "✓" | "✱" | "▦" | "◆")
 }
 
 /// 右下の状態の点。行の地の色 `ring` で縁取り、タイルとの境目を作る。
@@ -174,7 +219,13 @@ pub(super) unsafe fn draw_azure_tile(
             top,
             alpha,
         );
-        if let Some(font) = font {
+        if has_drawn_glyph(&tile.glyph) {
+            let pixels = render(size as usize, |x, y| {
+                glyph_contains(&tile.glyph, x / size as f32, y / size as f32)
+                    .then_some(rgb(255, 255, 255))
+            });
+            blend_pixels(hdc, &pixels, size, left, top, alpha);
+        } else if let Some(font) = font {
             let old_font = SelectObject(hdc, font.into());
             SetBkMode(hdc, TRANSPARENT);
             SetTextColor(
@@ -238,6 +289,26 @@ mod tests {
         let pixels = tile_pixels(size, rgb(255, 255, 255));
         // 角丸の弧にかかるピクセルは半透明になる (ギザギザにならない)
         assert!(pixels.iter().any(|pixel| (1..255).contains(&alpha(*pixel))));
+    }
+
+    #[test]
+    fn drawn_symbols_fit_inside_tiles_at_multiple_dpis() {
+        for size in [22, 33, 44] {
+            for glyph in ["⇄", "▶", "✓", "✱", "▦", "◆"] {
+                let pixels = render(size, |x, y| {
+                    glyph_contains(glyph, x / size as f32, y / size as f32)
+                        .then_some(rgb(255, 255, 255))
+                });
+                assert!(pixels.iter().any(|pixel| alpha(*pixel) == 255));
+                assert!(pixels.iter().any(|pixel| (1..255).contains(&alpha(*pixel))));
+                assert!(pixels[..size].iter().all(|pixel| *pixel == 0));
+                assert!(
+                    pixels[pixels.len() - size..]
+                        .iter()
+                        .all(|pixel| *pixel == 0)
+                );
+            }
+        }
     }
 
     #[test]
