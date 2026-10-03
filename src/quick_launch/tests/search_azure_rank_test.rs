@@ -149,3 +149,57 @@ fn title_match_quality_still_beats_state() {
         ]
     );
 }
+
+/// `az ` 直後の Recent 区分 (FR-9.18.7)。
+fn select(index: &mut Index, number: usize, count: u64) {
+    let entry = index.azure[number].entry.clone();
+    index.ranking = std::mem::take(&mut index.ranking).with_selection(&entry, count, count);
+}
+
+#[test]
+fn azure_sections_are_absent_without_history() {
+    let index = index_with(&[pr(1, "Fix login"), pr(2, "Fix logout")]);
+
+    assert!(index.azure_sections().is_none());
+}
+
+#[test]
+fn azure_sections_put_opened_pull_requests_first_by_usage() {
+    let mut index = index_with(&[pr(1, "Fix login"), pr(2, "Fix logout"), pr(3, "Fix signup")]);
+    select(&mut index, 1, 1);
+    select(&mut index, 2, 5);
+
+    let sections = index.azure_sections().unwrap();
+
+    assert_eq!(sections[0].0, "Recent");
+    assert_eq!(
+        names(sections[0].1.clone()),
+        ["PR 3: Fix signup", "PR 2: Fix logout"]
+    );
+    assert_eq!(sections[1].0, "Commands");
+    assert_eq!(sections[1].1.len(), index.azure_shortcuts.len() + 5);
+}
+
+#[test]
+fn azure_sections_keep_only_the_top_three_pull_requests() {
+    let mut index = index_with(&[pr(1, "a"), pr(2, "b"), pr(3, "c"), pr(4, "d")]);
+    for number in 0..4 {
+        select(&mut index, number, number as u64 + 1);
+    }
+
+    let sections = index.azure_sections().unwrap();
+
+    assert_eq!(
+        names(sections[0].1.clone()),
+        ["PR 4: d", "PR 3: c", "PR 2: b"]
+    );
+}
+
+#[test]
+fn azure_sections_can_be_disabled() {
+    let mut index = index_with(&[pr(1, "Fix login")]);
+    select(&mut index, 0, 1);
+    index.azure_recent = false;
+
+    assert!(index.azure_sections().is_none());
+}

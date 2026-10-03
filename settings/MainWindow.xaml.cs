@@ -67,6 +67,7 @@ public partial class MainWindow : Window
         Everything.IsChecked = Bool(quick, "includeEverything", true);
         SearchPaths.IsChecked = Bool(quick, "searchPaths");
         WebSearch.IsChecked = Bool(quick, "includeWebSearch", true);
+        AzureRecent.IsChecked = Bool(quick, "includeAzureRecent", true);
         SelectByTag(WebSearchEngine, Text(quick, "webSearchEngine", "google"));
         EditorCommand.Text = Text(quick, "editorCommand", "code");
         VisibleResults.Text = (quick["visibleResults"]?.GetValue<int?>() ?? 12).ToString();
@@ -84,7 +85,7 @@ public partial class MainWindow : Window
             box.TextChanged += (_, _) => Changed();
         WebSearchEngine.SelectionChanged += (_, _) => Changed();
         MonitorChoice.SelectionChanged += (_, _) => Changed();
-        foreach (var box in new[] { RecentFolders, FrequentFolders, OpenWindows, Bookmarks, BrowserHistory, Apps, Everything, SearchPaths, WebSearch, AzureEnabled, AzurePullRequests, AzurePipelines, AzureWorkItems })
+        foreach (var box in new[] { RecentFolders, FrequentFolders, OpenWindows, Bookmarks, BrowserHistory, Apps, Everything, SearchPaths, WebSearch, AzureRecent, AzureEnabled, AzurePullRequests, AzurePipelines, AzureWorkItems })
         {
             box.Checked += (_, _) => Changed();
             box.Unchecked += (_, _) => Changed();
@@ -330,6 +331,7 @@ public partial class MainWindow : Window
         quick["includeEverything"] = Everything.IsChecked == true;
         quick["searchPaths"] = SearchPaths.IsChecked == true;
         quick["includeWebSearch"] = WebSearch.IsChecked == true;
+        quick["includeAzureRecent"] = AzureRecent.IsChecked == true;
         quick["webSearchEngine"] = TagOf(WebSearchEngine, "google");
         quick["editorCommand"] = EditorCommand.Text.Trim();
         quick["visibleResults"] = visible;

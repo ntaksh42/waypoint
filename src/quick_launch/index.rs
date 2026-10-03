@@ -111,6 +111,7 @@ impl Index {
             codex_folders,
             codex_folders_lower,
             search_paths: settings.search_paths,
+            azure_recent: settings.include_azure_recent,
             web_search: settings
                 .include_web_search
                 .then_some(settings.web_search_engine),
@@ -168,6 +169,7 @@ impl Index {
         self.config_entries = config_entries;
         let settings = &config.settings.quick_launch;
         self.search_paths = settings.search_paths;
+        self.azure_recent = settings.include_azure_recent;
         self.web_search = settings
             .include_web_search
             .then_some(settings.web_search_engine);

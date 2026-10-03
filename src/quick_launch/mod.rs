@@ -369,6 +369,8 @@ pub struct Index {
     pub(crate) codex_folders: Vec<Entry>,
     pub(crate) codex_folders_lower: Vec<search::LowerKeys>,
     pub(crate) search_paths: bool,
+    /// `az ` 直後に Recent 区分を出すか (FR-9.18.7)。
+    pub(crate) azure_recent: bool,
     /// Web 検索 (`??`、FR-9.21) で使うエンジン。無効化時は `None`。
     /// 候補は入力から組み立てる 1 件だけなので、索引は持たない
     /// (生成は `quick_launch_window::search`)。

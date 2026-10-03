@@ -59,3 +59,59 @@ pub(super) fn search<'a>(
     matches.sort_by_key(|(key, _)| *key);
     matches.into_iter().map(|(_, entry)| entry).collect()
 }
+
+/// `az ` 直後の Recent 区分に出す、種別ごとの上限件数 (FR-9.18.7)。
+const RECENT_PER_KIND: usize = 3;
+
+impl super::Index {
+    /// `az ` 直後 (検索語なし) の区分見出し付き一覧 (FR-9.18.7)。
+    ///
+    /// 使用履歴のある PR / Work Item を種別ごとに上位 `RECENT_PER_KIND` 件
+    /// 「Recent」へ、続けて固定のショートカット・コマンド候補を「Commands」へ
+    /// 並べる。出す Recent が無い (設定オフ・初回) ときは `None` を返し、
+    /// 呼び出し側は従来の見出しなし一覧へ落とす。履歴は索引構築時に読み込み済みの
+    /// `Ranking` を引くだけなので、ここで I/O はしない。
+    pub fn azure_sections(&self) -> Option<Vec<(&'static str, Vec<&Entry>)>> {
+        if !self.azure_recent {
+            return None;
+        }
+        let pull_requests = self
+            .azure
+            .iter()
+            .filter(|item| item.kind == crate::azure_devops::Kind::PullRequest)
+            .map(|item| (&item.entry, &item.lower));
+        let work_items = self
+            .azure_work_items
+            .iter()
+            .zip(&self.azure_work_items_lower);
+        let mut recent = self.recent_top(pull_requests);
+        recent.extend(self.recent_top(work_items));
+        if recent.is_empty() {
+            return None;
+        }
+        let commands = self
+            .azure_shortcuts
+            .iter()
+            .chain(super::azure_entries::azure_command_entries())
+            .collect();
+        Some(vec![("Recent", recent), ("Commands", commands)])
+    }
+
+    /// 履歴のある候補だけを (使用回数, 最終選択) の順位で並べ、上位を返す。
+    fn recent_top<'a>(
+        &self,
+        items: impl Iterator<Item = (&'a Entry, &'a LowerKeys)>,
+    ) -> Vec<&'a Entry> {
+        let mut used = items
+            .filter_map(|(entry, keys)| {
+                let rank = self.ranking.rank_lower(entry, &keys.path);
+                (rank != (u64::MAX, u64::MAX)).then_some((rank, entry))
+            })
+            .collect::<Vec<_>>();
+        used.sort_by_key(|(rank, _)| *rank);
+        used.into_iter()
+            .take(RECENT_PER_KIND)
+            .map(|(_, entry)| entry)
+            .collect()
+    }
+}

@@ -116,6 +116,7 @@ pub(super) fn index() -> Index {
             branch: None,
         }],
         search_paths: false,
+        azure_recent: true,
         ranking: Ranking::default(),
         ..Default::default()
     };

@@ -118,11 +118,19 @@ pub(super) fn update_results(state: &RefCell<State>) {
         } else {
             crate::quick_launch::effective_search_term(&query).to_string()
         };
-        let section_headers = if query.is_empty() {
+        let sections = if query.is_empty() {
+            Some(state.index.sections())
+        } else if query == crate::quick_launch::AZURE_DEVOPS_PREFIX {
+            // `az ` 直後: 最近開いた Azure 項目があれば Recent 区分を先頭に出す (FR-9.18.7)
+            state.index.azure_sections()
+        } else {
+            None
+        };
+        let section_headers = if let Some(sections) = sections {
             // 絞り込みなし: Spotlight 風に区分見出し付きで一覧を組み立てる
             let mut results = Vec::new();
             let mut section_headers = Vec::new();
-            for (label, entries) in state.index.sections() {
+            for (label, entries) in sections {
                 section_headers.push((results.len(), label));
                 results.extend(entries.into_iter().cloned());
             }

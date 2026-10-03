@@ -47,6 +47,9 @@ pub struct QuickLaunchSettings {
     pub include_apps: bool,
     #[serde(default)]
     pub azure_devops: AzureDevOpsSettings,
+    /// `az ` 直後に「最近開いた Azure 項目」を出す (FR-9.18.7)
+    #[serde(default = "default_true")]
+    pub include_azure_recent: bool,
     /// Everything 連携 (FR-9.16)。Everything 未起動時は 0 件扱いで
     /// エラーにならないため、他のプレフィックス機能と同様に既定はオン
     #[serde(default = "default_true")]
@@ -80,6 +83,7 @@ impl Default for QuickLaunchSettings {
             include_browser_history: true,
             include_apps: true,
             azure_devops: AzureDevOpsSettings::default(),
+            include_azure_recent: true,
             include_everything: true,
             search_paths: false,
             include_web_search: true,
