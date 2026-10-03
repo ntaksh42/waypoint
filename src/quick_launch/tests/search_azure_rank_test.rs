@@ -41,6 +41,7 @@ fn index_with(prs: &[Pr]) -> Index {
             azure: Some(AzureMeta {
                 kind: Kind::PullRequest,
                 work_item_type: None,
+                work_item_style: None,
                 status: pr.status.into(),
                 is_mine: pr.is_mine,
                 needs_my_review: false,

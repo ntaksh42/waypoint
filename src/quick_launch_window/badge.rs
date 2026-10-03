@@ -4,7 +4,9 @@ use windows::Win32::Foundation::COLORREF;
 
 use super::azure_tile::AzureTile;
 use super::{ACCENT, TAG_TEXT, rgb};
-use crate::azure_devops::Kind;
+use std::borrow::Cow;
+
+use crate::azure_devops::{Kind, WorkItemTypeStyle};
 use crate::quick_launch::{Action, AzureMeta, Entry};
 
 /// モードバッジの背景色。プレフィックスごとに見分けは付けるが、
@@ -130,16 +132,59 @@ fn kind_style(kind: AzureIconKind) -> (COLORREF, &'static str) {
     }
 }
 
-/// Work Item Type ごとの色 (Azure DevOps 本家の配色に合わせる) と記号。
-/// 未知の Type (プロセステンプレート独自の型など) は従来の Work Item の青。
-pub(super) fn work_item_style(work_item_type: &str) -> (COLORREF, &'static str) {
-    match work_item_type.to_ascii_lowercase().as_str() {
-        "bug" => (rgb(204, 41, 61), "✱"),      // 赤
-        "task" => (rgb(216, 169, 0), "✓"),     // 黄
-        "feature" => (rgb(119, 59, 147), "★"), // 紫
-        "epic" => (rgb(255, 123, 0), "♛"),     // 橙
-        _ => kind_style(AzureIconKind::WorkItem),
-    }
+/// Work Item Type の色と記号。API から取得した色 (`api`) があればそれを使い、
+/// 無ければ Azure DevOps 本家の配色に合わせた既定値、それも無ければ
+/// Work Item の青にする。記号は API のアイコン ID → Type 名 → 頭文字の順。
+pub(super) fn work_item_style(
+    work_item_type: &str,
+    api: Option<&WorkItemTypeStyle>,
+) -> (COLORREF, Cow<'static, str>) {
+    let by_name: Option<(COLORREF, &'static str)> =
+        match work_item_type.to_ascii_lowercase().as_str() {
+            "bug" => Some((rgb(204, 41, 61), "✱")),      // 赤
+            "task" => Some((rgb(216, 169, 0), "✓")),     // 黄
+            "feature" => Some((rgb(119, 59, 147), "★")), // 紫
+            "epic" => Some((rgb(255, 123, 0), "♛")),     // 橙
+            _ => None,
+        };
+    let Some(api) = api else {
+        let (color, glyph) = by_name.unwrap_or_else(|| kind_style(AzureIconKind::WorkItem));
+        return (color, Cow::Borrowed(glyph));
+    };
+    let (red, green, blue) = api.color;
+    let glyph = api
+        .icon
+        .as_deref()
+        .and_then(icon_glyph)
+        .or(by_name.map(|(_, glyph)| glyph))
+        .map(Cow::Borrowed)
+        .unwrap_or_else(|| Cow::Owned(initial(work_item_type)));
+    (rgb(red, green, blue), glyph)
+}
+
+/// Azure DevOps のアイコン ID に対応する組込みの記号。
+fn icon_glyph(icon_id: &str) -> Option<&'static str> {
+    Some(match icon_id {
+        "icon_insect" => "✱",
+        "icon_clipboard" => "✓",
+        "icon_trophy" => "★",
+        "icon_crown" => "♛",
+        "icon_book" => "▤",
+        "icon_list" | "icon_gift" => "☰",
+        "icon_flame" | "icon_traffic_cone" => "⚠",
+        "icon_flag" | "icon_ribbon" => "⚑",
+        "icon_test_beaker" | "icon_test_case" | "icon_test_plan" | "icon_test_suite" => "⚗",
+        _ => return None,
+    })
+}
+
+fn initial(work_item_type: &str) -> String {
+    work_item_type
+        .trim()
+        .chars()
+        .next()
+        .map(|c| c.to_uppercase().collect())
+        .unwrap_or_else(|| "◆".to_string())
 }
 
 /// 自分のレビュー待ち (橙) > Pipeline の失敗 (赤) > Draft (灰) の順に 1 つだけ。
@@ -155,6 +200,10 @@ pub(super) fn marker_color(meta: &AzureMeta) -> Option<COLORREF> {
     }
 }
 
+fn owned_style((color, glyph): (COLORREF, &'static str)) -> (COLORREF, Cow<'static, str>) {
+    (color, Cow::Borrowed(glyph))
+}
+
 /// `az ` モードの行頭アイコン。候補が種別・状態 (`Entry::azure`) を持てば
 /// それを使い、持たなければ従来どおり URL から種別だけを推定する。
 pub(super) fn azure_tile(badge: Option<&str>, entry: &Entry) -> Option<AzureTile> {
@@ -163,17 +212,19 @@ pub(super) fn azure_tile(badge: Option<&str>, entry: &Entry) -> Option<AzureTile
         let (color, glyph) = kind_style(url_kind);
         return Some(AzureTile {
             color,
-            glyph,
+            glyph: Cow::Borrowed(glyph),
             marker: None,
             closed: false,
         });
     };
     let (color, glyph) = match (meta.kind, meta.work_item_type.as_deref()) {
-        (Kind::WorkItem, Some(work_item_type)) => work_item_style(work_item_type),
-        (Kind::WorkItem, None) => kind_style(AzureIconKind::WorkItem),
-        (Kind::PullRequest, _) => kind_style(AzureIconKind::PullRequest),
-        (Kind::Pipeline, _) => kind_style(AzureIconKind::Pipeline),
-        (Kind::Project, _) => kind_style(AzureIconKind::Project),
+        (Kind::WorkItem, Some(work_item_type)) => {
+            work_item_style(work_item_type, meta.work_item_style.as_ref())
+        }
+        (Kind::WorkItem, None) => owned_style(kind_style(AzureIconKind::WorkItem)),
+        (Kind::PullRequest, _) => owned_style(kind_style(AzureIconKind::PullRequest)),
+        (Kind::Pipeline, _) => owned_style(kind_style(AzureIconKind::Pipeline)),
+        (Kind::Project, _) => owned_style(kind_style(AzureIconKind::Project)),
     };
     Some(AzureTile {
         color,

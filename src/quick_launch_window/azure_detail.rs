@@ -96,6 +96,7 @@ mod tests {
             azure: Some(AzureMeta {
                 kind: Kind::PullRequest,
                 work_item_type: None,
+                work_item_style: None,
                 status: "active".into(),
                 is_mine: false,
                 needs_my_review: false,

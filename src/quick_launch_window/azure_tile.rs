@@ -146,7 +146,7 @@ unsafe fn blend_pixels(hdc: HDC, pixels: &[u32], size: i32, left: i32, top: i32,
 /// 描くアイコンの中身。色と記号は `badge.rs` が種別・状態から決める。
 pub(super) struct AzureTile {
     pub(super) color: COLORREF,
-    pub(super) glyph: &'static str,
+    pub(super) glyph: std::borrow::Cow<'static, str>,
     pub(super) marker: Option<COLORREF>,
     pub(super) closed: bool,
 }
@@ -191,7 +191,7 @@ pub(super) unsafe fn draw_azure_tile(
                 right: left + size,
                 bottom: top + size,
             };
-            draw_text_centered(hdc, tile.glyph, &mut glyph_rect);
+            draw_text_centered(hdc, &tile.glyph, &mut glyph_rect);
             SelectObject(hdc, old_font);
         }
         if let Some(marker) = tile.marker {

@@ -5,13 +5,15 @@
 //! 推定していたが、Work Item Type や PR の状態は URL に現れないため、
 //! 候補を作る時点の情報をそのまま持たせる。
 
-use crate::azure_devops::{Candidate, Kind};
+use crate::azure_devops::{Candidate, Kind, WorkItemTypeStyle, work_item_type_style};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AzureMeta {
     pub kind: Kind,
     /// Work Item の `System.WorkItemType` (Bug / Task / User Story 等)。
     pub work_item_type: Option<String>,
+    /// 同期時に API から取得した Type の色・アイコン。未取得なら `None`。
+    pub work_item_style: Option<WorkItemTypeStyle>,
     /// PR の状態 (active / completed / abandoned)、Work Item の State、
     /// Pipeline の結果 (failed 等)。
     pub status: String,
@@ -25,6 +27,9 @@ impl AzureMeta {
         Self {
             kind: candidate.kind,
             work_item_type: candidate.work_item_type.clone(),
+            work_item_style: candidate.work_item_type.as_deref().and_then(|name| {
+                work_item_type_style(&candidate.organization, &candidate.project, name)
+            }),
             status: candidate.status.clone(),
             is_mine: candidate.is_mine,
             needs_my_review: candidate.needs_my_review,
@@ -71,6 +76,7 @@ mod tests {
         AzureMeta {
             kind,
             work_item_type: None,
+            work_item_style: None,
             status: status.to_string(),
             is_mine,
             needs_my_review: false,

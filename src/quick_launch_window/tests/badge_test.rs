@@ -1,9 +1,10 @@
 use super::super::RowKind;
 use super::super::badge::{
     AzureIconKind, action_tag, action_verb, azure_icon_kind, azure_tile, marker_color,
-    shows_live_search_hint,
+    shows_live_search_hint, work_item_style,
 };
 use super::super::draw_row::section_count;
+use crate::azure_devops::WorkItemTypeStyle;
 use crate::quick_launch::Action;
 
 #[test]
@@ -114,6 +115,7 @@ fn meta(
     crate::quick_launch::AzureMeta {
         kind,
         work_item_type: work_item_type.map(str::to_string),
+        work_item_style: None,
         status: status.into(),
         is_mine: false,
         needs_my_review: false,
@@ -186,4 +188,57 @@ fn azure_tiles_only_appear_in_azure_mode_and_fall_back_to_the_url() {
     let tile = azure_tile(Some("AZURE DEVOPS"), &without_meta).unwrap();
     assert_eq!(tile.glyph, "⇄");
     assert!(tile.marker.is_none() && !tile.closed);
+}
+
+fn api_style(color: (u8, u8, u8), icon: Option<&str>) -> WorkItemTypeStyle {
+    WorkItemTypeStyle {
+        color,
+        icon: icon.map(str::to_string),
+    }
+}
+
+#[test]
+fn work_item_style_prefers_the_api_color_and_falls_back_without_it() {
+    let rgb = super::super::rgb;
+    // API の色が最優先 (Bug の既定の赤とは違う色でも API を採る)
+    let (color, glyph) = work_item_style("Bug", Some(&api_style((1, 2, 3), Some("icon_insect"))));
+    assert_eq!(color, rgb(1, 2, 3));
+    assert_eq!(glyph, "✱");
+    // API が無ければ従来の Type 名による配色、未知の Type は青の ◆
+    assert_eq!(work_item_style("Bug", None), (rgb(204, 41, 61), "✱".into()));
+    assert_eq!(
+        work_item_style("Product Backlog Item", None),
+        (rgb(0, 120, 212), "◆".into())
+    );
+}
+
+#[test]
+fn work_item_glyph_falls_back_from_icon_id_to_type_name_to_initial() {
+    let rgb = super::super::rgb;
+    // アイコン ID が組込みに無ければ Type 名の既定の記号
+    let unknown_icon = api_style((9, 9, 9), Some("icon_unheard_of"));
+    assert_eq!(work_item_style("Task", Some(&unknown_icon)).1, "✓");
+    // Type 名にも既定が無ければ頭文字
+    assert_eq!(
+        work_item_style("product backlog item", Some(&unknown_icon)),
+        (rgb(9, 9, 9), "P".into())
+    );
+    assert_eq!(
+        work_item_style("Risk", Some(&api_style((9, 9, 9), None))).1,
+        "R"
+    );
+}
+
+#[test]
+fn work_item_tile_uses_the_style_carried_by_the_meta() {
+    use crate::azure_devops::Kind;
+    let mut with_style = meta(Kind::WorkItem, Some("Impediment"), "Active");
+    with_style.work_item_style = Some(api_style((10, 20, 30), Some("icon_flame")));
+    let tile = azure_tile(
+        Some("AZURE DEVOPS"),
+        &azure_entry(with_style, WORK_ITEM_URL),
+    )
+    .unwrap();
+    assert_eq!(tile.color, super::super::rgb(10, 20, 30));
+    assert_eq!(tile.glyph, "⚠");
 }

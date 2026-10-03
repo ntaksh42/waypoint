@@ -64,6 +64,13 @@ pub(crate) fn refresh_project(
     }
     if project.include_work_items {
         work_items::sync_work_items_to_shared_cache(client, project, pat)?;
+        // 色・アイコンは飾りなので、取れなくても同期全体は失敗させない。
+        if let Err(error) = super::work_item_types::sync_work_item_types(client, project, pat) {
+            crate::panic_log::record(&format!(
+                "azure devops: could not fetch work item types for {}/{}: {error}",
+                project.organization, project.project
+            ));
+        }
     }
 
     record_project_success(project)

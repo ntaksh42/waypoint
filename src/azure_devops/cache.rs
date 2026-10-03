@@ -78,6 +78,14 @@ pub(crate) fn open_cache() -> Result<Connection, String> {
                 organization TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS work_item_types (
+                organization TEXT NOT NULL,
+                project TEXT NOT NULL,
+                name TEXT NOT NULL,
+                color TEXT NOT NULL,
+                icon TEXT,
+                PRIMARY KEY (organization, project, name)
+            );
             INSERT OR REPLACE INTO cache_meta (key, value) VALUES ('schema_version', '2');",
         )
         .map_err(|error| error.to_string())?;

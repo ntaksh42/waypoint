@@ -24,6 +24,7 @@ mod credential;
 mod shared_cache;
 mod sync;
 mod title_search;
+mod work_item_types;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -63,6 +64,7 @@ pub use sync::{
     suggest_priorities_async, take_pipeline_results, take_pull_request_results,
     take_work_item_results,
 };
+pub use work_item_types::{WorkItemTypeStyle, style_for as work_item_type_style};
 
 const PROJECT_PAGE_SIZE: usize = 1_000;
 
