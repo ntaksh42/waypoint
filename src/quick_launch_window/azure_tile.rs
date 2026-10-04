@@ -12,6 +12,7 @@ use windows::Win32::Graphics::Gdi::{
     SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
 };
 
+use super::azure_marker::{Marker, marker_pixels};
 use super::draw::draw_text_centered;
 use super::layout::scale;
 use super::{ICON_LEFT, ICON_SIZE, rgb};
@@ -25,7 +26,7 @@ const CLOSED_ALPHA: u8 = 110;
 
 /// `sample(x, y)` が返す色でピクセルを塗る。`None` は透明。
 /// 戻り値は `size * size` 個の乗算済み BGRA (上から下)。
-fn render(size: usize, sample: impl Fn(f32, f32) -> Option<COLORREF>) -> Vec<u32> {
+pub(super) fn render(size: usize, sample: impl Fn(f32, f32) -> Option<COLORREF>) -> Vec<u32> {
     let step = 1.0 / SAMPLES as f32;
     let total = (SAMPLES * SAMPLES) as u32;
     let mut pixels = Vec::with_capacity(size * size);
@@ -121,24 +122,6 @@ fn has_drawn_glyph(glyph: &str) -> bool {
     matches!(glyph, "⇄" | "▶" | "✓" | "✱" | "▦" | "◆")
 }
 
-/// 右下の状態の点。行の地の色 `ring` で縁取り、タイルとの境目を作る。
-pub(super) fn marker_pixels(size: usize, color: COLORREF, ring: COLORREF) -> Vec<u32> {
-    let side = size as f32;
-    let dot = side * 0.35 / 2.0;
-    let outer = dot + (side * 0.09).max(1.0);
-    let center = side - outer;
-    render(size, |x, y| {
-        let distance = (x - center).powi(2) + (y - center).powi(2);
-        if distance <= dot * dot {
-            Some(color)
-        } else if distance <= outer * outer {
-            Some(ring)
-        } else {
-            None
-        }
-    })
-}
-
 /// 乗算済み BGRA を `rect` の行頭アイコン位置へ `alpha` の不透明度で重ねる。
 unsafe fn blend_pixels(hdc: HDC, pixels: &[u32], size: i32, left: i32, top: i32, alpha: u8) {
     unsafe {
@@ -192,7 +175,7 @@ unsafe fn blend_pixels(hdc: HDC, pixels: &[u32], size: i32, left: i32, top: i32,
 pub(super) struct AzureTile {
     pub(super) color: COLORREF,
     pub(super) glyph: std::borrow::Cow<'static, str>,
-    pub(super) marker: Option<COLORREF>,
+    pub(super) marker: Option<Marker>,
     pub(super) closed: bool,
 }
 
@@ -245,7 +228,7 @@ pub(super) unsafe fn draw_azure_tile(
             draw_text_centered(hdc, &tile.glyph, &mut glyph_rect);
             SelectObject(hdc, old_font);
         }
-        if let Some(marker) = tile.marker {
+        if let Some(marker) = &tile.marker {
             let pixels = marker_pixels(size as usize, marker, row_bg);
             blend_pixels(hdc, &pixels, size, left, top, 255);
         }
@@ -309,25 +292,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn marker_sits_in_the_bottom_right_with_a_ring() {
-        let size = 22;
-        let dot = rgb(255, 149, 0);
-        let ring = rgb(17, 17, 17);
-        let pixels = marker_pixels(size, dot, ring);
-        assert_eq!(alpha(pixels[0]), 0, "左上には何も描かない");
-        assert_eq!(
-            alpha(pixels[size / 2 * size + size / 2]),
-            0,
-            "中央の記号にかぶせない"
-        );
-        let side = size as f32;
-        let center = (side - side * 0.35 / 2.0 - side * 0.09) as usize;
-        let pixel = pixels[center * size + center];
-        assert_eq!(alpha(pixel), 255);
-        assert_eq!((pixel >> 16) & 0xff, 255, "点の中心は点の色");
     }
 
     #[test]

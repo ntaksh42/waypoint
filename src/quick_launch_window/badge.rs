@@ -2,12 +2,13 @@
 
 use windows::Win32::Foundation::COLORREF;
 
+use super::azure_marker::marker_for;
 use super::azure_tile::AzureTile;
 use super::{ACCENT, TAG_TEXT, rgb};
 use std::borrow::Cow;
 
 use crate::azure_devops::{Kind, WorkItemTypeStyle};
-use crate::quick_launch::{Action, AzureMeta, Entry};
+use crate::quick_launch::{Action, Entry};
 
 /// モードバッジの背景色。プレフィックスごとに見分けは付けるが、
 /// 彩度・明度は揃えた寒色2トーンに統一し、原色の乱立を避ける。
@@ -187,19 +188,6 @@ fn initial(work_item_type: &str) -> String {
         .unwrap_or_else(|| "◆".to_string())
 }
 
-/// 自分のレビュー待ち (橙) > Pipeline の失敗 (赤) > Draft (灰) の順に 1 つだけ。
-pub(super) fn marker_color(meta: &AzureMeta) -> Option<COLORREF> {
-    if meta.needs_my_review {
-        Some(rgb(255, 149, 0))
-    } else if meta.is_failed_pipeline() {
-        Some(rgb(229, 72, 77))
-    } else if meta.is_draft {
-        Some(rgb(142, 142, 147))
-    } else {
-        None
-    }
-}
-
 fn owned_style((color, glyph): (COLORREF, &'static str)) -> (COLORREF, Cow<'static, str>) {
     (color, Cow::Borrowed(glyph))
 }
@@ -254,7 +242,7 @@ pub(super) fn azure_tile(badge: Option<&str>, entry: &Entry) -> Option<AzureTile
     Some(AzureTile {
         color,
         glyph,
-        marker: marker_color(meta),
+        marker: marker_for(meta),
         closed: meta.is_closed(),
     })
 }

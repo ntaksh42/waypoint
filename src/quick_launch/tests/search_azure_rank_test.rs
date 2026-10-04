@@ -46,6 +46,7 @@ fn index_with(prs: &[Pr]) -> Index {
                 is_mine: pr.is_mine,
                 needs_my_review: false,
                 is_draft: false,
+                ready_to_complete: false,
             }),
             name: format!("PR {}: {}", pr.id, pr.title),
             breadcrumb: format!(

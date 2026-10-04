@@ -2,6 +2,7 @@
 
 mod azure_detail;
 mod azure_live;
+mod azure_marker;
 mod azure_tile;
 mod badge;
 mod configure;

@@ -20,6 +20,8 @@ pub struct AzureMeta {
     pub is_mine: bool,
     pub needs_my_review: bool,
     pub is_draft: bool,
+    /// 自分が作成者で、required reviewer が全員承認済みの Active PR。
+    pub ready_to_complete: bool,
 }
 
 impl AzureMeta {
@@ -34,6 +36,7 @@ impl AzureMeta {
             is_mine: candidate.is_mine,
             needs_my_review: candidate.needs_my_review,
             is_draft: candidate.is_draft,
+            ready_to_complete: candidate.ready_to_complete,
         }
     }
 
@@ -81,6 +84,7 @@ mod tests {
             is_mine,
             needs_my_review: false,
             is_draft: false,
+            ready_to_complete: false,
         }
     }
 

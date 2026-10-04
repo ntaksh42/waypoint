@@ -204,6 +204,7 @@ fn entry(
             is_mine: false,
             needs_my_review: false,
             is_draft: false,
+            ready_to_complete: false,
         }),
         branch: None,
     }

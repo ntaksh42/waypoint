@@ -1,7 +1,8 @@
 use super::super::RowKind;
+use super::super::azure_marker::{Fill, Marker, Symbol, marker_for};
 use super::super::badge::{
-    AzureIconKind, action_tag, action_verb, azure_icon_kind, azure_tile, marker_color,
-    shows_live_search_hint, work_item_style,
+    AzureIconKind, action_tag, action_verb, azure_icon_kind, azure_tile, shows_live_search_hint,
+    work_item_style,
 };
 use super::super::draw_row::section_count;
 use crate::azure_devops::WorkItemTypeStyle;
@@ -135,6 +136,7 @@ fn meta(
         is_mine: false,
         needs_my_review: false,
         is_draft: false,
+        ready_to_complete: false,
     }
 }
 
@@ -188,9 +190,14 @@ fn work_item_types_get_their_own_colors() {
     assert_eq!(tile(None).color, story.color);
 }
 
+fn shape(meta: &crate::quick_launch::AzureMeta) -> Option<(Fill, Symbol)> {
+    marker_for(meta).map(|Marker { fill, symbol, .. }| (fill, symbol))
+}
+
 #[test]
-fn state_markers_follow_priority_and_closed_items_are_dimmed() {
+fn state_markers_follow_priority() {
     use crate::azure_devops::Kind;
+    let rgb = super::super::rgb;
     let mut review = meta(Kind::PullRequest, None, "active");
     review.needs_my_review = true;
     review.is_draft = true;
@@ -198,18 +205,90 @@ fn state_markers_follow_priority_and_closed_items_are_dimmed() {
     draft.is_draft = true;
     let failed = meta(Kind::Pipeline, None, "failed");
 
-    assert_eq!(marker_color(&review), Some(super::super::rgb(255, 149, 0)));
-    assert_eq!(marker_color(&draft), Some(super::super::rgb(142, 142, 147)));
-    assert_eq!(marker_color(&failed), Some(super::super::rgb(229, 72, 77)));
-    assert_eq!(marker_color(&meta(Kind::PullRequest, None, "active")), None);
+    let review = marker_for(&review).unwrap();
+    assert_eq!(review.color, rgb(255, 149, 0));
+    assert_eq!((review.fill, review.symbol), (Fill::Solid, Symbol::None));
+    assert_eq!(shape(&draft), Some((Fill::Hollow, Symbol::None)));
+    let failed = marker_for(&failed).unwrap();
+    assert_eq!(failed.color, rgb(229, 72, 77));
+    assert_eq!(failed.symbol, Symbol::Cross);
+    assert_eq!(shape(&meta(Kind::PullRequest, None, "active")), None);
+    assert_eq!(shape(&meta(Kind::Project, None, "active")), None);
+}
 
+#[test]
+fn pull_request_states_have_distinct_shapes() {
+    use crate::azure_devops::Kind;
+    let pr = |status| meta(Kind::PullRequest, None, status);
+    let mut approved = pr("active");
+    approved.ready_to_complete = true;
+    assert_eq!(shape(&pr("completed")), Some((Fill::Solid, Symbol::Check)));
+    assert_eq!(shape(&pr("Abandoned")), Some((Fill::Solid, Symbol::Cross)));
+    assert_eq!(shape(&approved), Some((Fill::Hollow, Symbol::Check)));
+    // Draft は承認済みより優先する
+    approved.is_draft = true;
+    assert_eq!(shape(&approved), Some((Fill::Hollow, Symbol::None)));
+}
+
+#[test]
+fn pipeline_states_have_distinct_shapes() {
+    use crate::azure_devops::Kind;
+    let pipeline = |status| shape(&meta(Kind::Pipeline, None, status));
+    let shapes = [
+        pipeline("succeeded"),
+        pipeline("failed"),
+        pipeline("inProgress"),
+        pipeline("canceled"),
+        pipeline("partiallySucceeded"),
+    ];
+    assert!(shapes.iter().all(Option::is_some));
+    for (i, a) in shapes.iter().enumerate() {
+        assert!(shapes[i + 1..].iter().all(|b| a != b));
+    }
+    // 定義・未開始・未知の状態は点を出さない
+    assert_eq!(pipeline("definition"), None);
+    assert_eq!(pipeline("notStarted"), None);
+}
+
+#[test]
+fn work_item_states_map_across_process_templates() {
+    use crate::azure_devops::Kind;
+    let state = |status| shape(&meta(Kind::WorkItem, Some("Task"), status));
+    let new = Some((Fill::Hollow, Symbol::None));
+    let active = Some((Fill::Solid, Symbol::None));
+    let resolved = Some((Fill::Half, Symbol::None));
+    let closed = Some((Fill::Solid, Symbol::Check));
+    for status in ["New", "Proposed", "To Do"] {
+        assert_eq!(state(status), new, "{status}");
+    }
+    for status in ["Active", "Committed", "Doing"] {
+        assert_eq!(state(status), active, "{status}");
+    }
+    assert_eq!(state("Resolved"), resolved);
+    for status in ["Closed", "Done"] {
+        assert_eq!(state(status), closed, "{status}");
+    }
+    assert_eq!(state("Removed"), Some((Fill::Solid, Symbol::Cross)));
+    assert_eq!(state("Whatever"), None);
+}
+
+#[test]
+fn closed_items_are_dimmed_and_still_show_their_outcome() {
+    use crate::azure_devops::Kind;
     let completed = azure_tile(
         Some("AZURE DEVOPS"),
         &azure_entry(meta(Kind::PullRequest, None, "completed"), PR_URL),
     )
     .unwrap();
     assert!(completed.closed);
-    assert!(completed.marker.is_none());
+    assert_eq!(completed.marker.unwrap().symbol, Symbol::Check);
+    let abandoned = azure_tile(
+        Some("AZURE DEVOPS"),
+        &azure_entry(meta(Kind::PullRequest, None, "abandoned"), PR_URL),
+    )
+    .unwrap();
+    assert!(abandoned.closed);
+    assert_eq!(abandoned.marker.unwrap().symbol, Symbol::Cross);
 }
 
 #[test]
