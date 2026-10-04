@@ -49,6 +49,11 @@ The goal is to be the most capable general launcher on Windows — broader than 
 - `Index::refresh_config_items` (UI スレッド) が `showBranch` 項目ごとに
   `.git/HEAD` を読んでいた (ネットワークパスで固まる)
   → 直前の候補から引き継ぎ、新規分はバックグラウンド構築 (`Index::build`) が埋める
+- `dynamic::refresh` が履歴に変化が無くても毎回 `history.json` を原子的に書いていた
+  (表示と終了のたびに 12〜15ms、その間 `w ` の一覧更新も遅れる)
+  → 変化があったときだけ保存 (12.5ms → 3〜6ms)
+- `k ` (プロセス kill) が打鍵ごとにプロセスを列挙していた (1 回 6ms、絞り込み自体は 0.06ms)
+  → ウィンドウを開いてから最初の `k ` で 1 回だけ取る (`State::process_snapshot`)
 - `WM_SETTINGCHANGE` を lParam を見ずに全部処理していた
   → `"ImmersiveColorSet"` に限定 (無関係な設定変更ごとの 15ms を除去)
 - 起動時・設定の再読み込み時に `Index::build` と `dynamic::refresh` を UI スレッドで

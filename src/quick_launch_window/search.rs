@@ -82,8 +82,7 @@ pub(super) fn update_results(state: &RefCell<State>) {
         return;
     }
     if let Some(rest) = query.strip_prefix(crate::quick_launch::KILL_PROCESS_PREFIX) {
-        let processes = crate::quick_launch::kill_process_entries();
-        super::snapshot::show_snapshot_results(state, &processes, rest, false);
+        super::snapshot::show_process_results(state, rest);
         return;
     }
     if let Some(rest) = query.strip_prefix(crate::quick_launch::AGENT_SESSIONS_PREFIX) {

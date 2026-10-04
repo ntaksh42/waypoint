@@ -6,6 +6,15 @@ use super::search::{build_rows, populate_list};
 use super::{MAX_LIST_RESULTS, State};
 use crate::quick_launch::Entry;
 
+/// `k ` の絞り込み表示。プロセス一覧は `k ` に入った最初の打鍵で取り、
+/// 抜けるまで使い回す (`State::process_snapshot`)。借用を外してから絞り込む。
+pub(super) fn show_process_results(state: &RefCell<State>, text: &str) {
+    let cached = state.borrow_mut().process_snapshot.take();
+    let processes = cached.unwrap_or_else(crate::quick_launch::kill_process_entries);
+    show_snapshot_results(state, &processes, text, false);
+    state.borrow_mut().process_snapshot = Some(processes);
+}
+
 /// `k ` (実行中プロセス、FR-9.15.2) / `cs ` (過去セッション、FR-9.15.6) の
 /// スナップショットを、残りの文字列で絞り込む。Everything と違い外部 IPC を
 /// 伴わないので、非同期にせずキー入力のたびに同期で完結する。

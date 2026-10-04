@@ -145,8 +145,11 @@ static RESULT: ResultSlot = ResultSlot(std::sync::Mutex::new(None));
 pub fn refresh() -> Menus {
     let recent = scan_recent_items();
     let mut history = load_history();
-    update_history(&mut history, &recent);
-    let _ = save_history(&history);
+    // 何も変わっていないのに書くと、原子的保存だけで 12〜15ms かかる
+    // (実測)。Quick Launch の表示と終了のたびに走るため、変化時だけ保存する
+    if update_history(&mut history, &recent) {
+        let _ = save_history(&history);
+    }
 
     let all_windows = enumerate_windows();
     let current_windows = all_windows.iter().take(ITEM_LIMIT).cloned().collect();
@@ -254,7 +257,9 @@ fn resolve_shortcut(link_path: &Path) -> Option<String> {
     }
 }
 
-fn update_history(history: &mut History, recent: &[RecentItem]) {
+/// 履歴を更新し、保存すべき変化があったかを返す。
+fn update_history(history: &mut History, recent: &[RecentItem]) -> bool {
+    let mut changed = false;
     for item in recent {
         let key = item.entry.path.to_lowercase();
         let entry = history.entries.entry(key).or_insert_with(|| HistoryEntry {
@@ -265,6 +270,10 @@ fn update_history(history: &mut History, recent: &[RecentItem]) {
             last_seen: 0,
             last_used: 0,
         });
+        changed |= entry.name != item.entry.name
+            || entry.path != item.entry.path
+            || entry.is_dir != item.is_dir
+            || item.modified > entry.last_seen;
         entry.name.clone_from(&item.entry.name);
         entry.path.clone_from(&item.entry.path);
         entry.is_dir = item.is_dir;
@@ -274,6 +283,7 @@ fn update_history(history: &mut History, recent: &[RecentItem]) {
             entry.last_used = item.modified;
         }
     }
+    changed
 }
 
 fn history_path() -> Option<PathBuf> {
