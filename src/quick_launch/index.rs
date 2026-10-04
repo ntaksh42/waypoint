@@ -16,6 +16,7 @@ impl Index {
             &config.variables,
             &mut Vec::new(),
             false,
+            &|path| crate::git::branch_of(path),
             &mut config_entries,
         );
 
@@ -158,13 +159,23 @@ impl Index {
     /// config だけが変わったときに使う。ここでフル `Index::build` を呼ぶと、
     /// 変わっていないスタートメニューの再スキャン (実測で数十 ms) が
     /// ユーザー操作のたびに UI スレッドで走る。
+    ///
+    /// UI スレッドから呼ばれるため `.git/HEAD` は読まない (ネットワークパスで
+    /// 固まる)。ブランチ名は直前の候補から引き継ぎ、新しく showBranch に
+    /// なった項目はバックグラウンド構築の完了 (`install_index`) で埋まる。
     pub fn refresh_config_items(&mut self, config: &Config, dynamic: &Menus) {
+        let known: std::collections::HashMap<&str, &str> = self
+            .config_entries
+            .iter()
+            .filter_map(|entry| Some((entry.path.as_str(), entry.branch.as_deref()?)))
+            .collect();
         let mut config_entries = Vec::new();
         collect_items(
             &config.items,
             &config.variables,
             &mut Vec::new(),
             false,
+            &|path| known.get(path).map(|branch| branch.to_string()),
             &mut config_entries,
         );
         self.config_entries = config_entries;
@@ -367,11 +378,13 @@ fn codex_folder_entries(entries: &[Entry]) -> (Vec<Entry>, Vec<super::search::Lo
 /// `inherited_show_branch` は祖先 Submenu の showBranch が真だったか。
 /// 真なら配下の Folder は自身の showBranch を問わずブランチ名を持たせる
 /// 設定した `showBranch` の継承規則に従う。
+/// `branch_of` はブランチ名の取得元 (ディスクを読むか、既知の値を引くか)。
 fn collect_items(
     items: &[Item],
     variables: &std::collections::BTreeMap<String, String>,
     parents: &mut Vec<String>,
     inherited_show_branch: bool,
+    branch_of: &dyn Fn(&str) -> Option<String>,
     entries: &mut Vec<Entry>,
 ) {
     for item in items {
@@ -386,7 +399,7 @@ fn collect_items(
                 if let Some(path) = crate::config::expand(path, variables) {
                     // ブランチ名の付与は構築時に済ませる。表示経路では読まない。
                     let branch = (inherited_show_branch || *show_branch)
-                        .then(|| crate::git::branch_of(&path))
+                        .then(|| branch_of(&path))
                         .flatten();
                     entries.push(Entry {
                         azure: None,
@@ -447,6 +460,7 @@ fn collect_items(
                     variables,
                     parents,
                     inherited_show_branch || *show_branch,
+                    branch_of,
                     entries,
                 );
                 parents.pop();

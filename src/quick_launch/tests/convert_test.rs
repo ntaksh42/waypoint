@@ -66,6 +66,44 @@ fn submenu_show_branch_is_inherited_by_child_folders() {
     assert!(found[0].branch.is_some());
 }
 
+fn branch_folder_config(path: &str, show_branch: bool) -> Config {
+    Config {
+        items: vec![Item::Folder {
+            name: "waypoint".to_string(),
+            path: path.to_string(),
+            open: None,
+            icon: None,
+            show_branch,
+        }],
+        ..config_without_live_scans()
+    }
+}
+
+/// UI スレッドで走る `refresh_config_items` は `.git/HEAD` を読まない。
+/// 構築済みの索引が持つブランチ名を引き継ぎ、新しく showBranch になった
+/// 項目はバックグラウンド構築が埋めるまで None のままにする
+/// (ネットワークパスで UI スレッドが固まるのを避ける)。
+#[test]
+fn refresh_config_items_reuses_branch_without_reading_disk() {
+    let root = env!("CARGO_MANIFEST_DIR");
+    let mut index = Index::build(&branch_folder_config(root, true), &Menus::default());
+    let built = index.search("waypoint")[0].branch.clone();
+    assert!(built.is_some());
+
+    // 同じパス: 引き継ぐ
+    index.refresh_config_items(&branch_folder_config(root, true), &Menus::default());
+    assert_eq!(index.search("waypoint")[0].branch, built);
+
+    // 別パス (ディスク上では読める) : 読まずに None
+    let sub = format!(r"{root}\src");
+    index.refresh_config_items(&branch_folder_config(&sub, true), &Menus::default());
+    assert_eq!(index.search("waypoint")[0].branch, None);
+
+    // showBranch が外れたら、引き継いだ値も消える
+    index.refresh_config_items(&branch_folder_config(root, false), &Menus::default());
+    assert_eq!(index.search("waypoint")[0].branch, None);
+}
+
 #[test]
 fn open_folder_entry_converts_to_folder_item_with_same_open_mode() {
     let entry = Entry {
