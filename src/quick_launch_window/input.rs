@@ -135,7 +135,7 @@ pub(super) fn next_selectable_row(rows: &[RowKind], current: usize, delta: isize
     }
     let step = if delta < 0 { -1isize } else { 1isize };
     let mut next = current.saturating_add_signed(delta).min(rows.len() - 1);
-    while matches!(rows.get(next), Some(RowKind::Header(_))) {
+    while rows.get(next).is_some_and(RowKind::is_skipped) {
         let stepped = next.checked_add_signed(step)?;
         if stepped >= rows.len() {
             return None;
@@ -148,21 +148,19 @@ pub(super) fn next_selectable_row(rows: &[RowKind], current: usize, delta: isize
 /// Home キー: 先頭の選択可能な項目行。先頭が見出し行なら後方向へ探す
 /// (`move_selection` と違い、常に先頭からの前進で確定させる)。
 pub(super) fn first_selectable_row(rows: &[RowKind]) -> Option<usize> {
-    rows.iter()
-        .position(|row| !matches!(row, RowKind::Header(_)))
+    rows.iter().position(|row| !row.is_skipped())
 }
 
 /// End キー: 末尾の選択可能な項目行。末尾が見出し行なら前方向へ探す。
 pub(super) fn last_selectable_row(rows: &[RowKind]) -> Option<usize> {
-    rows.iter()
-        .rposition(|row| !matches!(row, RowKind::Header(_)))
+    rows.iter().rposition(|row| !row.is_skipped())
 }
 
 /// `state.rows[row]` が指す項目行の `Entry` を返す。見出し・メッセージ行は `None`。
 pub(super) fn entry_at_row(state: &super::State, row: usize) -> Option<Entry> {
     match state.rows.get(row)? {
         RowKind::Item(index) => state.results.get(*index).cloned(),
-        RowKind::Header(_) | RowKind::Message => None,
+        RowKind::Header(_) | RowKind::Message | RowKind::Notice => None,
     }
 }
 
@@ -238,6 +236,18 @@ pub(super) fn queue_selected() {
         }
         None => {}
     }
+}
+
+/// `Tab`: 選択中の候補が検索欄の補完 (`az pr` などのコマンド候補・ショートカット) の
+/// ときだけ、`Enter` と同じく検索欄をその内容へ置き換える (FR-9.18.7)。
+/// 補完でない候補では何もせず `false` を返し、既存の Tab の挙動を変えない。
+pub(super) fn complete_selected() -> bool {
+    let completes =
+        selected_entry().is_some_and(|entry| matches!(entry.action, Action::ReplaceQuery(_)));
+    if completes {
+        queue_selected();
+    }
+    completes
 }
 
 /// 管理者として実行できる候補か (FR-9.8.4)。

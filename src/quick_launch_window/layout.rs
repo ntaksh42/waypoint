@@ -19,9 +19,59 @@ use windows::core::w;
 use crate::config::MonitorChoice;
 
 use super::{
-    EDIT_HEIGHT, FOOTER_GAP, FOOTER_HEIGHT, HEADER_HEIGHT, PADDING, ROW_HEIGHT, RowKind, STATE,
-    WINDOW_WIDTH,
+    BADGE_SLOT_MAX, BADGE_WIDTH, EDIT_HEIGHT, FOOTER_GAP, FOOTER_HEIGHT, HEADER_HEIGHT, PADDING,
+    ROW_HEIGHT, RowKind, SEARCH_ICON_WIDTH, STATE, WINDOW_WIDTH,
 };
+
+/// バッジが検索窓の右端に占める幅 (右の余白 16px 込み)。既定は固定の `BADGE_WIDTH`。
+/// `az pr · active · mine` のように長いラベルのときだけ文字数に応じて広げる
+/// (1 文字 8px 見当 + 左右の内側余白)。ラベルを持たなければ固定幅。
+pub(super) fn badge_slot_width(label: Option<&str>, dpi: u32) -> i32 {
+    let fixed = scale(BADGE_WIDTH, dpi);
+    let Some(label) = label else {
+        return fixed;
+    };
+    let wanted = scale(8, dpi) * label.chars().count() as i32 + scale(24 + 16, dpi);
+    wanted.clamp(fixed, scale(BADGE_SLOT_MAX, dpi))
+}
+
+/// 入力欄の幅。バッジの占有幅だけ狭める。
+pub(super) fn edit_width(client_width: i32, dpi: u32, badge_label: Option<&str>) -> i32 {
+    client_width
+        - scale(PADDING, dpi) * 2
+        - scale(SEARCH_ICON_WIDTH, dpi)
+        - badge_slot_width(badge_label, dpi)
+        - scale(8, dpi)
+}
+
+/// バッジの幅が変わったときに、入力欄だけ配置し直す。
+pub(super) fn relayout_edit() {
+    let (window, edit, dpi, label) = STATE.with(|state| {
+        let state = state.borrow();
+        (
+            state.window,
+            state.edit,
+            state.dpi,
+            state.badge_label.clone(),
+        )
+    });
+    let (Some(window), Some(edit)) = (window, edit) else {
+        return;
+    };
+    unsafe {
+        let mut client = RECT::default();
+        let _ = GetClientRect(window, &mut client);
+        let input_height = scale(24, dpi);
+        let _ = MoveWindow(
+            edit,
+            scale(PADDING + SEARCH_ICON_WIDTH, dpi),
+            scale(PADDING, dpi) + (scale(EDIT_HEIGHT, dpi) - input_height) / 2,
+            edit_width(client.right, dpi, label.as_deref()),
+            input_height,
+            true,
+        );
+    }
+}
 
 /// `rows` (見出し・項目・メッセージ行の並び) を実際に描画したときの合計高さを
 /// 見積もる (DPI 適用前、論理ピクセル)。見出し行は `HEADER_HEIGHT`、それ以外
@@ -35,7 +85,7 @@ pub(super) fn rows_height(rows: &[RowKind], max_rows: usize) -> i32 {
     let height = rows.iter().take(max_rows.max(1)).fold(0, |acc, row| {
         acc + match row {
             RowKind::Header(_) => HEADER_HEIGHT,
-            RowKind::Item(_) | RowKind::Message => ROW_HEIGHT,
+            RowKind::Item(_) | RowKind::Message | RowKind::Notice => ROW_HEIGHT,
         }
     });
     height.max(ROW_HEIGHT)

@@ -20,8 +20,8 @@ mod search;
 mod tests;
 
 pub use azure::{
-    AzureCommand, AzureLiveRequest, PipelineFilter, PullRequestFilter, azure_command,
-    azure_live_request,
+    AzureCommand, AzureLiveRequest, PipelineFilter, PullRequestFilter, azure_badge_label,
+    azure_command, azure_empty_message, azure_live_request,
 };
 pub(crate) use azure_entries::{azure_shortcut_entries, azure_suggest_entry};
 pub use azure_meta::AzureMeta;

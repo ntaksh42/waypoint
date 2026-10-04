@@ -56,7 +56,8 @@ pub(in crate::quick_launch_window) fn start_azure_work_item_query(
     };
     let (labels, rows, message) = {
         let mut state = state.borrow_mut();
-        let (labels, rows) = build_rows(&state.results, &[]);
+        let (mut labels, mut rows) = build_rows(&state.results, &[]);
+        super::super::azure_notice::prepend(&state, &mut labels, &mut rows);
         state.rows = if rows.is_empty() {
             vec![RowKind::Message]
         } else {

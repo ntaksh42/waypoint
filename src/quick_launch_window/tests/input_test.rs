@@ -1,6 +1,7 @@
 use super::super::RowKind;
 use super::super::input::{
-    first_selectable_row, is_elevatable, last_selectable_row, word_start_before,
+    first_selectable_row, is_elevatable, last_selectable_row, next_selectable_row,
+    word_start_before,
 };
 
 fn to_utf16(s: &str) -> Vec<u16> {
@@ -69,6 +70,17 @@ fn home_key_skips_a_leading_header_row() {
         RowKind::Item(1),
     ];
     assert_eq!(first_selectable_row(&rows), Some(1));
+}
+
+/// 同期失敗の通知行 (FR-9.18.7) は見出しと同じく選択対象外。
+/// 先頭に置かれても Home / 矢印キーは次の項目行へ進む。
+#[test]
+fn a_leading_notice_row_is_skipped_by_navigation() {
+    let rows = [RowKind::Notice, RowKind::Item(0), RowKind::Item(1)];
+    assert_eq!(first_selectable_row(&rows), Some(1));
+    assert_eq!(last_selectable_row(&rows), Some(2));
+    // 先頭の通知行より上へは動かない
+    assert_eq!(next_selectable_row(&rows, 1, -1), None);
 }
 
 #[test]

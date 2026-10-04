@@ -17,11 +17,11 @@ use super::azure_live::{
 use super::draw::paint_window;
 use super::draw_row::draw_list_item;
 use super::input::{hide_window, queue_selected};
-use super::layout::scale;
+use super::layout::{edit_width, scale};
 use super::search::{handle_everything_results, update_results};
 use super::{
-    BACKGROUND, BADGE_WIDTH, EDIT_HEIGHT, FOOTER_GAP, FOOTER_HEIGHT, HEADER_HEIGHT, PADDING,
-    ROW_HEIGHT, RowKind, SEARCH_ICON_WIDTH, STATE, SURFACE, TEXT_PRIMARY,
+    BACKGROUND, EDIT_HEIGHT, FOOTER_GAP, FOOTER_HEIGHT, HEADER_HEIGHT, PADDING, ROW_HEIGHT,
+    RowKind, SEARCH_ICON_WIDTH, STATE, SURFACE, TEXT_PRIMARY, WM_QUICK_LAUNCH_AZURE_NOTICE,
     WM_QUICK_LAUNCH_AZURE_RESULTS,
 };
 
@@ -68,13 +68,12 @@ pub(super) fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM)
             let height = ((lparam.0 as u32 >> 16) & 0xffff) as i32;
             // MoveWindow は WM_ERASEBKGND / WM_PAINT を同期送信して
             // window_proc を再入させる。借用を解放してから呼ぶ
-            let (edit, list, dpi) = STATE.with(|state| {
+            let (edit, list, dpi, badge_label) = STATE.with(|state| {
                 let state = state.borrow();
-                (state.edit, state.list, state.dpi)
+                (state.edit, state.list, state.dpi, state.badge_label.clone())
             });
             let padding = scale(PADDING, dpi);
             let edit_height = scale(EDIT_HEIGHT, dpi);
-            let badge_width = scale(BADGE_WIDTH, dpi);
             let icon_width = scale(SEARCH_ICON_WIDTH, dpi);
             // 入力欄は 1 行の EDIT で、文字は上端から描かれる。16px の文字に
             // 合わせた高さの箱を検索窓の縦中央に置いて、文字を中央に揃える
@@ -86,7 +85,7 @@ pub(super) fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM)
                         edit,
                         padding + icon_width,
                         padding + (edit_height - input_height) / 2,
-                        width - padding * 2 - icon_width - badge_width - scale(8, dpi),
+                        edit_width(width, dpi, badge_label.as_deref()),
                         input_height,
                         true,
                     );
@@ -177,6 +176,10 @@ pub(super) fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM)
             handle_azure_work_item_results(wparam.0 as u32);
             handle_azure_pull_request_results(wparam.0 as u32);
             handle_azure_pipeline_results(wparam.0 as u32);
+            LRESULT(0)
+        }
+        WM_QUICK_LAUNCH_AZURE_NOTICE => {
+            super::azure_notice::handle_loaded();
             LRESULT(0)
         }
         windows::Win32::UI::WindowsAndMessaging::WM_COPYDATA => {

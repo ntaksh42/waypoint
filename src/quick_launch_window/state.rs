@@ -28,6 +28,16 @@ pub(in crate::quick_launch_window) enum RowKind {
     Header(&'static str),
     /// 検索中・0 件時の説明文 (`State::empty_message`)。選択・実行の対象外。
     Message,
+    /// 一覧の先頭に出す `State::azure_notice` (同期失敗の通知、FR-9.18.7)。
+    /// 見出しと同じく選択・実行の対象外。
+    Notice,
+}
+
+impl RowKind {
+    /// 矢印キーの移動で飛ばす行 (見出し・通知)。
+    pub(in crate::quick_launch_window) fn is_skipped(&self) -> bool {
+        matches!(self, RowKind::Header(_) | RowKind::Notice)
+    }
 }
 
 #[derive(Default)]
@@ -117,6 +127,14 @@ pub(in crate::quick_launch_window) struct State {
     /// 現在の入力が `b `/`w `/`a `/`f ` のいずれかに入っていれば
     /// そのモード名。検索窓のバッジ表示に使う。
     pub(in crate::quick_launch_window) badge: Option<&'static str>,
+    /// バッジに `badge` の代わりに出す文字列 (`az pr` の解釈済みフィルタ等)。
+    /// 色は `badge` のまま。入力が変わった時点 (`update_badge`) で確定させる。
+    pub(in crate::quick_launch_window) badge_label: Option<String>,
+    /// 直近の Azure DevOps 同期が失敗していれば、その通知文 (FR-9.18.7)。
+    /// SQLite を読むためバックグラウンドで 1 回だけ取得し、表示中は使い回す。
+    pub(in crate::quick_launch_window) azure_notice: Option<String>,
+    /// この表示中に `azure_notice` の取得を依頼済みか。`show` で戻す。
+    pub(in crate::quick_launch_window) azure_notice_requested: bool,
     /// 現在の入力で `Ctrl+Enter` の Live 検索が実際に成立するか。
     /// `az project` / `az optimize` のように検索対象を持たないコマンドでは
     /// 立たない。描画のたびに入力を読み直さずに済むよう、バッジと同じく

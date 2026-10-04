@@ -28,16 +28,23 @@ const COPY_PATH: (&str, &str) = ("Ctrl+C", "Copy path");
 const REVEAL: (&str, &str) = ("Ctrl+E", "Reveal");
 const FAVORITE: (&str, &str) = ("Ctrl+Shift+\u{21B5}", "Favorite");
 
+const LIVE_SEARCH: (&str, &str) = ("Ctrl+\u{21B5}", "Live search");
+
 /// 選択中の候補 `entry` で使えるキー操作を、左から並べる順に返す。
 /// 先頭は必ず Enter (選択行の右端に出す動詞と同じ語)。候補が無ければ空。
-pub(super) fn footer_hints(entry: Option<&Entry>) -> Vec<(&'static str, &'static str)> {
+/// `live` は現在の入力で `Ctrl+Enter` の Azure Live 検索が成立するとき (FR-9.18.7)。
+/// 候補が無い (0 件・検索中) 間も、次の一手として出す。
+pub(super) fn footer_hints(entry: Option<&Entry>, live: bool) -> Vec<(&'static str, &'static str)> {
     let Some(entry) = entry else {
-        return Vec::new();
+        return if live { vec![LIVE_SEARCH] } else { Vec::new() };
     };
     let verb = action_verb(&entry.action)
         .trim_end_matches(ENTER)
         .trim_end();
     let mut hints = vec![(ENTER, verb)];
+    if live {
+        hints.push(LIVE_SEARCH);
+    }
     let has_path = !entry.path.is_empty();
     match &entry.action {
         Action::FocusWindow(_) => hints.push(("Ctrl+W", "Close window")),

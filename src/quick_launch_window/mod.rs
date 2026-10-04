@@ -2,6 +2,7 @@
 
 mod azure_detail;
 mod azure_live;
+mod azure_notice;
 mod azure_tile;
 mod badge;
 mod configure;
@@ -15,6 +16,7 @@ mod input;
 mod layout;
 mod row_parts;
 mod search;
+mod search_bar;
 mod snapshot;
 mod state;
 #[cfg(test)]
@@ -66,6 +68,8 @@ pub const WM_QUICK_LAUNCH_EXECUTE: u32 = WM_APP + 4;
 pub const WM_QUICK_LAUNCH_ADD_TO_FAVORITES: u32 = WM_APP + 6;
 /// Azure DevOps の Work Item 検索スレッドが結果を返す通知。
 pub const WM_QUICK_LAUNCH_AZURE_RESULTS: u32 = WM_APP + 7;
+/// 同期失敗の通知 (FR-9.18.7) の取得スレッドが結果を渡した通知。
+pub(crate) const WM_QUICK_LAUNCH_AZURE_NOTICE: u32 = WM_APP + 31;
 
 pub fn show(owner: HWND, origin: Option<HWND>) -> Result<()> {
     ensure_window(owner)?;
@@ -78,6 +82,9 @@ pub fn show(owner: HWND, origin: Option<HWND>) -> Result<()> {
         let mut state = state.borrow_mut();
         state.owner = Some(owner);
         state.origin = origin;
+        // 同期失敗の通知は表示のたびに取り直す (FR-9.18.7)
+        state.azure_notice = None;
+        state.azure_notice_requested = false;
         (state.window, state.edit)
     });
     let (Some(window), Some(edit)) = (window, edit) else {
@@ -180,6 +187,8 @@ pub fn handle_message(message: &windows::Win32::UI::WindowsAndMessaging::MSG) ->
             });
             hide_window(window, owner);
         }
+        // Tab: 補完候補なら検索欄へ補完する。補完でなければ素通し (FR-9.18.7)
+        0x09 => return input::complete_selected(),
         0x26 => move_selection(-1),
         0x28 => move_selection(1),
         // 見出し行 (区分見出し) は選択対象外。results.len() を直接使うと

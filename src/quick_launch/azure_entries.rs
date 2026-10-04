@@ -12,9 +12,18 @@ use super::{Action, Entry};
 pub(crate) fn azure_command_entries() -> &'static [Entry] {
     static ENTRIES: std::sync::LazyLock<Vec<Entry>> = std::sync::LazyLock::new(|| {
         let mut entries: Vec<Entry> = [
-            ("az pr", "Search pull requests"),
-            ("az wit", "Search work items"),
-            ("az pipeline", "Search build pipelines"),
+            (
+                "az pr",
+                "Search pull requests \u{00B7} mine needs-review waiting draft stale",
+            ),
+            (
+                "az wit",
+                "Search work items \u{00B7} #<id> for an exact match",
+            ),
+            (
+                "az pipeline",
+                "Search build pipelines \u{00B7} failed definitions",
+            ),
             ("az project", "Open configured projects"),
         ]
         .into_iter()

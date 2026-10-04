@@ -248,6 +248,80 @@ pub fn azure_live_request(query: &str) -> Option<AzureLiveRequest> {
     }
 }
 
+/// 検索窓のバッジに出す、サブコマンドと解釈済みの属性トークン。
+/// `az pr active mine` → `PR · active · mine`。トークンは入力順ではなく
+/// 状態 → 自分との関係の順に並べ、何が解釈されたかを正規化して見せる。
+/// サブコマンドを伴わない `az` / `az <検索語>` は `None` (従来どおり
+/// `AZURE DEVOPS` のまま)。
+pub fn azure_badge_label(query: &str) -> Option<String> {
+    let (command, _) = azure_command(query)?;
+    let mut parts: Vec<&str> = Vec::new();
+    match command {
+        AzureCommand::All => return None,
+        AzureCommand::PullRequests(filter) => {
+            parts.push("PR");
+            if filter.status_explicit {
+                parts.push(match filter.status {
+                    crate::azure_devops::PullRequestStatus::Active => "active",
+                    crate::azure_devops::PullRequestStatus::Completed => "completed",
+                    crate::azure_devops::PullRequestStatus::Abandoned => "abandoned",
+                    crate::azure_devops::PullRequestStatus::All => "all",
+                });
+            }
+            for (on, name) in [
+                (filter.mine, "mine"),
+                (filter.author, "author"),
+                (filter.reviewer, "reviewer"),
+                (filter.needs_review, "needs-review"),
+                (filter.waiting, "waiting"),
+                (filter.draft, "draft"),
+                (filter.ready, "ready"),
+                (filter.stale, "stale"),
+            ] {
+                if on {
+                    parts.push(name);
+                }
+            }
+        }
+        AzureCommand::Pipelines(filter) => {
+            parts.push("PIPELINE");
+            match filter {
+                PipelineFilter::All => {}
+                PipelineFilter::Failed => parts.push("failed"),
+                PipelineFilter::Definitions => parts.push("definitions"),
+            }
+        }
+        AzureCommand::WorkItems { .. } => parts.push("WORK ITEM"),
+        AzureCommand::Projects => parts.push("PROJECT"),
+        AzureCommand::Suggest => parts.push("OPTIMIZE"),
+    }
+    Some(parts.join(" \u{00B7} "))
+}
+
+/// `az` の一覧が空になったときに出す説明文 (FR-9.18.7)。
+/// 空の一覧は何が起きたのか分からないため、原因と次の一手を示す。
+/// `az pr` / `az wit` / `az pipeline` は Live 検索の入口候補を自分で足すので対象外 (`None`)。
+pub fn azure_empty_message(query: &str, enabled: bool, has_projects: bool) -> Option<String> {
+    let (command, rest) = azure_command(query)?;
+    match command {
+        AzureCommand::All | AzureCommand::Projects if !enabled => {
+            Some("Azure DevOps is disabled. Enable it in Settings.".to_string())
+        }
+        AzureCommand::All | AzureCommand::Projects if !has_projects => {
+            Some("No Azure DevOps projects are configured. Add them in Settings.".to_string())
+        }
+        AzureCommand::All => Some(format!(
+            "No cached matches for \"{}\". Press Ctrl+Enter to search Azure DevOps live.",
+            rest.trim()
+        )),
+        AzureCommand::Projects => Some("No matching projects.".to_string()),
+        AzureCommand::PullRequests(_)
+        | AzureCommand::Pipelines(_)
+        | AzureCommand::WorkItems { .. }
+        | AzureCommand::Suggest => None,
+    }
+}
+
 /// 未確定の Azure コマンドだけを補完候補の検索語として取り出す。
 /// 例えば `az pln` は `az pipeline` を候補にする一方、`az wp` は通常の
 /// Azure 横断検索を維持する。
@@ -354,6 +428,50 @@ mod tests {
                 "foo"
             ))
         );
+    }
+
+    #[test]
+    fn badge_label_shows_the_interpreted_subcommand_and_filters() {
+        assert_eq!(azure_badge_label("az "), None);
+        assert_eq!(azure_badge_label("az waypoint"), None);
+        assert_eq!(azure_badge_label("az pr").as_deref(), Some("PR"));
+        // 入力順ではなく状態 → 関係の順に正規化される
+        assert_eq!(
+            azure_badge_label("az pr mine needs-review active foo").as_deref(),
+            Some("PR \u{00B7} active \u{00B7} mine \u{00B7} needs-review")
+        );
+        // `live` は検索条件ではないのでラベルに出さない
+        assert_eq!(azure_badge_label("az pr live").as_deref(), Some("PR"));
+        assert_eq!(
+            azure_badge_label("az pipeline failed").as_deref(),
+            Some("PIPELINE \u{00B7} failed")
+        );
+        assert_eq!(azure_badge_label("az wit").as_deref(), Some("WORK ITEM"));
+        assert_eq!(azure_badge_label("b az"), None);
+    }
+
+    #[test]
+    fn empty_message_explains_the_cause_and_the_next_step() {
+        assert_eq!(
+            azure_empty_message("az foo", true, true).as_deref(),
+            Some("No cached matches for \"foo\". Press Ctrl+Enter to search Azure DevOps live.")
+        );
+        assert_eq!(
+            azure_empty_message("az foo", false, true).as_deref(),
+            Some("Azure DevOps is disabled. Enable it in Settings.")
+        );
+        assert_eq!(
+            azure_empty_message("az foo", true, false).as_deref(),
+            Some("No Azure DevOps projects are configured. Add them in Settings.")
+        );
+        assert_eq!(
+            azure_empty_message("az project x", true, true).as_deref(),
+            Some("No matching projects.")
+        );
+        // 自分で Live 検索の入口候補を足すコマンドと、他モードは対象外
+        assert_eq!(azure_empty_message("az pr x", true, true), None);
+        assert_eq!(azure_empty_message("az wit x", true, true), None);
+        assert_eq!(azure_empty_message("b foo", true, true), None);
     }
 
     #[test]

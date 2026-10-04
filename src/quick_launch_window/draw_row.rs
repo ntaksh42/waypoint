@@ -23,7 +23,7 @@ use super::row_parts::{TagStyle, draw_section_header, draw_tag_right_aligned};
 use super::{
     ACCENT, BACKGROUND, BRANCH_BORDER, BRANCH_TEXT, SELECTED_BG, SELECTED_HIGHLIGHT,
     SELECTED_TAG_BORDER, SELECTED_TEXT_MUTED, SELECTED_TEXT_SECONDARY, STATE, TAG_BG, TAG_RIGHT,
-    TEXT_LEFT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY,
+    TEXT_LEFT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY, WARNING_TEXT,
 };
 use crate::quick_launch::{Action, Entry};
 
@@ -55,7 +55,9 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
             let row = state.rows.get(draw.itemID as usize).copied()?;
             let entry = match row {
                 super::RowKind::Item(index) => Some(state.results.get(index)?.clone()),
-                super::RowKind::Header(_) | super::RowKind::Message => None,
+                super::RowKind::Header(_) | super::RowKind::Message | super::RowKind::Notice => {
+                    None
+                }
             };
             let count = match row {
                 super::RowKind::Header(_) => section_count(&state.rows, draw.itemID as usize),
@@ -64,7 +66,12 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
             Some((
                 row,
                 entry,
-                state.empty_message.clone(),
+                // 通知行だけは一覧全体の説明文ではなく同期失敗の通知を出す
+                if matches!(row, super::RowKind::Notice) {
+                    state.azure_notice.clone()
+                } else {
+                    state.empty_message.clone()
+                },
                 RowFonts {
                     name: state.name_font,
                     detail: state.detail_font,
@@ -109,7 +116,14 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
             if let (Some(message), Some(font)) = (empty_message, fonts.detail) {
                 let old = SelectObject(draw.hDC, font.into());
                 SetBkMode(draw.hDC, TRANSPARENT);
-                SetTextColor(draw.hDC, TEXT_SECONDARY);
+                SetTextColor(
+                    draw.hDC,
+                    if matches!(row, super::RowKind::Notice) {
+                        WARNING_TEXT
+                    } else {
+                        TEXT_SECONDARY
+                    },
+                );
                 let mut rect = draw.rcItem;
                 rect.left += scale(16, dpi);
                 draw_text(draw.hDC, &message, &mut rect);

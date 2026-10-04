@@ -1,17 +1,9 @@
 use super::super::RowKind;
 use super::super::badge::{
     AzureIconKind, action_tag, action_verb, azure_icon_kind, azure_tile, marker_color,
-    shows_live_search_hint,
 };
 use super::super::draw_row::section_count;
 use crate::quick_launch::Action;
-
-#[test]
-fn live_search_hint_is_only_shown_in_azure_mode() {
-    assert!(shows_live_search_hint(Some("AZURE DEVOPS")));
-    assert!(!shows_live_search_hint(Some("FILES")));
-    assert!(!shows_live_search_hint(None));
-}
 
 #[test]
 fn azure_urls_use_distinct_icons_only_in_azure_mode() {

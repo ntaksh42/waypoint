@@ -52,11 +52,14 @@ fn open_window_detail_shows_only_the_process_name() {
 fn footer_hints_follow_the_selected_candidate() {
     let window = entry("", "", Action::FocusWindow(1));
     assert_eq!(
-        footer_hints(Some(&window)),
+        footer_hints(Some(&window), false),
         [("\u{21B5}", "Switch"), ("Ctrl+W", "Close window")]
     );
     let folder = entry("", r"E:\x", Action::OpenFolder(OpenMode::NewWindow));
-    let keys: Vec<_> = footer_hints(Some(&folder)).iter().map(|h| h.0).collect();
+    let keys: Vec<_> = footer_hints(Some(&folder), false)
+        .iter()
+        .map(|h| h.0)
+        .collect();
     assert_eq!(
         keys,
         [
@@ -67,7 +70,19 @@ fn footer_hints_follow_the_selected_candidate() {
             "Ctrl+Shift+\u{21B5}"
         ]
     );
-    assert!(footer_hints(None).is_empty());
+    assert!(footer_hints(None, false).is_empty());
+}
+
+#[test]
+fn footer_offers_live_search_right_after_enter_while_it_applies() {
+    let pull_request = entry("", "https://dev.azure.com/o/p", Action::OpenUrl("u".into()));
+    let keys: Vec<_> = footer_hints(Some(&pull_request), true)
+        .iter()
+        .map(|h| h.0)
+        .collect();
+    assert_eq!(keys[..2], ["\u{21B5}", "Ctrl+\u{21B5}"]);
+    // 候補が無い (0 件・検索中) 間も次の一手として残す
+    assert_eq!(footer_hints(None, true), [("Ctrl+\u{21B5}", "Live search")]);
 }
 
 #[test]

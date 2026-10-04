@@ -27,6 +27,8 @@ pub(crate) const FOOTER_GAP: i32 = 6;
 /// モードバッジ ("BOOKMARKS" 等) と時計用に検索窓の右側へ確保する幅。
 /// 旧 92px では時計 ("9/27 Sun 16:41") や "Ctrl+Enter  Live" が両端で欠けていた。
 pub(crate) const BADGE_WIDTH: i32 = 140;
+/// ラベルが長いバッジ (`az pr · active · mine`) が広がれる上限。
+pub(crate) const BADGE_SLOT_MAX: i32 = 340;
 /// 検索窓の左端に描く虫眼鏡アイコンのために、入力欄を右へずらす幅。
 pub(crate) const SEARCH_ICON_WIDTH: i32 = 30;
 /// 候補行のアイコン一辺。
@@ -60,6 +62,8 @@ pub(crate) const TEXT_SECONDARY: COLORREF = rgb(189, 189, 189);
 /// 主の breadcrumb より目立つ逆転が起きていた。名前 → breadcrumb → path の
 /// 順に暗くなるよう引き下げてある (背景とのコントラスト比 5.1:1)。
 pub(crate) const TEXT_MUTED: COLORREF = rgb(133, 133, 133);
+/// 同期失敗などの通知行の文字色。
+pub(crate) const WARNING_TEXT: COLORREF = rgb(240, 168, 96);
 /// 選択行 (SELECTED_BG の上) の breadcrumb。
 pub(crate) const SELECTED_TEXT_SECONDARY: COLORREF = rgb(225, 236, 244);
 /// 選択行 (SELECTED_BG の上) の path。SELECTED_BG に対して 4.7:1 を確保する。

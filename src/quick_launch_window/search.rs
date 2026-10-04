@@ -2,11 +2,8 @@
 
 use std::cell::RefCell;
 
-use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::InvalidateRect;
-use windows::Win32::UI::WindowsAndMessaging::{
-    GetClientRect, LB_ADDSTRING, LB_RESETCONTENT, LB_SETCURSEL,
-};
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::UI::WindowsAndMessaging::{LB_ADDSTRING, LB_RESETCONTENT, LB_SETCURSEL};
 use windows::core::HSTRING;
 
 use super::azure_live::{
@@ -15,9 +12,9 @@ use super::azure_live::{
     start_azure_work_item_query,
 };
 use super::layout::{position_window, rows_height};
+pub(super) use super::search_bar::{invalidate_search_bar, update_badge};
 use super::{
-    EDIT_HEIGHT, EVERYTHING_MAX_RESULTS, EVERYTHING_REPLY_ID_START, MAX_LIST_RESULTS, PADDING,
-    RowKind, STATE, State,
+    EVERYTHING_MAX_RESULTS, EVERYTHING_REPLY_ID_START, MAX_LIST_RESULTS, RowKind, STATE, State,
 };
 use crate::config::OpenMode;
 use crate::quick_launch::Entry;
@@ -31,43 +28,6 @@ use crate::quick_launch::Entry;
 /// `window_proc` は unwind 不可なので abort する)。
 /// 借用中は検索と `results` の更新だけを行い、描画用の値を取り出してから
 /// 借用を解放し、その後で `SendMessageW` を呼ぶ。
-/// 検索窓に出すモードバッジを入力文字列から判定し、変わっていれば
-/// 検索窓部分だけ再描画する。
-pub(super) fn update_badge(state: &RefCell<State>, query: &str) {
-    let badge = crate::quick_launch::prefix_badge(query);
-    let live_hint = crate::quick_launch::azure_live_request(query).is_some();
-    let (window, dpi, changed) = {
-        let mut state = state.borrow_mut();
-        let changed = state.badge != badge || state.live_search_hint != live_hint;
-        state.badge = badge;
-        state.live_search_hint = live_hint;
-        (state.window, state.dpi, changed)
-    };
-    if changed {
-        invalidate_search_bar(window, dpi);
-    }
-}
-
-/// 検索窓 (バッジを含む上部の帯) だけを再描画対象にする。
-/// リスト部分を巻き込まないことで、バッジ更新のたびにリスト全体が
-/// ちらつくのを防ぐ。
-pub(super) fn invalidate_search_bar(window: Option<HWND>, dpi: u32) {
-    let Some(window) = window else {
-        return;
-    };
-    unsafe {
-        let mut client = RECT::default();
-        let _ = GetClientRect(window, &mut client);
-        let search_rect = RECT {
-            left: 0,
-            top: 0,
-            right: client.right,
-            bottom: super::layout::scale(PADDING, dpi) * 2 + super::layout::scale(EDIT_HEIGHT, dpi),
-        };
-        let _ = InvalidateRect(Some(window), Some(&search_rect), false);
-    }
-}
-
 pub(super) fn update_results(state: &RefCell<State>) {
     // read_text も Win32 呼び出しなので借用の外で済ませる
     let edit = state.borrow().edit;
@@ -76,6 +36,9 @@ pub(super) fn update_results(state: &RefCell<State>) {
     // リクエスト自体は中断できないため、到着時に捨てる。
     invalidate_azure_live_searches(&mut state.borrow_mut());
     update_badge(state, &query);
+    if query.starts_with(crate::quick_launch::AZURE_DEVOPS_PREFIX) {
+        super::azure_notice::request(state);
+    }
 
     if let Some(rest) = query.strip_prefix(crate::quick_launch::EVERYTHING_PREFIX) {
         start_everything_query(state, rest);
@@ -211,10 +174,34 @@ pub(super) fn update_results(state: &RefCell<State>) {
             if let Some(entry) = state.index.claude_code_entry(&query) {
                 state.results.push(entry);
             }
-            Vec::new()
+            if query == crate::quick_launch::AZURE_DEVOPS_PREFIX {
+                azure_root_headers(state.index.azure_shortcuts.len())
+            } else {
+                Vec::new()
+            }
         };
+        let azure_mode = query.starts_with(crate::quick_launch::AZURE_DEVOPS_PREFIX);
         state.previous_query = Some(query);
-        let (labels, rows) = build_rows(&state.results, &section_headers);
+        let (mut labels, mut rows) = build_rows(&state.results, &section_headers);
+        if azure_mode {
+            // 空の一覧は原因と次の一手を 1 行で示す (FR-9.18.7)
+            let message = state.previous_query.as_deref().and_then(|query| {
+                crate::quick_launch::azure_empty_message(
+                    query,
+                    state.azure_devops.enabled,
+                    !state.azure_devops.projects.is_empty(),
+                )
+            });
+            if rows.is_empty()
+                && let Some(message) = message
+            {
+                labels = vec![HSTRING::from(message.as_str())];
+                rows = vec![RowKind::Message];
+                state.empty_message = Some(message);
+            }
+            // 空の一覧でも通知は出す。0 件のときこそ同期失敗が原因かもしれない
+            super::azure_notice::prepend(&state, &mut labels, &mut rows);
+        }
         state.rows = rows.clone();
         (
             state.list,
@@ -234,6 +221,16 @@ pub(super) fn update_results(state: &RefCell<State>) {
         return;
     };
     populate_list(list, &labels, &rows);
+}
+
+/// `az ` 直後の一覧の区分見出し (FR-9.18.7)。先頭の `shortcuts` 件が
+/// ショートカット、残りがコマンド候補 (`Index::search` の並びと対応する)。
+fn azure_root_headers(shortcuts: usize) -> Vec<(usize, &'static str)> {
+    if shortcuts == 0 {
+        vec![(0, "Commands")]
+    } else {
+        vec![(0, "Shortcuts"), (shortcuts, "Commands")]
+    }
 }
 
 /// `f ` プレフィックスに入った。Everything へ非同期クエリを送り、

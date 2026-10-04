@@ -1,8 +1,8 @@
 //! 検索窓・候補リストの描画本体。
 
-use super::badge::{badge_color, shows_live_search_hint};
+use super::badge::badge_color;
 use super::draw_icons::backdrop_tint;
-use super::layout::{scale, weekday_label};
+use super::layout::{badge_slot_width, scale, weekday_label};
 use super::{
     ACCENT, BADGE_WIDTH, EDIT_HEIGHT, PADDING, SEARCH_ICON, STATE, SURFACE, SURFACE_BORDER,
     SURFACE_HOVER, TEXT_MUTED,
@@ -33,8 +33,8 @@ pub(super) fn paint_window(window: HWND) {
             detail_font,
             everything_flags,
             everything_active,
-            live_hint,
             tag_font,
+            badge_label,
         ) = STATE.with(|state| {
             let state = state.borrow();
             let badge = if state.copy_feedback {
@@ -54,7 +54,7 @@ pub(super) fn paint_window(window: HWND) {
                 .collect();
             let rank = selected_row.and_then(|row| item_rows.iter().position(|&i| i == row));
             (
-                super::draw_footer::footer_hints(entry.as_ref()),
+                super::draw_footer::footer_hints(entry.as_ref(), state.live_search_hint),
                 super::draw_footer::footer_position(rank, item_rows.len()),
                 state.dpi,
                 state.background_brush,
@@ -63,8 +63,13 @@ pub(super) fn paint_window(window: HWND) {
                 state.detail_font,
                 state.everything_flags,
                 state.everything_active,
-                state.live_search_hint,
                 state.tag_font,
+                // 一時表示 (COPIED) の間は解釈済みフィルタを出さず、その文字だけを出す
+                if state.copy_feedback {
+                    None
+                } else {
+                    state.badge_label.clone()
+                },
             )
         });
         if let Some(background) = background {
@@ -100,7 +105,8 @@ pub(super) fn paint_window(window: HWND) {
             draw_search_icon(hdc, search, dpi);
 
             if let Some(badge) = badge {
-                draw_badge(hdc, badge, search, dpi, detail_font, live_hint);
+                let label = badge_label.as_deref().unwrap_or(badge);
+                draw_badge(hdc, badge, label, search, dpi, detail_font);
                 if everything_active {
                     draw_everything_flag_badges(hdc, everything_flags, search, dpi, detail_font);
                 }
@@ -148,21 +154,21 @@ unsafe fn draw_search_icon(hdc: HDC, search: RECT, dpi: u32) {
 }
 
 /// 検索窓の右端に、アクティブなプレフィックスモードの名前を丸バッジで描く。
+///
+/// `badge` は色を決めるモード名、`label` は実際に書く文字列
+/// (`az pr` では解釈済みフィルタ。FR-9.18.7)。長い `label` は幅を広げる。
 pub(super) unsafe fn draw_badge(
     hdc: HDC,
     badge: &str,
+    label: &str,
     search: RECT,
     dpi: u32,
     detail_font: Option<HFONT>,
-    // 現在の入力で `Ctrl+Enter` の Live 検索が実際に成立するか。
-    // `az project` / `az optimize` は検索対象を持たず Live にならないので、
-    // バッジも通常表示に戻す (表示と挙動の食い違いを残さない)
-    live_hint: bool,
 ) {
     unsafe {
         let color = badge_color(badge);
         let height = scale(20, dpi);
-        let width = scale(BADGE_WIDTH, dpi) - scale(16, dpi);
+        let width = badge_slot_width((label != badge).then_some(label), dpi) - scale(16, dpi);
         let rect = RECT {
             left: search.right - scale(10, dpi) - width,
             top: search.top + (search.bottom - search.top - height) / 2,
@@ -196,11 +202,6 @@ pub(super) unsafe fn draw_badge(
             SetBkMode(hdc, TRANSPARENT);
             SetTextColor(hdc, color);
             let mut text_rect = rect;
-            let label = if live_hint && shows_live_search_hint(Some(badge)) {
-                "Ctrl+Enter  Live"
-            } else {
-                badge
-            };
             draw_text_centered(hdc, label, &mut text_rect);
             SelectObject(hdc, old_font);
         }

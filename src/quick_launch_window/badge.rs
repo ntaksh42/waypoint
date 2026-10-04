@@ -22,10 +22,6 @@ pub(super) fn badge_color(badge: &str) -> COLORREF {
     }
 }
 
-pub(super) fn shows_live_search_hint(badge: Option<&str>) -> bool {
-    badge == Some("AZURE DEVOPS")
-}
-
 /// 候補行の右端に出す種別タグ。アイコンだけでは見分けにくい
 /// (フォルダ・ファイル・URL がどれも似た見た目になる) ため、文字で補う。
 /// `az ` モードの Azure DevOps 候補は URL から PR / Work Item 等を判定する。
