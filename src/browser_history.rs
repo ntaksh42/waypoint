@@ -40,7 +40,7 @@ fn scan_profiles(profiles: impl IntoIterator<Item = Profile>) -> Vec<Visit> {
         for (last_visit, visit) in visits {
             // URL のパス・クエリは大小文字を区別するので、Windows パスと
             // 同じ小文字化でまとめると別ページの履歴が消えてしまう。
-            let key = visit.url.clone();
+            let key = history_url_key(&visit.url);
             if by_url
                 .get(&key)
                 .is_none_or(|(known, _)| *known < last_visit)
@@ -53,6 +53,28 @@ fn scan_profiles(profiles: impl IntoIterator<Item = Profile>) -> Vec<Visit> {
     let mut visits: Vec<_> = by_url.into_values().collect();
     visits.sort_by_key(|(last_visit, _)| std::cmp::Reverse(*last_visit));
     visits.into_iter().map(|(_, visit)| visit).collect()
+}
+
+/// Learn の表示タブ・記事内アンカーは同じ記事としてまとめる。
+/// 他サイトのクエリや SPA のフラグメントはページを識別するため保持する。
+fn history_url_key(url: &str) -> String {
+    let Ok(mut parsed) = reqwest::Url::parse(url) else {
+        return url.to_string();
+    };
+    if parsed.host_str() != Some("learn.microsoft.com") {
+        return url.to_string();
+    }
+    parsed.set_fragment(None);
+    let query: Vec<_> = parsed
+        .query_pairs()
+        .filter(|(key, _)| key != "tabs")
+        .map(|pair| (pair.0.into_owned(), pair.1.into_owned()))
+        .collect();
+    parsed.set_query(None);
+    if !query.is_empty() {
+        parsed.query_pairs_mut().extend_pairs(query);
+    }
+    parsed.to_string()
 }
 
 /// ブラウザ起動中は `History` が `History-journal` 付きのトランザクション中に
@@ -137,6 +159,55 @@ fn profile_paths() -> Vec<Profile> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn history_merges_learn_article_variants_and_keeps_latest_url() {
+        let root = std::env::temp_dir().join(format!(
+            "waypoint-history-learn-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut profiles = Vec::new();
+        for browser in ["Chrome", "Edge"] {
+            let path = root.join(browser);
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE urls (title TEXT, url TEXT, last_visit_time INTEGER);
+                     INSERT INTO urls VALUES ('Install', 'https://learn.microsoft.com/ja-jp/windows/powertoys/install', 10);
+                     INSERT INTO urls VALUES ('Install', 'https://learn.microsoft.com/ja-jp/windows/powertoys/install#tabs=winget%2Cextract-094', 20);
+                     INSERT INTO urls VALUES ('Install', 'https://learn.microsoft.com/ja-jp/windows/powertoys/install?tabs=winget%2Cextract-094', 30);
+                     INSERT INTO urls VALUES ('Other article', 'https://learn.microsoft.com/ja-jp/windows/powertoys/overview', 5);
+                     INSERT INTO urls VALUES ('Version', 'https://learn.microsoft.com/en-us/dotnet/api/example?view=net-8.0&tabs=csharp#examples', 4);
+                     INSERT INTO urls VALUES ('Version', 'https://learn.microsoft.com/en-us/dotnet/api/example?tabs=vb&view=net-8.0#examples', 4);
+                     INSERT INTO urls VALUES ('Version', 'https://learn.microsoft.com/en-us/dotnet/api/example?view=net-9.0&tabs=csharp#examples', 3);
+                     INSERT INTO urls VALUES ('SPA', 'https://example.com/#/one', 2);
+                     INSERT INTO urls VALUES ('SPA', 'https://example.com/#/two', 1);
+                     INSERT INTO urls VALUES ('Other host', 'https://example.com/?tabs=one', 2);
+                     INSERT INTO urls VALUES ('Other host', 'https://example.com/?tabs=two', 1);",
+                )
+                .unwrap();
+            if browser == "Edge" {
+                connection
+                    .execute_batch("UPDATE urls SET last_visit_time = last_visit_time + 100;")
+                    .unwrap();
+            }
+            profiles.push(Profile { browser, path });
+        }
+        let visits = scan_profiles(profiles);
+        assert_eq!(visits.len(), 8);
+        assert_eq!(visits[0].title, "Install");
+        assert_eq!(
+            visits[0].url,
+            "https://learn.microsoft.com/ja-jp/windows/powertoys/install?tabs=winget%2Cextract-094"
+        );
+        assert!(visits.iter().all(|visit| visit.browser == "Edge"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn history_keeps_case_sensitive_urls_and_merges_exact_duplicates() {
