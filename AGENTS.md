@@ -111,7 +111,7 @@ Get-Content "$env:TEMP\waypoint_selftest.txt"
 
 ## リリース手順
 
-`release.yml` が毎日 6:30 (JST) に、前回リリースタグから `main` が進んで
+`release.yml` が毎日 0:00 と 6:30 (JST) に、前回リリースタグから `main` が進んで
 いれば patch バージョンを自動採番してリリースする。手動で行う場合や
 minor/major を上げる場合は以下の手順を使う。
 

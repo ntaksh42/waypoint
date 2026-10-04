@@ -1,4 +1,4 @@
-# 毎朝 6:30 (JST) に main が前回のリリースタグより進んでいれば、
+# 毎日 0:00 と 6:30 (JST) に main が前回のリリースタグより進んでいれば、
 # patch バージョンを自動採番してタグを打ち、MSI を Release に公開する。
 # バージョン番号のタグ運用は installer.yml (vX.Y.Z) を踏襲する。
 # GITHUB_TOKEN での push はダウンストリームの ci.yml / installer.yml を
@@ -8,6 +8,7 @@ name: release
 on:
   schedule:
     - cron: '30 21 * * *' # UTC 21:30 = JST 6:30
+    - cron: '0 15 * * *' # UTC 15:00 = JST 0:00
   workflow_dispatch:
 
 concurrency:
