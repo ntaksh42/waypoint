@@ -112,9 +112,9 @@ pub(super) fn azure_icon_kind(badge: Option<&str>, path: &str) -> Option<AzureIc
     if badge != Some("AZURE DEVOPS") || !path.starts_with("https://dev.azure.com/") {
         return None;
     }
-    if path.contains("/pullrequest/") {
+    if path.contains("/pullrequest/") || path.ends_with("/pullrequestcreate") {
         Some(AzureIconKind::PullRequest)
-    } else if path.contains("/_workitems/edit/") {
+    } else if path.contains("/_workitems/edit/") || path.contains("/_workitems/create/") {
         Some(AzureIconKind::WorkItem)
     } else if path.contains("/_build") {
         Some(AzureIconKind::Pipeline)

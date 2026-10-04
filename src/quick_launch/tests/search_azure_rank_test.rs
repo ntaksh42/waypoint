@@ -178,7 +178,7 @@ fn azure_sections_put_opened_pull_requests_first_by_usage() {
         ["PR 3: Fix signup", "PR 2: Fix logout"]
     );
     assert_eq!(sections[1].0, "Commands");
-    assert_eq!(sections[1].1.len(), index.azure_shortcuts.len() + 5);
+    assert_eq!(sections[1].1.len(), index.azure_shortcuts.len() + 6);
 }
 
 #[test]

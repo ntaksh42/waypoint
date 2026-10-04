@@ -299,6 +299,7 @@ fn azure_prefix_alone_shows_shortcuts_then_all_azure_commands() {
             "az wit",
             "az pipeline",
             "az project",
+            "az new",
             "az optimize"
         ]
     );

@@ -56,6 +56,9 @@ pub(crate) use candidate_cache::cached_candidate_groups;
 pub(crate) use candidate_cache::{CachedCandidateGroups, try_cached_candidate_groups};
 pub use candidate_cache::{cached_candidates, cached_work_item_candidates};
 pub use convert::AreaNode;
+pub(crate) use convert::{
+    encode_segment as encode_url_segment, project_url as creation_project_url,
+};
 pub use credential::{delete_pat, save_pat};
 pub(crate) use sync::take_refresh_reply;
 pub use sync::{
@@ -64,6 +67,7 @@ pub use sync::{
     suggest_priorities_async, take_pipeline_results, take_pull_request_results,
     take_work_item_results,
 };
+pub(crate) use work_item_types::names_for as work_item_type_names;
 pub use work_item_types::{WorkItemTypeStyle, style_for as work_item_type_style};
 
 const PROJECT_PAGE_SIZE: usize = 1_000;

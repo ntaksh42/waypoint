@@ -94,6 +94,7 @@ impl Index {
             history_lower,
             azure,
             azure_shortcuts,
+            azure_new: super::azure_new::entries(&settings.azure_devops),
             azure_work_items,
             azure_work_items_lower,
             windows,
@@ -187,6 +188,7 @@ impl Index {
     ) {
         (self.azure, self.azure_work_items) = azure_entries_from_candidates(settings, groups);
         self.azure_shortcuts = super::azure_shortcut_entries(&settings.azure_devops);
+        self.azure_new = super::azure_new::entries(&settings.azure_devops);
         self.azure_work_items_lower = super::search::LowerKeys::build_for(&self.azure_work_items);
     }
 

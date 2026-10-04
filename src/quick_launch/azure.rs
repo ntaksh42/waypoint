@@ -28,6 +28,7 @@ pub enum AzureCommand {
     PullRequests(PullRequestFilter),
     Pipelines(PipelineFilter),
     Projects,
+    New,
     WorkItems {
         live: bool,
     },
@@ -112,6 +113,7 @@ pub fn azure_command(query: &str) -> Option<(AzureCommand, &str)> {
         "pipeline" | "pipelines" | "pipe" | "build" | "builds" => {
             Some(parse_pipeline_command(remaining))
         }
+        "new" => Some((AzureCommand::New, remaining)),
         "project" | "projects" => Some((AzureCommand::Projects, remaining)),
         "wit" | "wi" | "workitem" | "workitems" => Some(parse_work_item_command(remaining)),
         "optimize" | "suggest" | "rank" => Some((AzureCommand::Suggest, remaining)),
@@ -244,7 +246,7 @@ pub fn azure_live_request(query: &str) -> Option<AzureLiveRequest> {
         }
         AzureCommand::Pipelines(filter) => Some(AzureLiveRequest::Pipelines { filter, query }),
         AzureCommand::All => Some(AzureLiveRequest::AllKinds { query }),
-        AzureCommand::Projects | AzureCommand::Suggest => None,
+        AzureCommand::Projects | AzureCommand::Suggest | AzureCommand::New => None,
     }
 }
 

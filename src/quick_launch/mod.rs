@@ -10,6 +10,7 @@ use crate::quick_launch_history::Ranking;
 mod azure;
 mod azure_entries;
 mod azure_meta;
+mod azure_new;
 mod azure_search;
 mod index;
 mod index_azure;
@@ -345,6 +346,7 @@ pub struct Index {
     pub(crate) history_lower: Vec<search::LowerKeys>,
     pub(crate) azure: Vec<AzureIndexed>,
     pub(crate) azure_shortcuts: Vec<Entry>,
+    pub(crate) azure_new: azure_new::CreationMenu,
     pub(crate) azure_work_items: Vec<Entry>,
     pub(crate) azure_work_items_lower: Vec<search::LowerKeys>,
     pub(crate) windows: Vec<Entry>,

@@ -20,7 +20,7 @@ use super::{
     RowKind, STATE, State,
 };
 use crate::config::OpenMode;
-use crate::quick_launch::Entry;
+use crate::quick_launch::{AzureCommand, Entry, azure_command};
 
 /// 検索結果を作り直し、リストボックスへ反映する。
 ///
@@ -221,8 +221,19 @@ pub(super) fn update_results(state: &RefCell<State>) {
             }
             Vec::new()
         };
+        if state.results.is_empty() && matches!(azure_command(&query), Some((AzureCommand::New, _)))
+        {
+            state.empty_message =
+                Some("No matching creation command. Try az new bug, task, story, or pr.".into());
+        }
         state.previous_query = Some(query);
-        let (labels, rows) = build_rows(&state.results, &section_headers);
+        let (mut labels, mut rows) = build_rows(&state.results, &section_headers);
+        if rows.is_empty()
+            && let Some(message) = &state.empty_message
+        {
+            labels.push(HSTRING::from(message));
+            rows.push(RowKind::Message);
+        }
         state.rows = rows.clone();
         (
             state.list,

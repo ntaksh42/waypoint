@@ -233,6 +233,7 @@ impl Index {
         }
         if let Some((command, rest)) = azure_command(query) {
             return match command {
+                AzureCommand::New => super::azure_new::search(&self.azure_new, rest),
                 AzureCommand::All => super::azure_search::search(
                     self.azure
                         .iter()

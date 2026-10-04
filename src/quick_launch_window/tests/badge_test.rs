@@ -72,6 +72,21 @@ fn azure_candidates_are_tagged_by_url_only_in_azure_mode() {
     let action = Action::OpenUrl(url.into());
     assert_eq!(action_tag(&action, Some("AZURE DEVOPS"), url), "PR");
     assert_eq!(action_tag(&action, Some("BOOKMARKS"), url), "Link");
+    for (url, tag) in [
+        (
+            "https://dev.azure.com/org/project/_workitems/create/Bug",
+            "Work Item",
+        ),
+        (
+            "https://dev.azure.com/org/project/_git/repo/pullrequestcreate",
+            "PR",
+        ),
+    ] {
+        assert_eq!(
+            action_tag(&Action::OpenUrl(url.into()), Some("AZURE DEVOPS"), url),
+            tag
+        );
+    }
 }
 
 #[test]

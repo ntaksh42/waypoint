@@ -16,6 +16,7 @@ pub(crate) fn azure_command_entries() -> &'static [Entry] {
             ("az wit", "Search work items"),
             ("az pipeline", "Search build pipelines"),
             ("az project", "Open configured projects"),
+            ("az new", "Create work items or pull requests"),
         ]
         .into_iter()
         .map(|(name, breadcrumb)| Entry {

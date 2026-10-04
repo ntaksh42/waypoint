@@ -31,7 +31,7 @@ struct TypeRow {
     style: WorkItemTypeStyle,
 }
 
-type Registry = HashMap<(String, String, String), WorkItemTypeStyle>;
+type Registry = HashMap<(String, String, String), TypeRow>;
 
 fn registry() -> &'static RwLock<Registry> {
     static REGISTRY: OnceLock<RwLock<Registry>> = OnceLock::new();
@@ -53,7 +53,21 @@ pub fn style_for(organization: &str, project: &str, name: &str) -> Option<WorkIt
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .get(&key(organization, project, name))
-        .cloned()
+        .map(|row| row.style.clone())
+}
+
+/// 同期済みの正式な Type 名。URL に使うため API の大文字・小文字を保持する。
+pub(crate) fn names_for(organization: &str, project: &str) -> Vec<String> {
+    let (organization, project, _) = key(organization, project, "");
+    let mut names = registry()
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .iter()
+        .filter(|((org, proj, _), _)| *org == organization && *proj == project)
+        .map(|(_, row)| row.name.clone())
+        .collect::<Vec<_>>();
+    names.sort_by_key(|name| name.to_lowercase());
+    names
 }
 
 /// `color` は `CC293D` のような 16 進 6 桁 (`#` 付きや前後の空白は許す)。
@@ -106,7 +120,7 @@ pub(crate) fn sync_work_item_types(
     );
     registry.retain(|(org, proj, _), _| *org != organization || *proj != project_name);
     for row in rows {
-        registry.insert(key(&organization, &project_name, &row.name), row.style);
+        registry.insert(key(&organization, &project_name, &row.name), row);
     }
     Ok(())
 }
@@ -164,9 +178,12 @@ fn load_all() -> Result<Registry, String> {
         .filter_map(|(organization, project, name, color, icon)| {
             Some((
                 key(&organization, &project, &name),
-                WorkItemTypeStyle {
-                    color: parse_color(&color)?,
-                    icon,
+                TypeRow {
+                    name,
+                    style: WorkItemTypeStyle {
+                        color: parse_color(&color)?,
+                        icon,
+                    },
                 },
             ))
         })
@@ -208,13 +225,17 @@ mod tests {
     fn lookup_ignores_case_and_surrounding_spaces() {
         registry().write().unwrap().insert(
             key("Org-Lookup", "Proj", "User Story"),
-            WorkItemTypeStyle {
-                color: (1, 2, 3),
-                icon: None,
+            TypeRow {
+                name: "User Story".into(),
+                style: WorkItemTypeStyle {
+                    color: (1, 2, 3),
+                    icon: None,
+                },
             },
         );
         let found = style_for(" org-lookup ", "PROJ", "user story").unwrap();
         assert_eq!(found.color, (1, 2, 3));
+        assert_eq!(names_for("ORG-LOOKUP", " proj "), vec!["User Story"]);
         assert!(style_for("org-lookup", "proj", "Bug").is_none());
     }
 }
