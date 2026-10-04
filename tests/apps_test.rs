@@ -40,3 +40,13 @@ fn duplicate_names_across_roots_keep_the_first_seen() {
 
     fs::remove_dir_all(&dir).unwrap();
 }
+
+/// 並列解決と解決結果の記憶を入れても、実機のスタートメニューに対する
+/// 結果 (件数・順序) は 1 回目と 2 回目で変わらない。
+#[test]
+fn scan_is_stable_across_repeated_calls() {
+    let _com = waypoint::shell::ComGuard::new();
+    let first = waypoint::apps::scan();
+    let second = waypoint::apps::scan();
+    assert_eq!(first, second);
+}

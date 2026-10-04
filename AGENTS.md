@@ -54,6 +54,11 @@ The goal is to be the most capable general launcher on Windows — broader than 
   → 変化があったときだけ保存 (12.5ms → 3〜6ms)
 - `k ` (プロセス kill) が打鍵ごとにプロセスを列挙していた (1 回 6ms、絞り込み自体は 0.06ms)
   → ウィンドウを開いてから最初の `k ` で 1 回だけ取る (`State::process_snapshot`)
+- `apps::scan` が毎回全 `.lnk` を 1 スレッドで `IPersistFile::Load` していた
+  → 4 スレッド (各自 STA) で解決し (cold 75 → 53ms)、解決結果を更新日時キーで
+  記憶して再読み込みでは Load しない (warm 28 → 3ms)。失敗は記憶しない
+- `agent_sessions::scan` がファイルごとに `is_dir` / `metadata` で stat していた
+  → `DirEntry::metadata` (列挙で得た情報) を使う (warm 12.8 → 5ms)
 - `WM_SETTINGCHANGE` を lParam を見ずに全部処理していた
   → `"ImmersiveColorSet"` に限定 (無関係な設定変更ごとの 15ms を除去)
 - 起動時・設定の再読み込み時に `Index::build` と `dynamic::refresh` を UI スレッドで
@@ -70,6 +75,8 @@ The goal is to be the most capable general launcher on Windows — broader than 
 | `rank_matches` を部分ソート (`select_nth_unstable`) に | 誤差。支配的なのはソートではなく Vec 確保 |
 | アイコンキャッシュのキー生成で確保を使い回す | 0.003ms → 0.001ms。複雑さに見合わない |
 | 描画の `CreateSolidBrush` / `CreatePen` を色ごとに使い回す | Quick Launch の 24 行で 0.027ms → 0.022ms、メニューの 48 項目で 0.056ms → 0.036ms。ブラシ生成は `GetDC` より 1 桁以上安い |
+| 起動時の `register_native_host` を変更時のみ書き込みにする | 実測 0.9ms (`--startup-timing`)。直す価値なし |
+| `apps::scan` の並列を 4 → 8 スレッドに | 差が出ない (4 スレッドで頭打ち) |
 
 **「GDI の生成・破棄は重い」と一括りにしないこと。** 同じ 48 回でも
 `GetDC` は 0.73ms、`CreateSolidBrush` は 0.056ms と 1 桁以上違う。

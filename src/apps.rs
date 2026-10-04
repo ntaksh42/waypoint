@@ -10,9 +10,12 @@
 //! `CoCreateInstance` が静かに失敗し、全件が壊れたリンク扱いで
 //! 除外される (実測で確認済み)。
 
+use std::collections::HashMap;
 use std::fs;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
+use std::time::SystemTime;
 
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::Com::{
@@ -43,8 +46,36 @@ pub fn scan() -> Vec<App> {
     for root in start_menu_roots() {
         collect(&root, &mut apps, &mut seen);
     }
-    apps.retain(|app| target_exists(&app.shortcut_path));
-    apps
+    retain_existing(apps)
+}
+
+/// 解決に使うスレッド数。`.lnk` の `IPersistFile::Load` が 1 件ずつ I/O を
+/// 待つため、複数スレッドで重ねると待ちが隠れる。
+const RESOLVE_WORKERS: usize = 4;
+
+/// 実体のあるショートカットだけを、元の順序を保って残す。
+///
+/// `IShellLinkW` は STA 前提なので、各スレッドが自前で COM を初期化する。
+fn retain_existing(apps: Vec<App>) -> Vec<App> {
+    let chunk = apps.len().div_ceil(RESOLVE_WORKERS).max(1);
+    std::thread::scope(|scope| {
+        let workers: Vec<_> = apps
+            .chunks(chunk)
+            .map(|part| {
+                scope.spawn(move || {
+                    let _com = crate::shell::ComGuard::new();
+                    part.iter()
+                        .filter(|app| target_exists(&app.shortcut_path))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().unwrap_or_default())
+            .collect()
+    })
 }
 
 fn start_menu_roots() -> Vec<PathBuf> {
@@ -112,7 +143,38 @@ pub fn collect(dir: &Path, out: &mut Vec<App>, seen: &mut std::collections::Hash
 /// ファイル I/O を伴うため、この確認自体は起動時 1 回だけ行う
 /// (`dynamic::refresh` と同じ非表示経路)。
 fn target_exists(shortcut_path: &str) -> bool {
-    resolve_target(shortcut_path).is_some_and(|target| Path::new(&target).exists())
+    resolve_target_cached(shortcut_path).is_some_and(|target| Path::new(&target).exists())
+}
+
+/// `.lnk` ごとの更新日時と解決したリンク先。
+type TargetCache = Mutex<HashMap<String, (SystemTime, String)>>;
+
+/// 解決結果の記憶。設定の再読み込みのたびに全 `.lnk` を `IPersistFile::Load`
+/// し直さないための物 (実測で warm 時も 83 件で約 20ms)。リンク先が消えたかは
+/// 呼び出し側が毎回 `exists` で見るので、記憶するのは解決結果だけ。
+/// 失敗は記憶しない (COM が未初期化の間の失敗などが居座らないように)。
+static TARGETS: LazyLock<TargetCache> = LazyLock::new(Mutex::default);
+
+/// 更新日時が前回と同じなら記憶したリンク先を返し、変わっていれば解決し直す。
+fn resolve_target_cached(shortcut_path: &str) -> Option<String> {
+    let modified = fs::metadata(shortcut_path)
+        .and_then(|m| m.modified())
+        .ok()?;
+    let cached = TARGETS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(shortcut_path)
+        .filter(|(at, _)| *at == modified)
+        .map(|(_, target)| target.clone());
+    if cached.is_some() {
+        return cached;
+    }
+    let target = resolve_target(shortcut_path)?;
+    TARGETS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(shortcut_path.to_string(), (modified, target.clone()));
+    Some(target)
 }
 
 fn resolve_target(shortcut_path: &str) -> Option<String> {

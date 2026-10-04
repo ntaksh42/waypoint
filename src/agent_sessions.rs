@@ -92,8 +92,8 @@ fn scan() -> Vec<Session> {
     let mut next = HashMap::new();
     let mut sessions = Vec::new();
 
-    for path in claude_session_files(&home.join(".claude").join("projects")) {
-        if let Some((modified, Some(parsed))) = parse_cached(&path, &previous, &mut next, |path| {
+    for (path, modified) in claude_session_files(&home.join(".claude").join("projects")) {
+        if let Some(parsed) = parse_cached(&path, modified, &previous, &mut next, |path| {
             let (head, tail) = read_ends(path)?;
             parse_claude(&head, &tail)
         }) && let (Some(title), Some(id)) = (parsed.title, file_stem(&path))
@@ -112,14 +112,14 @@ fn scan() -> Vec<Session> {
     let titles = std::fs::read_to_string(codex.join("session_index.jsonl"))
         .map(|text| parse_codex_index(&text))
         .unwrap_or_default();
-    for path in codex_rollout_files(&codex.join("sessions")) {
+    for (path, modified) in codex_rollout_files(&codex.join("sessions")) {
         let Some(id) = file_stem(&path).and_then(|stem| codex_rollout_id(&stem)) else {
             continue;
         };
         let Some(title) = titles.get(&id) else {
             continue;
         };
-        if let Some((modified, Some(parsed))) = parse_cached(&path, &previous, &mut next, |path| {
+        if let Some(parsed) = parse_cached(&path, modified, &previous, &mut next, |path| {
             let mut head = Vec::new();
             File::open(path)
                 .ok()?
@@ -148,52 +148,82 @@ fn scan() -> Vec<Session> {
 }
 
 /// 更新日時が前回と同じなら前回の結果を使い、変わっていれば `parse` で読み直す。
+/// 更新日時は列挙時に得たものを受け取る (ファイルごとの stat を避ける)。
 fn parse_cached(
     path: &Path,
+    modified: SystemTime,
     previous: &ParsedCache,
     next: &mut ParsedCache,
     parse: impl FnOnce(&Path) -> Option<Parsed>,
-) -> Option<(SystemTime, Option<Parsed>)> {
-    let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok()?;
+) -> Option<Parsed> {
     let parsed = match previous.get(path) {
         Some((cached, parsed)) if *cached == modified => parsed.clone(),
         _ => parse(path),
     };
     next.insert(path.to_path_buf(), (modified, parsed.clone()));
-    Some((modified, parsed))
+    parsed
 }
 
-/// `projects/<プロジェクト>/<id>.jsonl`。サブエージェントの記録
+/// `projects/<プロジェクト>/<id>.jsonl` と更新日時。サブエージェントの記録
 /// (`<id>/subagents/…`) は再開の対象ではないので 1 階層目だけを見る。
-fn claude_session_files(projects: &Path) -> Vec<PathBuf> {
-    read_dir_paths(projects)
+fn claude_session_files(projects: &Path) -> Vec<(PathBuf, SystemTime)> {
+    read_dir_entries(projects)
         .into_iter()
-        .filter(|path| path.is_dir())
-        .flat_map(|project| read_dir_paths(&project))
-        .filter(|path| path.extension().is_some_and(|ext| ext == "jsonl"))
+        .filter(|entry| entry.is_dir)
+        .flat_map(|project| read_dir_entries(&project.path))
+        .filter(|entry| entry.path.extension().is_some_and(|ext| ext == "jsonl"))
+        .filter_map(|entry| Some((entry.path, entry.modified?)))
         .collect()
 }
 
-/// `sessions/<年>/<月>/<日>/rollout-*.jsonl`。
-fn codex_rollout_files(sessions: &Path) -> Vec<PathBuf> {
+/// `sessions/<年>/<月>/<日>/rollout-*.jsonl` と更新日時。
+fn codex_rollout_files(sessions: &Path) -> Vec<(PathBuf, SystemTime)> {
     let mut dirs = vec![sessions.to_path_buf()];
     let mut files = Vec::new();
     while let Some(dir) = dirs.pop() {
-        for path in read_dir_paths(&dir) {
-            if path.is_dir() {
-                dirs.push(path);
-            } else if path.extension().is_some_and(|ext| ext == "jsonl") {
-                files.push(path);
+        for entry in read_dir_entries(&dir) {
+            if entry.is_dir {
+                dirs.push(entry.path);
+            } else if entry.path.extension().is_some_and(|ext| ext == "jsonl")
+                && let Some(modified) = entry.modified
+            {
+                files.push((entry.path, modified));
             }
         }
     }
     files
 }
 
-fn read_dir_paths(dir: &Path) -> Vec<PathBuf> {
-    std::fs::read_dir(dir)
-        .map(|entries| entries.flatten().map(|entry| entry.path()).collect())
-        .unwrap_or_default()
+struct DirItem {
+    path: PathBuf,
+    is_dir: bool,
+    modified: Option<SystemTime>,
+}
+
+/// ディレクトリの中身を、種別と更新日時つきで返す。
+///
+/// Windows の `DirEntry::metadata` は列挙で得た情報をそのまま返すので、
+/// 1 件ずつ `is_dir` / `metadata` で stat し直さずに済む。シンボリックリンクだけは
+/// 列挙の情報がリンク自身のものなので、リンク先を引き直す。
+fn read_dir_entries(dir: &Path) -> Vec<DirItem> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let mut meta = entry.metadata().ok()?;
+            if meta.file_type().is_symlink() {
+                meta = std::fs::metadata(&path).ok()?;
+            }
+            Some(DirItem {
+                is_dir: meta.is_dir(),
+                modified: meta.modified().ok(),
+                path,
+            })
+        })
+        .collect()
 }
 
 fn file_stem(path: &Path) -> Option<String> {
