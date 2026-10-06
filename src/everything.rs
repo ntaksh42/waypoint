@@ -9,6 +9,8 @@
 //! 後から `WM_COPYDATA` で届く。呼び出し側 (`quick_launch_window.rs`) が
 //! 自分のウィンドウハンドルを `reply_hwnd` にして受け取る。
 
+use std::sync::{Condvar, Mutex, Once};
+
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, SMTO_ABORTIFHUNG, SendMessageTimeoutW};
@@ -53,38 +55,96 @@ pub fn is_running() -> bool {
     find_everything_window().is_some()
 }
 
+/// 送信待ちのクエリ。
+struct Request {
+    reply_hwnd: isize,
+    reply_message: u32,
+    text: String,
+    max_results: u32,
+    flags: u32,
+}
+
+/// 送信スレッドへ渡す最新 1 件の置き場。
+///
+/// 未送信の依頼があれば新しい依頼で上書きする。Everything は新しいクエリを
+/// 受けると前のものを黙って捨てるので、速い打鍵で積み上がった古い依頼を
+/// 全部送っても結果は同じで、Everything に無駄な検索をさせるだけになる。
+struct Mailbox {
+    slot: Mutex<Option<Request>>,
+    ready: Condvar,
+}
+
+impl Mailbox {
+    fn submit(&self, request: Request) {
+        *self.slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(request);
+        self.ready.notify_one();
+    }
+
+    /// 依頼が来るまで待ち、最新の 1 件を取り出す。
+    fn take(&self) -> Request {
+        let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            if let Some(request) = slot.take() {
+                return request;
+            }
+            slot = self.ready.wait(slot).unwrap_or_else(|e| e.into_inner());
+        }
+    }
+}
+
+static MAILBOX: Mailbox = Mailbox {
+    slot: Mutex::new(None),
+    ready: Condvar::new(),
+};
+static WORKER: Once = Once::new();
+
 /// 検索クエリを送る。結果は `reply_hwnd` へ `WM_COPYDATA`
 /// (`dwData == reply_message`) で非同期に届く。
 ///
 /// Everything は 1 ウィンドウにつき 1 クエリしか処理しない。新しいクエリを
 /// 送ると前のクエリは黙ってキャンセルされる (SDK のコメント通り)。
-/// 送信に失敗した場合 (Everything 未起動など) は false を返す。
+/// Everything 未起動などで送れない場合は何も起きない (0 件のまま)。
+///
+/// 送信は専用スレッドで行う。UI スレッドから同期で送ると、Everything が
+/// 重い検索を処理中は打鍵ごとに最大 100ms 入力が固まる。ここは依頼を
+/// 置くだけで待たない。
 ///
 /// `flags` は `MATCH_CASE` / `MATCH_WHOLE_WORD` / `REGEX` の OR 合成。
 /// 何も絞り込まない既定検索は `0` を渡す。
-pub fn query(
-    reply_hwnd: HWND,
-    reply_message: u32,
-    text: &str,
-    max_results: u32,
-    flags: u32,
-) -> bool {
+pub fn query(reply_hwnd: HWND, reply_message: u32, text: &str, max_results: u32, flags: u32) {
+    WORKER.call_once(|| {
+        std::thread::spawn(|| {
+            loop {
+                send(&MAILBOX.take());
+            }
+        });
+    });
+    MAILBOX.submit(Request {
+        reply_hwnd: reply_hwnd.0 as isize,
+        reply_message,
+        text: text.to_string(),
+        max_results,
+        flags,
+    });
+}
+
+fn send(request: &Request) {
     let Some(everything) = find_everything_window() else {
-        return false;
+        return;
     };
 
     // EVERYTHING_IPC_QUERYW は pack(1) の可変長構造体:
     // reply_hwnd(4) + reply_copydata_message(4) + search_flags(4) + offset(4)
     // + max_results(4) + 検索文字列 (UTF-16, null 終端)
-    let mut search: Vec<u16> = text.encode_utf16().collect();
+    let mut search: Vec<u16> = request.text.encode_utf16().collect();
     search.push(0);
 
     let mut buffer = Vec::with_capacity(20 + search.len() * 2);
-    buffer.extend_from_slice(&(reply_hwnd.0 as u32).to_le_bytes());
-    buffer.extend_from_slice(&reply_message.to_le_bytes());
-    buffer.extend_from_slice(&flags.to_le_bytes());
+    buffer.extend_from_slice(&(request.reply_hwnd as u32).to_le_bytes());
+    buffer.extend_from_slice(&request.reply_message.to_le_bytes());
+    buffer.extend_from_slice(&request.flags.to_le_bytes());
     buffer.extend_from_slice(&0u32.to_le_bytes()); // offset
-    buffer.extend_from_slice(&max_results.to_le_bytes());
+    buffer.extend_from_slice(&request.max_results.to_le_bytes());
     for unit in &search {
         buffer.extend_from_slice(&unit.to_le_bytes());
     }
@@ -95,9 +155,8 @@ pub fn query(
         lpData: buffer.as_mut_ptr().cast(),
     };
 
-    // UI スレッドからキー入力のたびに同期呼び出しされる。Everything の
-    // メッセージループが停止していても検索窓ごとフリーズしないよう、
-    // 無期限ブロッキングの SendMessageW ではなくタイムアウト付きを使う
+    // Everything のメッセージループが停止していても送信スレッドごと固まらない
+    // よう、無期限ブロッキングの SendMessageW ではなくタイムアウト付きを使う
     // (browser_tabs.rs の request_focus と同じ作法)。
     unsafe {
         let _ = SendMessageTimeoutW(
@@ -110,7 +169,6 @@ pub fn query(
             None,
         );
     }
-    true
 }
 
 /// `WM_COPYDATA` で届いた `EVERYTHING_IPC_LISTW` をパースする。
@@ -192,3 +250,31 @@ fn read_wide_str(data: &[u8], offset: usize) -> Option<String> {
 
 /// `EVERYTHING_IPC_ALLRESULTS` の値。テストや呼び出し側から参照する。
 pub const ALL_RESULTS: u32 = IPC_ALLRESULTS;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(text: &str) -> Request {
+        Request {
+            reply_hwnd: 0,
+            reply_message: 0,
+            text: text.to_string(),
+            max_results: 1,
+            flags: 0,
+        }
+    }
+
+    #[test]
+    fn mailbox_keeps_only_the_latest_unsent_request() {
+        let mailbox = Mailbox {
+            slot: Mutex::new(None),
+            ready: Condvar::new(),
+        };
+        mailbox.submit(request("a"));
+        mailbox.submit(request("ab"));
+        mailbox.submit(request("abc"));
+        assert_eq!(mailbox.take().text, "abc");
+        assert!(mailbox.slot.lock().unwrap().is_none());
+    }
+}
