@@ -5,7 +5,7 @@ mod convert;
 mod scale;
 mod window;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -22,11 +22,22 @@ pub(crate) use window::bitmap_for_window_sized;
 thread_local! {
     /// パス -> ビットマップ。Quick Launch の再描画ごとに引き直さない。
     static CACHE: RefCell<HashMap<String, Cached>> = RefCell::new(HashMap::new());
+    /// 参照の新しさを測る通し番号。大きいほど最近使った。
+    static TICK: Cell<u64> = const { Cell::new(0) };
+}
+
+fn next_tick() -> u64 {
+    TICK.with(|tick| {
+        let next = tick.get() + 1;
+        tick.set(next);
+        next
+    })
 }
 
 /// キャッシュの中身。失敗も覚えるが、成功と違って期限を持つ。
 enum Cached {
-    Bitmap(isize),
+    /// ビットマップと、最後に参照した時点の通し番号。
+    Bitmap(isize, Cell<u64>),
     Failed(Instant),
 }
 
@@ -43,7 +54,8 @@ const RETRY_AFTER: Duration = Duration::from_secs(30);
 ///
 /// GDI オブジェクトはプロセスあたり 10,000 個で頭打ちになり (実測)、
 /// そこに達すると以降すべてのビットマップ生成が失敗する。Everything の
-/// 検索結果はパスごとに 1 件増えるため、上限を超えたら捨てて作り直す。
+/// 検索結果はパスごとに 1 件増えるため、上限に達したら古いものから捨てる
+/// (`make_room`)。
 const MAX_ENTRIES: usize = 2048;
 
 /// 設定 (歯車) アイコンの在り処。
@@ -151,7 +163,10 @@ fn cached_value(key: &str) -> Option<Option<HBITMAP>> {
     // load へ進み、後者は期限が切れるまで None を返す
     CACHE
         .with(|cache| match cache.borrow().get(key) {
-            Some(Cached::Bitmap(raw)) => Some(Some(*raw)),
+            Some(Cached::Bitmap(raw, used)) => {
+                used.set(next_tick());
+                Some(Some(*raw))
+            }
             Some(Cached::Failed(at)) if at.elapsed() < RETRY_AFTER => Some(None),
             _ => None,
         })
@@ -181,15 +196,52 @@ fn cached_bitmap(key: &str, load: impl FnOnce() -> Option<HBITMAP>) -> Option<HB
 fn store_bitmap(key: &str, bitmap: Option<HBITMAP>) {
     CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
-        if cache.len() >= MAX_ENTRIES {
-            drop_entries(&mut cache);
+        if cache.len() >= MAX_ENTRIES && !cache.contains_key(key) {
+            make_room(&mut cache);
         }
         let entry = match bitmap {
-            Some(value) => Cached::Bitmap(value.0 as isize),
+            Some(value) => Cached::Bitmap(value.0 as isize, Cell::new(next_tick())),
             None => Cached::Failed(Instant::now()),
         };
-        cache.insert(key.to_string(), entry);
+        // 同じキーの古いビットマップが残っていると GDI ハンドルが漏れる
+        if let Some(Cached::Bitmap(old, _)) = cache.insert(key.to_string(), entry) {
+            unsafe {
+                let _ = DeleteObject(HBITMAP(old as *mut _).into());
+            }
+        }
     });
+}
+
+/// 上限に達したとき、全件ではなく古いものから一部だけ捨てる。
+///
+/// 全件を捨てると表示中の行のアイコンまで取り直しになる。参照のたびに
+/// 通し番号を更新しているので、表示中の行は新しく、先に落ちるのは
+/// しばらく見ていないものになる。
+fn make_room(cache: &mut HashMap<String, Cached>) {
+    // 失敗の記憶は GDI を使わず、期限切れは引き直す対象なので先に捨てる
+    cache.retain(|_, entry| !matches!(entry, Cached::Failed(at) if at.elapsed() >= RETRY_AFTER));
+    if cache.len() < MAX_ENTRIES {
+        return;
+    }
+    let mut by_use: Vec<(u64, String)> = cache
+        .iter()
+        .filter_map(|(key, entry)| match entry {
+            Cached::Bitmap(_, used) => Some((used.get(), key.clone())),
+            Cached::Failed(_) => None,
+        })
+        .collect();
+    by_use.sort_unstable();
+    for (_, key) in by_use.into_iter().take(MAX_ENTRIES / 4) {
+        if let Some(Cached::Bitmap(raw, _)) = cache.remove(&key) {
+            unsafe {
+                let _ = DeleteObject(HBITMAP(raw as *mut _).into());
+            }
+        }
+    }
+    // 失敗の記憶だけで埋まっている場合は、それらを捨てて空きを作る
+    if cache.len() >= MAX_ENTRIES {
+        cache.retain(|_, entry| matches!(entry, Cached::Bitmap(..)));
+    }
 }
 
 /// 値の `HBITMAP` を解放しつつ全件捨てる。
@@ -200,7 +252,7 @@ fn store_bitmap(key: &str, bitmap: Option<HBITMAP>) {
 /// なる (実測で確認済み) 。値を読んでから `DeleteObject` する。
 fn drop_entries(cache: &mut HashMap<String, Cached>) {
     for (_, entry) in cache.drain() {
-        if let Cached::Bitmap(raw) = entry {
+        if let Cached::Bitmap(raw, _) = entry {
             unsafe {
                 let _ = DeleteObject(HBITMAP(raw as *mut _).into());
             }
@@ -225,4 +277,65 @@ pub(crate) fn bitmap_for_shell_sized(target: &str, size: i32) -> Option<HBITMAP>
 pub(crate) fn clear_cache() {
     async_load::clear();
     CACHE.with(|cache| drop_entries(&mut cache.borrow_mut()));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bitmap() -> HBITMAP {
+        rgba_to_bitmap(&[255, 0, 0, 255], SIZE { cx: 1, cy: 1 }).unwrap()
+    }
+
+    fn contains(key: &str) -> bool {
+        CACHE.with(|cache| matches!(cache.borrow().get(key), Some(Cached::Bitmap(..))))
+    }
+
+    /// 上限を大きく超えて挿入しても、直近に見ていた行 (表示中の 24 件) は
+    /// 取り直しにならない。以前は上限到達で全件が消えていた。
+    #[test]
+    fn eviction_keeps_recently_used_icons() {
+        clear_cache();
+        let visible: Vec<String> = (0..24).map(|i| format!("visible-{i}")).collect();
+        for key in &visible {
+            store_bitmap(key, Some(bitmap()));
+        }
+        for i in 0..MAX_ENTRIES * 3 {
+            store_bitmap(&format!("other-{i}"), Some(bitmap()));
+            // 描画のたびに表示中の行を引く
+            for key in &visible {
+                assert!(cached_value(key).is_some(), "{key} was dropped at {i}");
+            }
+        }
+        assert!(CACHE.with(|cache| cache.borrow().len()) <= MAX_ENTRIES);
+        clear_cache();
+    }
+
+    #[test]
+    fn expired_failures_are_dropped_before_any_bitmap() {
+        clear_cache();
+        store_bitmap("keep", Some(bitmap()));
+        CACHE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            for i in 0..MAX_ENTRIES - 1 {
+                cache.insert(
+                    format!("failed-{i}"),
+                    Cached::Failed(Instant::now() - RETRY_AFTER - Duration::from_secs(1)),
+                );
+            }
+        });
+        store_bitmap("new", Some(bitmap()));
+        assert!(contains("keep"));
+        assert!(contains("new"));
+        clear_cache();
+    }
+
+    #[test]
+    fn replacing_a_key_does_not_leak_the_old_bitmap() {
+        clear_cache();
+        store_bitmap("same", Some(bitmap()));
+        store_bitmap("same", Some(bitmap()));
+        assert_eq!(CACHE.with(|cache| cache.borrow().len()), 1);
+        clear_cache();
+    }
 }
