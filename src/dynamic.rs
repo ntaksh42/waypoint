@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
@@ -142,7 +142,12 @@ pub fn refresh() -> Menus {
     let mut history = load_history();
     // 何も変わっていないのに書くと、原子的保存だけで 12〜15ms かかる
     // (実測)。Quick Launch の表示と終了のたびに走るため、変化時だけ保存する
-    if update_history(&mut history, &recent) {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let updated = update_history(&mut history, &recent);
+    let pruned = prune_history(&mut history, &recent, now);
+    if updated || pruned {
         let _ = save_history(&history);
     }
 
@@ -275,6 +280,41 @@ fn update_history(history: &mut History, recent: &[RecentItem]) -> bool {
     changed
 }
 
+/// 最終利用からこの期間を過ぎた履歴は落とす。
+const HISTORY_MAX_AGE_SECS: u64 = 365 * 24 * 60 * 60;
+/// 履歴の件数上限。超えた分は最終利用が古いものから落とす。
+const HISTORY_MAX_ENTRIES: usize = 2000;
+
+/// 古い履歴と上限を超えた履歴を取り除き、変化があったかを返す。
+///
+/// 履歴は無剪定だと増える一方で、毎回の読み込み・保存・存在確認の対象になる。
+/// 今の Recent に載っている項目は落とさない。落としても次の更新で作り直され、
+/// 保存が毎回走ってしまうため。
+fn prune_history(history: &mut History, recent: &[RecentItem], now: u64) -> bool {
+    let current: HashSet<String> = recent
+        .iter()
+        .map(|item| item.entry.path.to_lowercase())
+        .collect();
+    let before = history.entries.len();
+    history.entries.retain(|key, entry| {
+        current.contains(key) || now.saturating_sub(entry.last_used) <= HISTORY_MAX_AGE_SECS
+    });
+    let excess = history.entries.len().saturating_sub(HISTORY_MAX_ENTRIES);
+    if excess > 0 {
+        let mut by_age: Vec<(u64, String)> = history
+            .entries
+            .iter()
+            .filter(|(key, _)| !current.contains(*key))
+            .map(|(key, entry)| (entry.last_used, key.clone()))
+            .collect();
+        by_age.sort_unstable();
+        for (_, key) in by_age.into_iter().take(excess) {
+            history.entries.remove(&key);
+        }
+    }
+    history.entries.len() != before
+}
+
 fn history_path() -> Option<PathBuf> {
     dirs::config_dir().map(|path| path.join("waypoint").join("history.json"))
 }
@@ -296,7 +336,7 @@ fn save_history(history: &History) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let text = serde_json::to_string_pretty(history).map_err(std::io::Error::other)?;
+    let text = serde_json::to_string(history).map_err(std::io::Error::other)?;
     crate::config::write_atomic(&path, &text)
 }
 
@@ -411,5 +451,50 @@ mod tests {
         update_history(&mut history, std::slice::from_ref(&item));
         update_history(&mut history, std::slice::from_ref(&item));
         assert_eq!(history.entries["c:\\file.txt"].count, 1);
+    }
+
+    fn history_entry(last_used: u64) -> HistoryEntry {
+        HistoryEntry {
+            name: "x".into(),
+            path: "x".into(),
+            is_dir: true,
+            count: 1,
+            last_seen: last_used,
+            last_used,
+        }
+    }
+
+    #[test]
+    fn prune_history_drops_stale_and_excess_but_keeps_current_recent_items() {
+        let now = 2 * HISTORY_MAX_AGE_SECS;
+        let mut history = History::default();
+        history.entries.insert("stale".into(), history_entry(1));
+        // 今の Recent に載っている項目は古くても残す (残さないと毎回作り直して保存する)
+        history
+            .entries
+            .insert("current/old".into(), history_entry(1));
+        for i in 0..HISTORY_MAX_ENTRIES + 5 {
+            history
+                .entries
+                .insert(format!("fresh/{i:05}"), history_entry(now - 10 + i as u64));
+        }
+        let recent = [RecentItem {
+            entry: PathEntry {
+                name: "old".into(),
+                path: "current/old".into(),
+            },
+            is_dir: true,
+            modified: 1,
+        }];
+        assert!(prune_history(&mut history, &recent, now));
+        assert!(!history.entries.contains_key("stale"));
+        assert!(history.entries.contains_key("current/old"));
+        // 上限超過ぶんは最終利用が古いもの (fresh/00000 側) から落ちる
+        assert!(!history.entries.contains_key("fresh/00000"));
+        let newest = format!("fresh/{:05}", HISTORY_MAX_ENTRIES + 4);
+        assert!(history.entries.contains_key(&newest));
+        assert_eq!(history.entries.len(), HISTORY_MAX_ENTRIES);
+        // 2 回目は変化なし
+        assert!(!prune_history(&mut history, &recent, now));
     }
 }

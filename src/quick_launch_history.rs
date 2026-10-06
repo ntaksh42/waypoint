@@ -45,8 +45,35 @@ fn save(history: &History) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let text = serde_json::to_string_pretty(history).map_err(std::io::Error::other)?;
+    // 人が読む設定ではないので pretty にしない (書き込み量とパース量を減らす)
+    let text = serde_json::to_string(history).map_err(std::io::Error::other)?;
     crate::config::write_atomic(&path, &text)
+}
+
+/// 最終選択からこの期間を過ぎた項目は履歴から外す。
+const MAX_AGE_SECS: u64 = 365 * 24 * 60 * 60;
+/// 履歴の件数上限。超えた分は最終選択が古いものから落とす。
+const MAX_ENTRIES: usize = 5000;
+
+/// 古い項目と上限を超えた項目を取り除く。履歴は選ぶたびに増える一方で、
+/// 読み込み・保存は全件を対象にするため、放置すると毎回のコストが伸び続ける。
+fn prune(history: &mut History, now: u64) {
+    history
+        .entries
+        .retain(|_, record| now.saturating_sub(record.last_used) <= MAX_AGE_SECS);
+    let excess = history.entries.len().saturating_sub(MAX_ENTRIES);
+    if excess == 0 {
+        return;
+    }
+    let mut by_age: Vec<(u64, String)> = history
+        .entries
+        .iter()
+        .map(|(key, record)| (record.last_used, key.clone()))
+        .collect();
+    by_age.sort_unstable();
+    for (_, key) in by_age.into_iter().take(excess) {
+        history.entries.remove(&key);
+    }
 }
 
 /// 履歴に記録する対象の action か判定し、キーの種別プレフィックスを返す。
@@ -142,6 +169,7 @@ fn record_key(key: String) {
     });
     record.count += 1;
     record.last_used = now;
+    prune(&mut history, now);
     let _ = save(&history);
 }
 
@@ -302,6 +330,90 @@ mod tests {
             ranking.rank_lower(&lower, &lower.path.to_lowercase()),
             (u64::MAX - 2, u64::MAX - 41)
         );
+    }
+
+    fn history_of(count: usize, now: u64) -> History {
+        History {
+            entries: (0..count)
+                .map(|i| {
+                    (
+                        format!("folder|e:/projects/group{}/project-{i}", i % 40),
+                        HistoryEntry {
+                            count: 1 + (i % 7) as u64,
+                            last_used: now - (i as u64) * 3600,
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn prune_drops_stale_entries_and_caps_the_count_oldest_first() {
+        let now = 2 * MAX_AGE_SECS;
+        let mut history = history_of(MAX_ENTRIES + 10, now);
+        history.entries.insert(
+            "folder|stale".into(),
+            HistoryEntry {
+                count: 99,
+                last_used: now - MAX_AGE_SECS - 1,
+            },
+        );
+        prune(&mut history, now);
+        assert!(!history.entries.contains_key("folder|stale"));
+        assert_eq!(history.entries.len(), MAX_ENTRIES);
+        // history_of は i が大きいほど古い。最も新しい項目は残り、最も古い項目が落ちる
+        assert!(
+            history
+                .entries
+                .contains_key("folder|e:/projects/group0/project-0")
+        );
+        let oldest = MAX_ENTRIES + 9;
+        let key = format!("folder|e:/projects/group{}/project-{oldest}", oldest % 40);
+        assert!(!history.entries.contains_key(&key));
+    }
+
+    #[test]
+    fn prune_keeps_a_small_recent_history_untouched() {
+        let now = 1_800_000_000;
+        let mut history = history_of(50, now);
+        prune(&mut history, now);
+        assert_eq!(history.entries.len(), 50);
+    }
+
+    /// load / save のコストが件数にどう伸びるか。実ファイルには触れない。
+    #[test]
+    #[ignore = "手動計測用"]
+    fn bench_history_scaling() {
+        use std::time::Instant;
+        for count in [1_000usize, 10_000] {
+            let history = history_of(count, 1_800_000_000);
+            let pretty = serde_json::to_string_pretty(&history).unwrap();
+            let compact = serde_json::to_string(&history).unwrap();
+            let time = |body: &dyn Fn()| {
+                body();
+                let start = Instant::now();
+                for _ in 0..50 {
+                    body();
+                }
+                start.elapsed().as_secs_f64() * 1000.0 / 50.0
+            };
+            let parse = time(&|| {
+                std::hint::black_box(serde_json::from_str::<History>(&pretty).unwrap());
+            });
+            let ser_pretty = time(&|| {
+                std::hint::black_box(serde_json::to_string_pretty(&history).unwrap());
+            });
+            let ser_compact = time(&|| {
+                std::hint::black_box(serde_json::to_string(&history).unwrap());
+            });
+            println!(
+                "{count:>6} 件: pretty {} B / compact {} B, parse {parse:.3} ms, \
+                 to_string_pretty {ser_pretty:.3} ms, to_string {ser_compact:.3} ms",
+                pretty.len(),
+                compact.len()
+            );
+        }
     }
 }
 
