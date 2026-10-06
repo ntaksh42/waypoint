@@ -4,8 +4,10 @@
 //! 呼び出し側は `item_paths` で集めたパスを `find_missing` へ別スレッドで
 //! 渡し、結果だけを UI スレッドで `remove_paths` に適用する。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::{Config, Item, expand};
 
@@ -23,7 +25,8 @@ impl Config {
     /// (名前, パス) を返す。
     pub fn remove_paths(&mut self, missing: &[String]) -> Vec<(String, String)> {
         let mut removed = Vec::new();
-        remove_in(&mut self.items, &self.variables, missing, &mut removed);
+        let missing: HashSet<String> = missing.iter().map(|path| path.to_lowercase()).collect();
+        remove_in(&mut self.items, &self.variables, &missing, &mut removed);
         removed
     }
 }
@@ -45,7 +48,7 @@ fn collect_paths(items: &[Item], vars: &BTreeMap<String, String>, out: &mut Vec<
 fn remove_in(
     items: &mut Vec<Item>,
     vars: &BTreeMap<String, String>,
-    missing: &[String],
+    missing: &HashSet<String>,
     removed: &mut Vec<(String, String)>,
 ) {
     items.retain(|item| match item {
@@ -53,10 +56,7 @@ fn remove_in(
             let Some(expanded) = expand(path, vars) else {
                 return true;
             };
-            if missing
-                .iter()
-                .any(|m| m.to_lowercase() == expanded.to_lowercase())
-            {
+            if missing.contains(&expanded.to_lowercase()) {
                 removed.push((name.clone(), expanded));
                 false
             } else {
@@ -72,18 +72,73 @@ fn remove_in(
     }
 }
 
+/// 存在確認を並列に走らせるスレッド数。到達できないネットワークパスは 1 件
+/// で数秒固まるため、直列だとその間ほかの確認が全部待たされる。
+const EXISTS_THREADS: usize = 4;
+
 /// `paths` のうち「ルートは存在するのに本体が無い」ものを返す。
 /// ルートが見えない (ドライブ未接続・VPN 切断) 場合と相対パスは
 /// 一時的な不在と区別できないので判定しない。
-pub fn find_missing(paths: &[String], exists: impl Fn(&Path) -> bool) -> Vec<String> {
-    paths
+///
+/// ルートはパスごとではなく種類ごとに 1 回だけ確認する (到達できない共有に
+/// 属する項目が複数あっても、固まるのは 1 回で済む)。確認は並列で行う。
+pub fn find_missing(paths: &[String], exists: impl Fn(&Path) -> bool + Sync) -> Vec<String> {
+    let roots: Vec<Option<PathBuf>> = paths
         .iter()
-        .filter(|path| {
-            let path = Path::new(path.as_str());
-            root_of(path).is_some_and(|root| exists(&root) && !exists(path))
+        .map(|path| root_of(Path::new(path.as_str())))
+        .collect();
+    let mut unique: Vec<&PathBuf> = roots.iter().flatten().collect();
+    unique.sort();
+    unique.dedup();
+    let reachable: HashSet<&PathBuf> = unique
+        .iter()
+        .copied()
+        .zip(par_map(&unique, |root| exists(root)))
+        .filter_map(|(root, alive)| alive.then_some(root))
+        .collect();
+
+    let candidates: Vec<usize> = (0..paths.len())
+        .filter(|&index| {
+            roots[index]
+                .as_ref()
+                .is_some_and(|root| reachable.contains(root))
         })
-        .cloned()
+        .collect();
+    let gone = par_map(&candidates, |&index| {
+        !exists(Path::new(paths[index].as_str()))
+    });
+    candidates
+        .into_iter()
+        .zip(gone)
+        .filter(|(_, gone)| *gone)
+        .map(|(index, _)| paths[index].clone())
         .collect()
+}
+
+/// `items` の各要素に `f` を並列に適用し、元の順序で結果を返す。
+fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let next = AtomicUsize::new(0);
+    let results: Mutex<Vec<(usize, R)>> = Mutex::new(Vec::with_capacity(items.len()));
+    std::thread::scope(|scope| {
+        for _ in 0..EXISTS_THREADS.min(items.len()) {
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(item) = items.get(index) else {
+                        break;
+                    };
+                    let result = f(item);
+                    results
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .push((index, result));
+                }
+            });
+        }
+    });
+    let mut results = results.into_inner().unwrap_or_else(|e| e.into_inner());
+    results.sort_by_key(|(index, _)| *index);
+    results.into_iter().map(|(_, result)| result).collect()
 }
 
 /// `C:\foo` → `C:\`、`\\server\share\foo` → `\\server\share\`。

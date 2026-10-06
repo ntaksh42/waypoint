@@ -172,7 +172,7 @@ fn frequent_entries(history: &History, is_dir: bool) -> Vec<PathEntry> {
     let mut entries: Vec<&HistoryEntry> = history
         .entries
         .values()
-        .filter(|entry| entry.is_dir == is_dir && Path::new(&entry.path).exists())
+        .filter(|entry| entry.is_dir == is_dir)
         .collect();
     entries.sort_by_key(|entry| {
         (
@@ -180,8 +180,11 @@ fn frequent_entries(history: &History, is_dir: bool) -> Vec<PathEntry> {
             std::cmp::Reverse(entry.last_used),
         )
     });
+    // 履歴は剪定されず増える一方で、存在確認は不達のネットワークパスで固まる。
+    // 並べ替えてから、表示する分 (ITEM_LIMIT) が揃うまでだけ確認する
     entries
         .into_iter()
+        .filter(|entry| Path::new(&entry.path).exists())
         .take(ITEM_LIMIT)
         .map(|entry| PathEntry {
             name: entry.name.clone(),
@@ -212,8 +215,12 @@ fn scan_recent_items() -> Vec<RecentItem> {
             continue;
         };
         let target = PathBuf::from(&path);
-        let is_dir = target.is_dir();
-        if !is_dir && !target.is_file() {
+        // is_dir と is_file を別々に呼ぶと stat が 2 回になる
+        let Ok(kind) = fs::metadata(&target) else {
+            continue;
+        };
+        let is_dir = kind.is_dir();
+        if !is_dir && !kind.is_file() {
             continue;
         }
         let key = path.to_lowercase();

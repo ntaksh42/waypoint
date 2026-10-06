@@ -189,3 +189,36 @@ fn unicode_path_case_is_consistent_for_favorites_and_pruning() {
     assert_eq!(cfg.remove_paths(&[r"c:\ärger".into()]).len(), 1);
     assert!(cfg.items.is_empty());
 }
+
+#[test]
+fn find_missing_probes_each_root_once_and_checks_in_parallel() {
+    use std::path::Path;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    let paths: Vec<String> = (0..8).map(|i| format!(r"\\slow\share\gone{i}")).collect();
+    let root_probes = AtomicUsize::new(0);
+    let running = AtomicUsize::new(0);
+    let peak = AtomicUsize::new(0);
+    let exists = |p: &Path| {
+        if p == Path::new(r"\\slow\share\") {
+            root_probes.fetch_add(1, Ordering::SeqCst);
+            return true;
+        }
+        let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+        peak.fetch_max(now, Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(30));
+        running.fetch_sub(1, Ordering::SeqCst);
+        false
+    };
+
+    let missing = crate::config::find_missing(&paths, exists);
+
+    assert_eq!(missing, paths, "元の順序のまま全件が返る");
+    assert_eq!(
+        root_probes.load(Ordering::SeqCst),
+        1,
+        "ルートは 1 回だけ確認"
+    );
+    assert!(peak.load(Ordering::SeqCst) > 1, "存在確認が並列に走る");
+}
