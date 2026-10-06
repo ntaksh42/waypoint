@@ -430,3 +430,27 @@ fn replacing_browser_tabs_with_the_same_list_does_not_rebuild_the_index() {
     super::super::replace_browser_tabs(Browser::Edge, vec![browser_tab(9, "edge")]);
     assert_eq!(STATE.with(|s| s.borrow().index.tabs.len()), 3);
 }
+
+/// 打鍵ごとに走る行ラベル組み立て (24 行)。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_build_rows() {
+    let results: Vec<Entry> = (0..24)
+        .map(|i| Entry {
+            azure: None,
+            name: format!("project-{i}"),
+            breadcrumb: "Folders — work".to_string(),
+            path: format!(r"E:\projects\group{}\project-{i}\src", i % 8),
+            action: Action::OpenFolder(OpenMode::NewWindow),
+            branch: Some("main".to_string()),
+        })
+        .collect();
+    let start = Instant::now();
+    for _ in 0..5000 {
+        std::hint::black_box(build_rows(&results, &[]));
+    }
+    println!(
+        "build_rows x24 {:>8.4} ms",
+        start.elapsed().as_secs_f64() * 1000.0 / 5000.0
+    );
+}

@@ -12,7 +12,7 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::UI::Controls::{EM_SETCUEBANNER, EM_SETMARGINS};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetClientRect, GetCursorPos, MoveWindow, WM_SETFONT,
+    GetClientRect, GetCursorPos, GetWindowRect, MoveWindow, WM_SETFONT,
 };
 use windows::core::w;
 
@@ -103,6 +103,15 @@ pub(super) fn position_window(window: HWND, rows_height: i32, dpi: u32) {
         );
         let x = work.left + (work.right - work.left - width) / 2;
         let y = work.top + (work.bottom - work.top - height) / 2;
+        // 打鍵のたびに呼ばれ、件数が同じなら位置も大きさも変わらない。
+        // 同じ値での MoveWindow もウィンドウ全体の再描画を起こすので省く
+        let mut current = RECT::default();
+        if GetWindowRect(window, &mut current).is_ok()
+            && (current.left, current.top, current.right, current.bottom)
+                == (x, y, x + width, y + height)
+        {
+            return;
+        }
         let _ = MoveWindow(window, x, y, width, height, true);
     }
 }
