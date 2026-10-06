@@ -62,7 +62,13 @@ function connect() {
 
 chrome.tabs.onCreated.addListener(scheduleSnapshot);
 chrome.tabs.onRemoved.addListener(scheduleSnapshot);
-chrome.tabs.onUpdated.addListener(scheduleSnapshot);
+// 読み込み状態・favicon・音声などでも発火するので、一覧に出る項目
+// (URL・タイトル) が変わったときと読み込み完了だけ送る
+chrome.tabs.onUpdated.addListener((_tabId, changeInfo) => {
+  if (changeInfo.url || changeInfo.title || changeInfo.status === "complete") {
+    scheduleSnapshot();
+  }
+});
 chrome.tabs.onMoved.addListener(scheduleSnapshot);
 chrome.tabs.onAttached.addListener(scheduleSnapshot);
 chrome.tabs.onDetached.addListener(scheduleSnapshot);

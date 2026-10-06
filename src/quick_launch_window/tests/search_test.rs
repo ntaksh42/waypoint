@@ -395,3 +395,38 @@ fn live_pull_request_entry_for_a_number_says_it_fetches_by_number() {
         entry.name
     );
 }
+
+fn browser_tab(id: i32, title: &str) -> crate::browser_tabs::Tab {
+    crate::browser_tabs::Tab {
+        id,
+        window_id: 1,
+        title: title.to_string(),
+        url: format!("https://example.com/{id}"),
+    }
+}
+
+/// 拡張は内容が変わらない通知でも全タブを送る。同じ一覧なら索引を作り直さない。
+#[test]
+fn replacing_browser_tabs_with_the_same_list_does_not_rebuild_the_index() {
+    use crate::browser_tabs::Browser;
+    STATE.with(|state| *state.borrow_mut() = State::default());
+    let tabs = || vec![browser_tab(1, "one"), browser_tab(2, "two")];
+
+    super::super::replace_browser_tabs(Browser::Chrome, tabs());
+    assert_eq!(STATE.with(|s| s.borrow().index.tabs.len()), 2);
+
+    // 再構築されたかは、索引側のタブを空にして見分ける
+    STATE.with(|s| s.borrow_mut().index.tabs.clear());
+    super::super::replace_browser_tabs(Browser::Chrome, tabs());
+    assert!(STATE.with(|s| s.borrow().index.tabs.is_empty()));
+
+    super::super::replace_browser_tabs(
+        Browser::Chrome,
+        vec![browser_tab(1, "one"), browser_tab(2, "renamed")],
+    );
+    assert_eq!(STATE.with(|s| s.borrow().index.tabs.len()), 2);
+
+    // 別ブラウザの一覧は互いに影響しない
+    super::super::replace_browser_tabs(Browser::Edge, vec![browser_tab(9, "edge")]);
+    assert_eq!(STATE.with(|s| s.borrow().index.tabs.len()), 3);
+}

@@ -54,7 +54,7 @@ pub const EVERYTHING_PREFIX: &str = "f ";
 /// アプリ検索モードに入るプレフィックス (末尾の半角スペース込み)。
 const APPS_PREFIX: &str = "a ";
 /// 現在開いているブラウザタブを検索するプレフィックス (末尾の半角スペース込み)。
-const TABS_PREFIX: &str = "t ";
+pub const TABS_PREFIX: &str = "t ";
 /// フォルダをターミナルで開く検索モードに入るプレフィックス (末尾の半角スペース込み)。
 const TERMINAL_PREFIX: &str = "ps ";
 /// フォルダを設定済みエディターで開く検索モードに入るプレフィックス (末尾の半角スペース込み)。

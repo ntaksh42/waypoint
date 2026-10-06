@@ -82,9 +82,8 @@ pub fn configure_dynamic(config: &Config, dynamic: &Menus) {
     STATE.with(|state| {
         let has_window = {
             let mut state = state.borrow_mut();
+            // タブは `refresh_dynamic` で消えない。別経路 (`replace_browser_tabs`) で更新する
             state.index.refresh_dynamic(config, dynamic);
-            let tabs = state.browser_tabs.clone();
-            state.index.set_browser_tabs(&tabs);
             // Index の中身 (entries/windows) が変わったので、前回結果への
             // 絞り込み最適化 (`refined_search_term`) をそのまま使い回さない
             state.previous_query = None;
@@ -156,18 +155,43 @@ pub fn replace_browser_tabs(
     tabs: Vec<crate::browser_tabs::Tab>,
 ) {
     STATE.with(|state| {
-        let has_window = {
+        let (has_window, edit) = {
             let mut state = state.borrow_mut();
+            // 拡張はタブの読み込み中など内容が変わらない通知でも全タブを送る。
+            // 同じ一覧なら索引の再構築も再描画もしない
+            let unchanged = {
+                let mut current = state
+                    .browser_tabs
+                    .iter()
+                    .filter(|(source, _)| *source == browser)
+                    .map(|(_, tab)| tab);
+                let mut incoming = tabs.iter();
+                loop {
+                    match (current.next(), incoming.next()) {
+                        (None, None) => break true,
+                        (Some(old), Some(new)) if old == new => {}
+                        _ => break false,
+                    }
+                }
+            };
+            if unchanged {
+                return;
+            }
             state.browser_tabs.retain(|(source, _)| *source != browser);
             state
                 .browser_tabs
                 .extend(tabs.into_iter().map(|tab| (browser, tab)));
-            let tabs = state.browser_tabs.clone();
-            state.index.set_browser_tabs(&tabs);
+            let state = &mut *state;
+            state.index.set_browser_tabs(&state.browser_tabs);
             state.previous_query = None;
-            state.window.is_some()
+            (state.window.is_some(), state.edit)
         };
-        if has_window {
+        // タブを検索するのは `t ` のときだけなので、それ以外の表示は触らない
+        let in_tabs_mode = has_window
+            && edit.is_some_and(|edit| {
+                super::input::read_text(edit).starts_with(crate::quick_launch::TABS_PREFIX)
+            });
+        if in_tabs_mode {
             update_results(state);
         }
     });
