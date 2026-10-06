@@ -7,6 +7,8 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{LazyLock, Mutex};
+use std::time::SystemTime;
 
 use rusqlite::{Connection, OpenFlags};
 
@@ -32,7 +34,7 @@ pub fn scan() -> Vec<Visit> {
 fn scan_profiles(profiles: impl IntoIterator<Item = Profile>) -> Vec<Visit> {
     let mut by_url: HashMap<String, (i64, Visit)> = HashMap::new();
     for profile in profiles {
-        let Ok(visits) = read_profile(&profile) else {
+        let Ok(visits) = read_profile_cached(&profile) else {
             // ブラウザの更新中・ロック中でも Quick Launch 全体は使えるよう、
             // そのブラウザだけを無言でスキップする。
             continue;
@@ -58,6 +60,16 @@ fn scan_profiles(profiles: impl IntoIterator<Item = Profile>) -> Vec<Visit> {
 /// Learn の表示タブ・記事内アンカーは同じ記事としてまとめる。
 /// 他サイトのクエリや SPA のフラグメントはページを識別するため保持する。
 fn history_url_key(url: &str) -> String {
+    // 大半の URL は対象外。パースして組み立て直す前に、ホスト名が
+    // 含まれるかだけを確保なしで見る (ホスト名は大文字小文字を区別しない)
+    const HOST: &[u8] = b"learn.microsoft.com";
+    if !url
+        .as_bytes()
+        .windows(HOST.len())
+        .any(|window| window.eq_ignore_ascii_case(HOST))
+    {
+        return url.to_string();
+    }
     let Ok(mut parsed) = reqwest::Url::parse(url) else {
         return url.to_string();
     };
@@ -75,6 +87,37 @@ fn history_url_key(url: &str) -> String {
         parsed.query_pairs_mut().extend_pairs(query);
     }
     parsed.to_string()
+}
+
+/// `History` ごとの更新日時・サイズと、そのときに読み取った結果。
+/// `Index::build` は設定の保存のたびに走るが、閲覧履歴は変わっていない
+/// ことが大半なので、同じ内容なら SQLite を引き直さない。
+type Read = (SystemTime, u64, Vec<(i64, Visit)>);
+static CACHE: LazyLock<Mutex<HashMap<PathBuf, Read>>> = LazyLock::new(Mutex::default);
+
+fn read_profile_cached(profile: &Profile) -> rusqlite::Result<Vec<(i64, Visit)>> {
+    let stamp = std::fs::metadata(&profile.path)
+        .ok()
+        .and_then(|metadata| Some((metadata.modified().ok()?, metadata.len())));
+    let Some((modified, len)) = stamp else {
+        return read_profile(profile);
+    };
+    let cached = CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&profile.path)
+        .filter(|(at, size, _)| *at == modified && *size == len)
+        .map(|(_, _, visits)| visits.clone());
+    if let Some(visits) = cached {
+        return Ok(visits);
+    }
+    // 読めなかった結果は記憶しない (ロック中・更新中の一時的な失敗が居座らないように)
+    let visits = read_profile(profile)?;
+    CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(profile.path.clone(), (modified, len, visits.clone()));
+    Ok(visits)
 }
 
 /// ブラウザ起動中は `History` が `History-journal` 付きのトランザクション中に
@@ -246,6 +289,43 @@ mod tests {
         assert_eq!(visits[0].url, "https://example.com/repo?Key=a");
         assert_eq!(visits[1].url, "https://example.com/Repo?Key=A");
         assert!(visits.iter().all(|visit| visit.browser == "Edge"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unchanged_history_file_is_reused_and_a_changed_one_is_read_again() {
+        let root = std::env::temp_dir().join(format!(
+            "waypoint-history-cache-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("History");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE urls (title TEXT, url TEXT, last_visit_time INTEGER);
+                 INSERT INTO urls VALUES ('One', 'https://example.com/one', 1);",
+            )
+            .unwrap();
+        let profile = || Profile {
+            browser: "Edge",
+            path: path.clone(),
+        };
+
+        assert_eq!(scan_profiles([profile()]).len(), 1);
+        assert_eq!(scan_profiles([profile()]).len(), 1);
+
+        connection
+            .execute_batch("INSERT INTO urls VALUES ('Two', 'https://example.com/two', 2);")
+            .unwrap();
+        drop(connection);
+        let visits = scan_profiles([profile()]);
+        assert_eq!(visits.len(), 2);
+        assert_eq!(visits[0].title, "Two");
         std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -469,3 +469,26 @@ fn bench_highlight_ranges() {
         );
     }
 }
+
+/// `Index::build` の取り込みのうちブックマーク・閲覧履歴の読み取り (実機データ)。
+/// 1 回目は読み込み、2 回目以降は更新日時が同じなので記憶した結果を使う。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_browser_scans() {
+    use std::time::Instant;
+    let time = |label: &str, run: &dyn Fn() -> usize| {
+        let start = Instant::now();
+        let count = run();
+        let cold = start.elapsed().as_secs_f64() * 1000.0;
+        let start = Instant::now();
+        for _ in 0..50 {
+            std::hint::black_box(run());
+        }
+        let warm = start.elapsed().as_secs_f64() * 1000.0 / 50.0;
+        println!("{label:<18} 1 回目 {cold:>8.3} ms  2 回目以降 {warm:>8.3} ms  ({count} 件)");
+    };
+    time("bookmarks::scan", &|| crate::bookmarks::scan().len());
+    time("browser_history::scan", &|| {
+        crate::browser_history::scan().len()
+    });
+}

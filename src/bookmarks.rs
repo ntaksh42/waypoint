@@ -3,8 +3,11 @@
 //! `Bookmarks` は Chromium 系ブラウザ共通の JSON 形式なので、
 //! パーサーは両ブラウザで共用する。プロファイルは既定 (`Default`) のみ扱う。
 
+use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
+use std::time::SystemTime;
 
 use serde::Deserialize;
 
@@ -38,37 +41,73 @@ struct Node {
     children: Vec<Node>,
 }
 
+/// ファイルごとの更新日時・サイズと、そのときに読み取った結果。
+/// `Index::build` は設定の保存のたびに走るが、ブックマークは変わっていない
+/// ことが大半なので、同じ内容なら JSON を読み直さない。
+type Parsed = (SystemTime, u64, Vec<Bookmark>);
+static CACHE: LazyLock<Mutex<HashMap<PathBuf, Parsed>>> = LazyLock::new(Mutex::default);
+
 /// インストール済みの Chrome / Edge から既定プロファイルのブックマークを集める。
 pub fn scan() -> Vec<Bookmark> {
     let mut bookmarks = Vec::new();
     for path in profile_paths() {
-        let Ok(text) = fs::read_to_string(&path) else {
+        let Ok(metadata) = fs::metadata(&path) else {
             continue;
         };
-        let file = match serde_json::from_str::<BookmarksFile>(&text) {
-            Ok(file) => file,
-            Err(e) => {
-                // ブラウザが書き込み中に読むと壊れた JSON を掴むことがある。
-                // 無言でスキップすると「ブックマークが急に消えた」ように
-                // 見えるだけで原因が追えないため、診断用に 1 行残す
-                crate::panic_log::record(&format!(
-                    "bookmarks: failed to parse {}: {e}",
-                    path.display()
-                ));
-                continue;
-            }
+        let Ok(modified) = metadata.modified() else {
+            bookmarks.extend(read_file(&path).unwrap_or_default());
+            continue;
         };
-        for root in [file.roots.bookmark_bar, file.roots.other, file.roots.synced]
-            .into_iter()
-            .flatten()
-        {
-            // ルート自体の名前 ("お気に入りバー" など) はパンくずに出さない
-            for child in &root.children {
-                collect(child, &mut Vec::new(), &mut bookmarks);
-            }
+        let len = metadata.len();
+        let cached = CACHE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&path)
+            .filter(|(at, size, _)| *at == modified && *size == len)
+            .map(|(_, _, parsed)| parsed.clone());
+        if let Some(parsed) = cached {
+            bookmarks.extend(parsed);
+            continue;
         }
+        // 読めなかった (書き込み中の壊れた JSON など) 結果は記憶しない
+        let Some(parsed) = read_file(&path) else {
+            continue;
+        };
+        CACHE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(path, (modified, len, parsed.clone()));
+        bookmarks.extend(parsed);
     }
     bookmarks
+}
+
+fn read_file(path: &Path) -> Option<Vec<Bookmark>> {
+    let text = fs::read_to_string(path).ok()?;
+    let file = match serde_json::from_str::<BookmarksFile>(&text) {
+        Ok(file) => file,
+        Err(e) => {
+            // ブラウザが書き込み中に読むと壊れた JSON を掴むことがある。
+            // 無言でスキップすると「ブックマークが急に消えた」ように
+            // 見えるだけで原因が追えないため、診断用に 1 行残す
+            crate::panic_log::record(&format!(
+                "bookmarks: failed to parse {}: {e}",
+                path.display()
+            ));
+            return None;
+        }
+    };
+    let mut bookmarks = Vec::new();
+    for root in [file.roots.bookmark_bar, file.roots.other, file.roots.synced]
+        .into_iter()
+        .flatten()
+    {
+        // ルート自体の名前 ("お気に入りバー" など) はパンくずに出さない
+        for child in &root.children {
+            collect(child, &mut Vec::new(), &mut bookmarks);
+        }
+    }
+    Some(bookmarks)
 }
 
 fn collect(node: &Node, parents: &mut Vec<String>, out: &mut Vec<Bookmark>) {
