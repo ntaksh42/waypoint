@@ -128,13 +128,13 @@ pub fn configure_config_items(config: &Config, dynamic: &Menus) {
 /// バックグラウンド同期の完了通知 (`WM_AZURE_DEVOPS_REFRESHED`) から使う。
 /// SQLite の読み取りはバックグラウンドで完了済みなので、UI スレッドでは
 /// メモリ上の候補を検索索引へ適用するだけにする。
-pub(crate) fn configure_azure(config: &Config, groups: crate::azure_devops::CachedCandidateGroups) {
+pub(crate) fn configure_azure(config: &Config, built: crate::quick_launch::AzureBuilt) {
     STATE.with(|state| {
         let has_window = {
             let mut state = state.borrow_mut();
             state
                 .index
-                .refresh_azure_candidates(&config.settings.quick_launch, groups);
+                .install_azure(&config.settings.quick_launch, built);
             // Index の中身 (azure*) が変わったので、前回結果への絞り込み
             // 最適化 (`refined_search_term`) をそのまま使い回さない
             state.previous_query = None;

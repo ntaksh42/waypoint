@@ -492,3 +492,64 @@ fn bench_browser_scans() {
         crate::browser_history::scan().len()
     });
 }
+
+/// Azure 同期完了時に UI スレッドで走る候補 → `Entry` / `LowerKeys` 変換
+/// (`refresh_azure_candidates`)。PR 3000 件 + Work Item 800 件の合成データ。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_azure_refresh_synthetic() {
+    use crate::azure_devops::{CachedCandidateGroups, Candidate, Kind};
+    use std::time::Instant;
+    let candidate = |kind: Kind, i: usize| Candidate {
+        kind,
+        status: "active".into(),
+        name: format!(
+            "PR {}: Fix the flaky integration test number {i}",
+            10000 + i
+        ),
+        detail: "Azure DevOps — org / project / repo".into(),
+        branch: Some(format!("feature/topic-{i}")),
+        url: format!(
+            "https://dev.azure.com/org/project/_git/repo/pullrequest/{}",
+            10000 + i
+        ),
+        organization: "org".into(),
+        project: "project".into(),
+        aliases: Vec::new(),
+        priority: 0,
+        is_mine: i.is_multiple_of(5),
+        is_author: i.is_multiple_of(5),
+        is_reviewer: i.is_multiple_of(7),
+        needs_my_review: false,
+        waiting_for_others: false,
+        is_draft: false,
+        ready_to_complete: false,
+        is_stale: false,
+        work_item_type: (kind == Kind::WorkItem).then(|| "Bug".to_string()),
+    };
+    let groups = CachedCandidateGroups {
+        pull_requests: (0..3000).map(|i| candidate(Kind::PullRequest, i)).collect(),
+        work_items: (0..800).map(|i| candidate(Kind::WorkItem, i)).collect(),
+    };
+    let config = crate::config::Config::default();
+    let mut index = Index::build(&config, &crate::dynamic::Menus::default());
+    let settings = &config.settings.quick_launch;
+    // 背景スレッドで走る変換 (build_azure) と、UI スレッドで走る差し替え (install_azure)
+    let start = Instant::now();
+    let mut builts = Vec::new();
+    for _ in 0..20 {
+        builts.push(super::super::build_azure(
+            &settings.azure_devops,
+            std::hint::black_box(groups.clone()),
+        ));
+    }
+    let background = start.elapsed().as_secs_f64() * 1000.0 / 20.0;
+    let start = Instant::now();
+    for built in builts {
+        index.install_azure(settings, built);
+    }
+    let ui = start.elapsed().as_secs_f64() * 1000.0 / 20.0;
+    println!(
+        "Azure 同期完了 (PR 3000 + WI 800): 背景 build_azure(clone 込み) {background:>8.3} ms  UI install_azure {ui:>8.3} ms"
+    );
+}

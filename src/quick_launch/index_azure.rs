@@ -11,7 +11,7 @@ pub(super) fn azure_entries(
     let (pull_requests, work_items) =
         crate::azure_devops::cached_candidate_groups(&settings.azure_devops);
     azure_entries_from_candidates(
-        settings,
+        &settings.azure_devops,
         crate::azure_devops::CachedCandidateGroups {
             pull_requests,
             work_items,
@@ -19,13 +19,37 @@ pub(super) fn azure_entries(
     )
 }
 
+/// 同期完了時に UI スレッドへ渡す、検索用に変換済みの Azure 候補。
+/// 数千件ぶんの `Entry` / `LowerKeys` の組み立てを、同期を行った
+/// バックグラウンドスレッドで済ませるための入れ物 (`build_azure`)。
+#[derive(Debug, Default)]
+pub(crate) struct AzureBuilt {
+    pub(super) azure: Vec<AzureIndexed>,
+    pub(super) work_items: Vec<Entry>,
+    pub(super) work_items_lower: Vec<super::search::LowerKeys>,
+}
+
+/// メモリ上の Azure DevOps 候補を、索引へそのまま差し替えられる形へ変換する。
+pub(crate) fn build_azure(
+    settings: &crate::config::AzureDevOpsSettings,
+    groups: crate::azure_devops::CachedCandidateGroups,
+) -> AzureBuilt {
+    let (azure, work_items) = azure_entries_from_candidates(settings, groups);
+    let work_items_lower = super::search::LowerKeys::build_for(&work_items);
+    AzureBuilt {
+        azure,
+        work_items,
+        work_items_lower,
+    }
+}
+
 /// メモリ上の Azure DevOps 候補を検索用の索引へ変換する。
 pub(super) fn azure_entries_from_candidates(
-    settings: &crate::config::QuickLaunchSettings,
+    settings: &crate::config::AzureDevOpsSettings,
     groups: crate::azure_devops::CachedCandidateGroups,
 ) -> (Vec<AzureIndexed>, Vec<Entry>) {
-    let mut candidates = if settings.azure_devops.enabled {
-        crate::azure_devops::project_candidates(&settings.azure_devops)
+    let mut candidates = if settings.enabled {
+        crate::azure_devops::project_candidates(settings)
     } else {
         Vec::new()
     };

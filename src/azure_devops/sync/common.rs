@@ -14,7 +14,7 @@ use super::super::auth_cache::OrganizationValues;
 use super::super::cache;
 use super::super::convert::valid_project;
 use super::super::credential::load_credential;
-use super::super::{CachedCandidateGroups, prune_cache, try_cached_candidate_groups};
+use super::super::{prune_cache, try_cached_candidate_groups};
 
 /// poisoned でも中身を取り出してロックする。
 ///
@@ -80,7 +80,7 @@ impl Drop for RunningFlag {
 /// 定期同期完了時に UI スレッドへ渡す、SQLite から構築済みの Azure 候補。
 pub(crate) struct RefreshReply {
     source_settings: AzureDevOpsSettings,
-    pub(crate) candidates: Result<CachedCandidateGroups, String>,
+    pub(crate) candidates: Result<crate::quick_launch::AzureBuilt, String>,
 }
 
 impl RefreshReply {
@@ -88,7 +88,7 @@ impl RefreshReply {
     pub(crate) fn into_candidates_for(
         self,
         current_settings: &AzureDevOpsSettings,
-    ) -> Option<Result<CachedCandidateGroups, String>> {
+    ) -> Option<Result<crate::quick_launch::AzureBuilt, String>> {
         (self.source_settings == *current_settings).then_some(self.candidates)
     }
 }
@@ -179,7 +179,10 @@ pub fn refresh_async(settings: AzureDevOpsSettings, notify: HWND, message: u32) 
                 )),
             }
         }
-        let candidates = try_cached_candidate_groups(&settings);
+        // 数千件の Entry / LowerKeys への変換もここ (背景) で済ませ、
+        // UI スレッドは索引へ差し替えるだけにする
+        let candidates = try_cached_candidate_groups(&settings)
+            .map(|groups| crate::quick_launch::build_azure(&settings, groups));
         store_refresh_reply(RefreshReply {
             source_settings: settings,
             candidates,
@@ -285,7 +288,7 @@ mod tests {
         let _ = take_refresh_reply();
         store_refresh_reply(RefreshReply {
             source_settings: AzureDevOpsSettings::default(),
-            candidates: Ok(CachedCandidateGroups::default()),
+            candidates: Ok(crate::quick_launch::AzureBuilt::default()),
         });
         store_refresh_reply(RefreshReply {
             source_settings: AzureDevOpsSettings::default(),
@@ -301,7 +304,7 @@ mod tests {
         let _ = take_refresh_reply();
         store_refresh_reply(RefreshReply {
             source_settings: AzureDevOpsSettings::default(),
-            candidates: Ok(CachedCandidateGroups::default()),
+            candidates: Ok(crate::quick_launch::AzureBuilt::default()),
         });
         assert!(take_refresh_reply().is_some());
         assert!(take_refresh_reply().is_none());
@@ -312,7 +315,7 @@ mod tests {
         let source_settings = AzureDevOpsSettings::default();
         let reply = RefreshReply {
             source_settings: source_settings.clone(),
-            candidates: Ok(CachedCandidateGroups::default()),
+            candidates: Ok(crate::quick_launch::AzureBuilt::default()),
         };
 
         assert!(reply.into_candidates_for(&source_settings).unwrap().is_ok());
@@ -326,7 +329,7 @@ mod tests {
         };
         let reply = RefreshReply {
             source_settings,
-            candidates: Ok(CachedCandidateGroups::default()),
+            candidates: Ok(crate::quick_launch::AzureBuilt::default()),
         };
 
         assert!(

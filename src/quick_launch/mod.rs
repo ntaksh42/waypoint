@@ -27,6 +27,7 @@ pub use azure::{
 };
 pub(crate) use azure_entries::{azure_shortcut_entries, azure_suggest_entry};
 pub use azure_meta::AzureMeta;
+pub(crate) use index_azure::{AzureBuilt, build_azure};
 pub(crate) use rank::search_entries;
 pub(crate) use scoring::highlight_ranges;
 pub(crate) use snapshot::Snapshot;

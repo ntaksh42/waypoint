@@ -173,8 +173,8 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                         return true;
                     };
                     match candidates {
-                        Ok(groups) => {
-                            quick_launch_window::configure_azure(&state.config, groups);
+                        Ok(built) => {
+                            quick_launch_window::configure_azure(&state.config, built);
                         }
                         Err(error) => crate::panic_log::record(&format!(
                             "azure devops: candidate refresh failed: {error}"

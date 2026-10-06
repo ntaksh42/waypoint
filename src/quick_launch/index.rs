@@ -4,7 +4,7 @@ use crate::config::{Config, Item, OpenMode};
 use crate::dynamic::Menus;
 use crate::quick_launch_history::Ranking;
 
-use super::index_azure::{azure_entries, azure_entries_from_candidates};
+use super::index_azure::{AzureBuilt, azure_entries};
 use super::rank::dedup_by_path;
 use super::{Action, Entry, Index};
 
@@ -188,19 +188,32 @@ impl Index {
         self.refresh_dynamic(config, dynamic);
     }
 
-    /// 構築済みの Azure DevOps 候補だけを検索用の索引へ適用する。
+    /// 変換済みの Azure DevOps 候補を検索用の索引へ差し替える。
     ///
-    /// SQLite などの I/O は呼び出し元で済ませ、このメソッドはメモリ上の
-    /// 候補を変換・交換するだけにする。
+    /// UI スレッドで走るので、候補 → `Entry` / `LowerKeys` の変換は呼び出し元
+    /// (同期完了時のバックグラウンドスレッド、`build_azure`) で済ませてある。
+    /// ここは所有権を移すのと、件数の少ないショートカット類の組み直しだけ。
+    pub(crate) fn install_azure(
+        &mut self,
+        settings: &crate::config::QuickLaunchSettings,
+        built: AzureBuilt,
+    ) {
+        self.azure = built.azure;
+        self.azure_work_items = built.work_items;
+        self.azure_work_items_lower = built.work_items_lower;
+        self.azure_shortcuts = super::azure_shortcut_entries(&settings.azure_devops);
+        self.azure_new = super::azure_new::entries(&settings.azure_devops);
+    }
+
+    /// 候補の変換と差し替えを続けて行う。テスト・ベンチ用。
+    #[cfg(test)]
     pub(crate) fn refresh_azure_candidates(
         &mut self,
         settings: &crate::config::QuickLaunchSettings,
         groups: crate::azure_devops::CachedCandidateGroups,
     ) {
-        (self.azure, self.azure_work_items) = azure_entries_from_candidates(settings, groups);
-        self.azure_shortcuts = super::azure_shortcut_entries(&settings.azure_devops);
-        self.azure_new = super::azure_new::entries(&settings.azure_devops);
-        self.azure_work_items_lower = super::search::LowerKeys::build_for(&self.azure_work_items);
+        let built = super::index_azure::build_azure(&settings.azure_devops, groups);
+        self.install_azure(settings, built);
     }
 
     /// 拡張から届いた全ブラウザのタブ一覧で、検索用候補を差し替える。
