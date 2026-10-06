@@ -5,7 +5,6 @@
 use std::collections::{BTreeMap, HashSet};
 use std::ffi::c_void;
 use std::fs;
-use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -14,17 +13,13 @@ use std::time::UNIX_EPOCH;
 use serde::{Deserialize, Serialize};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
-use windows::Win32::System::Com::{
-    CLSCTX_INPROC_SERVER, CoCreateInstance, IPersistFile, STGM_READ,
-};
 use windows::Win32::System::Threading::GetCurrentProcessId;
-use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GW_OWNER, GWL_EXSTYLE, GetWindow, GetWindowLongW, GetWindowTextLengthW,
     GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, PostMessageW, WS_EX_APPWINDOW,
     WS_EX_TOOLWINDOW,
 };
-use windows::core::{BOOL, Interface, PCWSTR};
+use windows::core::BOOL;
 
 use crate::shell::ComGuard;
 
@@ -213,7 +208,7 @@ fn scan_recent_items() -> Vec<RecentItem> {
         {
             continue;
         }
-        let Some(path) = resolve_shortcut(&link) else {
+        let Some(path) = crate::apps::resolve_target_cached(&link.to_string_lossy()) else {
             continue;
         };
         let target = PathBuf::from(&path);
@@ -242,19 +237,6 @@ fn scan_recent_items() -> Vec<RecentItem> {
     }
     items.sort_by_key(|item| std::cmp::Reverse(item.modified));
     items
-}
-
-fn resolve_shortcut(link_path: &Path) -> Option<String> {
-    unsafe {
-        let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
-        let persist = link.cast::<IPersistFile>().ok()?;
-        let wide: Vec<u16> = link_path.as_os_str().encode_wide().chain(Some(0)).collect();
-        persist.Load(PCWSTR(wide.as_ptr()), STGM_READ).ok()?;
-        let mut target = vec![0u16; 32768];
-        link.GetPath(&mut target, std::ptr::null_mut(), 0).ok()?;
-        let len = target.iter().position(|ch| *ch == 0)?;
-        (len > 0).then(|| String::from_utf16_lossy(&target[..len]))
-    }
 }
 
 /// 履歴を更新し、保存すべき変化があったかを返す。

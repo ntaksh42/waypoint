@@ -156,7 +156,7 @@ type TargetCache = Mutex<HashMap<String, (SystemTime, String)>>;
 static TARGETS: LazyLock<TargetCache> = LazyLock::new(Mutex::default);
 
 /// 更新日時が前回と同じなら記憶したリンク先を返し、変わっていれば解決し直す。
-fn resolve_target_cached(shortcut_path: &str) -> Option<String> {
+pub(crate) fn resolve_target_cached(shortcut_path: &str) -> Option<String> {
     let modified = fs::metadata(shortcut_path)
         .and_then(|m| m.modified())
         .ok()?;
