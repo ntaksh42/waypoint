@@ -7,7 +7,7 @@ use super::super::search::{
 };
 use super::super::{RowKind, STATE, State};
 use crate::config::OpenMode;
-use crate::quick_launch::{Action, Entry};
+use crate::quick_launch::{Action, Entry, Snapshot};
 use std::time::{Duration, Instant};
 
 fn folder_entry(name: &str) -> Entry {
@@ -36,7 +36,12 @@ fn snapshot_search_rejects_pending_everything_replies() {
     let state = std::cell::RefCell::new(State::default());
     state.borrow_mut().everything_active = true;
     state.borrow_mut().everything_reply_id = 123;
-    super::super::snapshot::show_snapshot_results(&state, &[folder_entry("session")], "", true);
+    super::super::snapshot::show_snapshot_results(
+        &state,
+        &Snapshot::new(vec![folder_entry("session")]),
+        "",
+        true,
+    );
     let state = state.borrow();
     assert!(!accepts_everything_reply(
         state.everything_active,

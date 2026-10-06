@@ -81,6 +81,7 @@ pub fn show(owner: HWND, origin: Option<HWND>) -> Result<()> {
         state.origin = origin;
         // `k ` の一覧は表示ごとに取り直す (State::process_snapshot)
         state.process_snapshot = None;
+        state.session_snapshot = None;
         (state.window, state.edit)
     });
     let (Some(window), Some(edit)) = (window, edit) else {

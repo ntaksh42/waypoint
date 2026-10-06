@@ -4,15 +4,33 @@ use std::cell::RefCell;
 
 use super::search::{build_rows, populate_list};
 use super::{MAX_LIST_RESULTS, State};
-use crate::quick_launch::Entry;
+use crate::quick_launch::Snapshot;
 
 /// `k ` の絞り込み表示。プロセス一覧は `k ` に入った最初の打鍵で取り、
 /// 抜けるまで使い回す (`State::process_snapshot`)。借用を外してから絞り込む。
 pub(super) fn show_process_results(state: &RefCell<State>, text: &str) {
     let cached = state.borrow_mut().process_snapshot.take();
-    let processes = cached.unwrap_or_else(crate::quick_launch::kill_process_entries);
+    let processes =
+        cached.unwrap_or_else(|| Snapshot::new(crate::quick_launch::kill_process_entries()));
     show_snapshot_results(state, &processes, text, false);
     state.borrow_mut().process_snapshot = Some(processes);
+}
+
+/// `cs ` の絞り込み表示。候補と検索キーは `agent_sessions::latest()` が
+/// 同じ間だけ使い回し、スキャンが差し替わったら作り直す。
+pub(super) fn show_session_results(state: &RefCell<State>, text: &str) {
+    let latest = crate::agent_sessions::latest();
+    let cached = state
+        .borrow_mut()
+        .session_snapshot
+        .take()
+        .filter(|(seen, _)| std::sync::Arc::ptr_eq(seen, &latest));
+    let sessions = match cached {
+        Some((_, sessions)) => sessions,
+        None => Snapshot::new(crate::quick_launch::agent_session_entries(&latest)),
+    };
+    show_snapshot_results(state, &sessions, text, true);
+    state.borrow_mut().session_snapshot = Some((latest, sessions));
 }
 
 /// `k ` (実行中プロセス、FR-9.15.2) / `cs ` (過去セッション、FR-9.15.6) の
@@ -20,7 +38,7 @@ pub(super) fn show_process_results(state: &RefCell<State>, text: &str) {
 /// 伴わないので、非同期にせずキー入力のたびに同期で完結する。
 pub(super) fn show_snapshot_results(
     state: &RefCell<State>,
-    entries: &[Entry],
+    snapshot: &Snapshot,
     text: &str,
     paths: bool,
 ) {
@@ -30,12 +48,12 @@ pub(super) fn show_snapshot_results(
         state.empty_message = None;
         state.previous_query = None;
         state.highlight_term = text.to_string();
-        state.results =
-            crate::quick_launch::search_entries(entries, text, paths, &state.index.ranking)
-                .into_iter()
-                .take(MAX_LIST_RESULTS)
-                .cloned()
-                .collect();
+        state.results = snapshot
+            .search(text, paths, &state.index.ranking)
+            .into_iter()
+            .take(MAX_LIST_RESULTS)
+            .cloned()
+            .collect();
         let (labels, rows) = build_rows(&state.results, &[]);
         state.rows = rows.clone();
         (state.list, labels, rows)

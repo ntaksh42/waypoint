@@ -281,3 +281,43 @@ fn bench_sections_breakdown() {
         start.elapsed().as_secs_f64() * 1000.0 / 100.0
     );
 }
+
+/// `cs ` / `k ` の絞り込み 1 打鍵。旧経路 (`search_entries`、打鍵ごとに全候補の
+/// `LowerKeys` を作る) と `Snapshot` (取得時に 1 回だけ作る) の比較。
+/// 旧経路には `Entry` の組み立て (`agent_session_entries`) の分すら含めていない。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_snapshot_search() {
+    let ranking = crate::quick_launch_history::Ranking::default();
+    for count in [255usize, 2000] {
+        let entries: Vec<Entry> = (0..count)
+            .map(|i| Entry {
+                azure: None,
+                name: format!("Fix the flaky integration test number {i} in the waypoint repo"),
+                breadcrumb: format!("Claude Code — {i}d ago"),
+                path: format!(r"E:\work\project-{}\src\module", i % 40),
+                action: Action::OpenWithDefaultHandler,
+                branch: None,
+            })
+            .collect();
+        let snapshot = Snapshot::new(entries.clone());
+        for query in ["flaky", "waypoint repo", "zzzz"] {
+            let old = ms_per_iter(500, || {
+                std::hint::black_box(search_entries(&entries, query, true, &ranking));
+            });
+            let new = ms_per_iter(500, || {
+                std::hint::black_box(snapshot.search(query, true, &ranking));
+            });
+            println!("  {count:>5} 件 {query:<14} 旧 {old:>8.4} ms  新 {new:>8.4} ms");
+        }
+    }
+}
+
+fn ms_per_iter(iterations: u32, mut run: impl FnMut()) -> f64 {
+    run();
+    let start = Instant::now();
+    for _ in 0..iterations {
+        run();
+    }
+    start.elapsed().as_secs_f64() * 1000.0 / f64::from(iterations)
+}

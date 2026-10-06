@@ -17,6 +17,7 @@ mod index_azure;
 mod rank;
 mod scoring;
 mod search;
+mod snapshot;
 #[cfg(test)]
 mod tests;
 
@@ -28,6 +29,7 @@ pub(crate) use azure_entries::{azure_shortcut_entries, azure_suggest_entry};
 pub use azure_meta::AzureMeta;
 pub(crate) use rank::search_entries;
 pub(crate) use scoring::highlight_ranges;
+pub(crate) use snapshot::Snapshot;
 
 use azure::AzureIndexed;
 
@@ -404,9 +406,9 @@ pub fn kill_process_entries() -> Vec<Entry> {
 ///
 /// 読み取りは `agent_sessions::refresh_async` が Quick Launch の表示時に
 /// 済ませており、ここではファイル I/O を行わない。
-pub fn agent_session_entries() -> Vec<Entry> {
+pub fn agent_session_entries(sessions: &[crate::agent_sessions::Session]) -> Vec<Entry> {
     let now = std::time::SystemTime::now();
-    crate::agent_sessions::latest()
+    sessions
         .iter()
         .map(|session| Entry {
             azure: None,

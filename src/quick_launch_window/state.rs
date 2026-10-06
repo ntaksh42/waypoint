@@ -129,5 +129,12 @@ pub(in crate::quick_launch_window) struct State {
     /// `k ` に入った最初の打鍵で取った実行中プロセス一覧。打鍵のたびに
     /// 取り直すとプロセス列挙だけで 1 回 6ms ほどかかる (実測、323 プロセス)。
     /// ウィンドウを開くたびに捨てる。kill 後はウィンドウが閉じるので古くならない。
-    pub(in crate::quick_launch_window) process_snapshot: Option<Vec<Entry>>,
+    pub(in crate::quick_launch_window) process_snapshot: Option<crate::quick_launch::Snapshot>,
+    /// `cs ` の候補。`agent_sessions::latest()` の `Arc` が同じ間は使い回し、
+    /// 非同期スキャンで差し替わったら (ポインタが変わったら) 作り直す。
+    /// ウィンドウを開くたびに捨てる (breadcrumb の経過時間を古くしないため)。
+    pub(in crate::quick_launch_window) session_snapshot: Option<(
+        std::sync::Arc<Vec<crate::agent_sessions::Session>>,
+        crate::quick_launch::Snapshot,
+    )>,
 }

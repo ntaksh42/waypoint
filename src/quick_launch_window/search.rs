@@ -86,8 +86,7 @@ pub(super) fn update_results(state: &RefCell<State>) {
         return;
     }
     if let Some(rest) = query.strip_prefix(crate::quick_launch::AGENT_SESSIONS_PREFIX) {
-        let sessions = crate::quick_launch::agent_session_entries();
-        super::snapshot::show_snapshot_results(state, &sessions, rest, true);
+        super::snapshot::show_session_results(state, rest);
         return;
     }
     if let Some((crate::quick_launch::AzureCommand::WorkItems { .. }, rest)) =
