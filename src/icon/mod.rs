@@ -95,8 +95,17 @@ pub(crate) fn bitmap_for_sized_async(path: &str, size: i32) -> Option<HBITMAP> {
 /// 表示されない)。歯車のように標準 ID から取れないものは、
 /// シェルの DLL から直接引く。
 fn bitmap_for_dll_icon(dll: &str, index: i32, size: i32) -> Option<HBITMAP> {
-    let key = format!("dll-icon:{size}:{dll}:{index}");
-    cached_bitmap(&key, || unsafe {
+    cached_bitmap(&dll_icon_key(dll, index, size), || {
+        load_dll_icon(dll, index, size)
+    })
+}
+
+fn dll_icon_key(dll: &str, index: i32, size: i32) -> String {
+    format!("dll-icon:{size}:{dll}:{index}")
+}
+
+fn load_dll_icon(dll: &str, index: i32, size: i32) -> Option<HBITMAP> {
+    unsafe {
         let path = HSTRING::from(dll);
         let mut large = HICON::default();
         let mut small = HICON::default();
@@ -117,22 +126,57 @@ fn bitmap_for_dll_icon(dll: &str, index: i32, size: i32) -> Option<HBITMAP> {
             let _ = DestroyIcon(small);
         }
         bitmap
-    })
+    }
 }
 
 /// 埋め込み PNG を指定寸法へ縮小して使う。
 pub(crate) fn bitmap_for_asset_sized(key: &str, png: &[u8], size: i32) -> Option<HBITMAP> {
     cached_bitmap(&format!("asset-icon:{size}:{key}"), || {
-        let target = SIZE { cx: size, cy: size };
-        let image = image::load_from_memory(png).ok()?.into_rgba8();
-        let image = image::imageops::resize(
-            &image,
-            target.cx as u32,
-            target.cy as u32,
-            image::imageops::FilterType::Lanczos3,
-        );
-        rgba_to_bitmap(image.as_raw(), target)
+        load_asset(png, size)
     })
+}
+
+fn load_asset(png: &[u8], size: i32) -> Option<HBITMAP> {
+    let target = SIZE { cx: size, cy: size };
+    let image = image::load_from_memory(png).ok()?.into_rgba8();
+    let image = image::imageops::resize(
+        &image,
+        target.cx as u32,
+        target.cy as u32,
+        image::imageops::FilterType::Lanczos3,
+    );
+    rgba_to_bitmap(image.as_raw(), target)
+}
+
+/// トレイメニューの 16px アイコンを、バックグラウンドで先に読んでおく。
+///
+/// 初回の右クリックで同期に読むと 25ms ほど固まる (実測: 実行ファイルの
+/// シェルアイコンだけで 19ms、歯車 5ms)。結果は `apply_ready` で取り込まれ、
+/// メニュー側の `bitmap_for_*` はキャッシュに当たる。間に合わなければ従来どおり
+/// その場で読む。UI スレッドから呼ぶ (読み込み用ワーカーはスレッドごとに持つ)。
+pub(crate) fn prefetch_menu_icons(exe_path: &str, assets: &[(&'static str, &'static [u8])]) {
+    const SIZE_PX: i32 = 16;
+    let mut jobs: Vec<(String, async_load::Loader)> = Vec::new();
+    jobs.push((
+        dll_icon_key(SHELL32, GEAR_INDEX, SIZE_PX),
+        Box::new(|| load_dll_icon(SHELL32, GEAR_INDEX, SIZE_PX)),
+    ));
+    let exe = exe_path.to_owned();
+    jobs.push((
+        format!("{SIZE_PX}:{exe_path}"),
+        Box::new(move || load_bitmap(&exe, SIZE_PX)),
+    ));
+    for &(key, png) in assets {
+        jobs.push((
+            format!("asset-icon:{SIZE_PX}:{key}"),
+            Box::new(move || load_asset(png, SIZE_PX)),
+        ));
+    }
+    for (key, load) in jobs {
+        if cached_value(&key).is_none() {
+            async_load::request_boxed(&key, load);
+        }
+    }
 }
 
 /// ブックマーク URL に対応する favicon を、Chrome/Edge の `Favicons` DB
@@ -196,6 +240,18 @@ fn cached_bitmap(key: &str, load: impl FnOnce() -> Option<HBITMAP>) -> Option<HB
 fn store_bitmap(key: &str, bitmap: Option<HBITMAP>) {
     CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
+        // 既にビットマップがあるキーは置き換えない。メニューなどへ渡した
+        // ハンドルを後から削除すると、表示中のアイコンが消える (先に同期で
+        // 読んだ結果と、バックグラウンドの先読みが重なったときに起きる)。
+        // 後から来た方が余るので解放する。
+        if matches!(cache.get(key), Some(Cached::Bitmap(..))) {
+            if let Some(value) = bitmap {
+                unsafe {
+                    let _ = DeleteObject(value.into());
+                }
+            }
+            return;
+        }
         if cache.len() >= MAX_ENTRIES && !cache.contains_key(key) {
             make_room(&mut cache);
         }
@@ -203,12 +259,7 @@ fn store_bitmap(key: &str, bitmap: Option<HBITMAP>) {
             Some(value) => Cached::Bitmap(value.0 as isize, Cell::new(next_tick())),
             None => Cached::Failed(Instant::now()),
         };
-        // 同じキーの古いビットマップが残っていると GDI ハンドルが漏れる
-        if let Some(Cached::Bitmap(old, _)) = cache.insert(key.to_string(), entry) {
-            unsafe {
-                let _ = DeleteObject(HBITMAP(old as *mut _).into());
-            }
-        }
+        cache.insert(key.to_string(), entry);
     });
 }
 
@@ -336,6 +387,61 @@ mod tests {
         store_bitmap("same", Some(bitmap()));
         store_bitmap("same", Some(bitmap()));
         assert_eq!(CACHE.with(|cache| cache.borrow().len()), 1);
+        clear_cache();
+    }
+
+    #[test]
+    fn storing_an_existing_key_keeps_the_handle_already_handed_out() {
+        clear_cache();
+        let first = bitmap();
+        store_bitmap("same", Some(first));
+        store_bitmap("same", Some(bitmap()));
+        assert_eq!(cached_value("same"), Some(Some(first)));
+        clear_cache();
+    }
+
+    #[test]
+    fn prefetched_menu_icons_are_picked_up_by_apply_ready() {
+        clear_cache();
+        let png = include_bytes!("../../assets/menu/reload.png");
+        prefetch_menu_icons("", &[("reload", png)]);
+        let key = "asset-icon:16:reload";
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !contains(key) {
+            apply_ready();
+            assert!(Instant::now() < deadline, "prefetch did not arrive");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        clear_cache();
+    }
+
+    /// トレイ右クリックメニューの初回表示で同期に読む 3 つのアイコンの所要時間。
+    #[test]
+    #[ignore = "手動計測用"]
+    fn bench_tray_menu_icons_cold() {
+        let time = |label: &str, run: &dyn Fn() -> bool| {
+            let start = Instant::now();
+            let ok = run();
+            println!(
+                "  {label:<22} {:>8.3} ms (ok={ok})",
+                start.elapsed().as_secs_f64() * 1000.0
+            );
+        };
+        time("settings (ExtractIcon)", &|| {
+            bitmap_for_settings_sized(16).is_some()
+        });
+        let exe = std::env::current_exe().unwrap();
+        time("exe (SHGetFileInfo)", &|| {
+            bitmap_for_sized(exe.to_string_lossy().as_ref(), 16).is_some()
+        });
+        let png = include_bytes!("../../assets/menu/reload.png");
+        time("reload.png (Lanczos3)", &|| {
+            bitmap_for_asset_sized("reload", png, 16).is_some()
+        });
+        let png = include_bytes!("../../assets/menu/close.png");
+        time("close.png (Lanczos3)", &|| {
+            bitmap_for_asset_sized("close", png, 16).is_some()
+        });
         clear_cache();
     }
 }

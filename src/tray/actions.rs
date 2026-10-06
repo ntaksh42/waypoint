@@ -163,7 +163,21 @@ unsafe fn track_tray_menu(hwnd: HWND) -> usize {
     }
 }
 
+/// 起動後に、トレイメニューのアイコンをバックグラウンドで先に読んでおく。
+/// 初回の右クリックで同期に読むと 25ms ほど固まる (実測)。
+pub fn prefetch_menu_icons() {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    crate::icon::prefetch_menu_icons(
+        exe.to_string_lossy().as_ref(),
+        &[("reload", ICON_RELOAD), ("close", ICON_CLOSE)],
+    );
+}
+
 unsafe fn build_tray_items(menu: HMENU) -> Result<()> {
+    // 先読みの結果を取り込んでから引く (間に合っていなければ従来どおり同期に読む)
+    crate::icon::apply_ready();
     unsafe {
         // 異常があれば先頭に出す (FR-7.4)
         let mut warnings: Vec<String> = Vec::new();

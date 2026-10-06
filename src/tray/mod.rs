@@ -30,6 +30,7 @@ use crate::config::{Config, LoadOutcome};
 use crate::quick_launch_window;
 use crate::trigger::{self, Registration};
 
+pub use actions::prefetch_menu_icons;
 pub(crate) use index_build::WM_INDEX_BUILT;
 pub use prune::start_prune_timer;
 use window::wnd_proc;

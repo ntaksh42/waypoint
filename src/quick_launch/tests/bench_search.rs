@@ -370,3 +370,60 @@ fn bench_azure_search() {
         println!("  az 3000 件 {query:<18} {ms:>8.4} ms");
     }
 }
+
+/// 打鍵ごとの経路に残る小さな確保・再パースの実測 (#104)。
+/// 1 回あたりの所要時間を出し、打鍵 1 回の予算 (50ms) と比べて意味があるかを見る。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_keystroke_overheads() {
+    fn per(label: &str, iterations: u32, run: impl FnMut()) {
+        let ms = ms_per_iter(iterations, run);
+        println!("  {label:<46} {ms:>9.5} ms");
+    }
+
+    // 1. azure_command の解析 (1 回の update_results で 4〜5 回走る)
+    per("azure_command(\"az pr mine foo bar\") x1", 20000, || {
+        std::hint::black_box(azure_command(std::hint::black_box("az pr mine foo bar")));
+    });
+
+    // 2. az の補完候補ごとの LowerKeys 生成
+    let commands = super::super::azure_entries::azure_command_entries();
+    per(
+        &format!("LowerKeys::build_for_names x{}", commands.len()),
+        20000,
+        || {
+            std::hint::black_box(super::super::search::LowerKeys::build_for_names(commands));
+        },
+    );
+
+    // 3. cc の format! (フォルダ数ぶん)
+    let index = large_index(2000, 0, 0, 0);
+    let paths: Vec<String> = index.entries.iter().map(|e| e.path.clone()).collect();
+    let rest = "zzzz-not-a-folder";
+    per(&format!("cc format! x{}", paths.len()), 2000, || {
+        std::hint::black_box(
+            paths
+                .iter()
+                .any(|path| rest.starts_with(&format!("{path} "))),
+        );
+    });
+    per(&format!("cc strip_prefix x{}", paths.len()), 2000, || {
+        std::hint::black_box(paths.iter().any(|path| {
+            rest.strip_prefix(path.as_str())
+                .is_some_and(|tail| tail.starts_with(' '))
+        }));
+    });
+
+    // 4. ローマ字 → ひらがな
+    per("to_hiragana(\"kensakukekka\")", 20000, || {
+        std::hint::black_box(crate::romaji::to_hiragana(std::hint::black_box(
+            "kensakukekka",
+        )));
+    });
+    let names: Vec<String> = (0..500).map(|i| format!("けんさく{i}ふぉるだ")).collect();
+    per("kana_name_matches x500 (かな名)", 200, || {
+        for name in &names {
+            std::hint::black_box(crate::romaji::kana_name_matches(name, "kensaku"));
+        }
+    });
+}

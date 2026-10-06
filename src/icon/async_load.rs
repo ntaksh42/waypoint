@@ -14,7 +14,7 @@ const QUEUE_LIMIT: usize = 64;
 /// 読み込みスレッド数。不達 UNC のシェルアイコン取得 (2.1 秒) やウィンドウ
 /// アイコンの応答待ちなど遅い 1 件が、後続の全アイコンを塞がないようにする。
 const WORKER_THREADS: usize = 3;
-type Loader = Box<dyn FnOnce() -> Option<HBITMAP> + Send>;
+pub(super) type Loader = Box<dyn FnOnce() -> Option<HBITMAP> + Send>;
 
 struct Request {
     key: String,
@@ -143,11 +143,15 @@ pub(crate) fn set_notify(hwnd: HWND) {
 }
 
 pub(super) fn request(key: &str, load: impl FnOnce() -> Option<HBITMAP> + Send + 'static) {
+    request_boxed(key, Box::new(load));
+}
+
+pub(super) fn request_boxed(key: &str, load: Loader) {
     WORKER.with(|worker| {
         worker
             .borrow_mut()
             .get_or_insert_with(Worker::new)
-            .request(key, Box::new(load));
+            .request(key, load);
     });
 }
 

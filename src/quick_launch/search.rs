@@ -127,10 +127,11 @@ impl Index {
         // 先頭に来たら、セッション名の入力へ進んだとみなし、確定候補 1 件の
         // 組み立てへ切り替える (`quick_launch_window::search` の `claude_code_entry`)。
         if let Some(rest) = query.strip_prefix(CLAUDE_CODE_PREFIX) {
-            let session_name_started = self
-                .claude_code_folders
-                .iter()
-                .any(|entry| rest.starts_with(&format!("{} ", entry.path)));
+            // `<folder> ` で始まるか。打鍵ごとに全フォルダ分の format! を確保しない
+            let session_name_started = self.claude_code_folders.iter().any(|entry| {
+                rest.strip_prefix(entry.path.as_str())
+                    .is_some_and(|tail| tail.starts_with(' '))
+            });
             if session_name_started {
                 return Vec::new();
             }

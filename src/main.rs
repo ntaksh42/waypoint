@@ -116,6 +116,7 @@ fn main() {
     // Azure DevOps の同期は索引の構築完了後に始まる (tray::index_build)
     tray::start_azure_full_refresh_timer(hwnd);
     tray::start_prune_timer(hwnd);
+    tray::prefetch_menu_icons();
 
     run_message_loop();
 
