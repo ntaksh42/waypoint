@@ -22,6 +22,7 @@ pub(super) fn search<'a>(
     let terms = lower_terms(query);
     // `#<番号>` は番号の完全一致だけを返す。breadcrumb / URL 側の一致で残さない。
     let exact_id = crate::azure_devops::exact_id_query(query).is_some();
+    let title_query = crate::azure_devops::TitleQuery::new(query);
     let mut matches = items
         .into_iter()
         .enumerate()
@@ -32,7 +33,7 @@ pub(super) fn search<'a>(
             fields.path = fields
                 .path
                 .map(|path| path.strip_prefix(AZURE_URL_PREFIX).unwrap_or(path));
-            let title_quality = crate::azure_devops::title_match_quality(&entry.name, query);
+            let title_quality = title_query.quality(&entry.name, Some(fields.name));
             let general = (!exact_id)
                 .then(|| score_entry(entry, fields, &terms, ranking, Fuzzy::NameOnly))
                 .flatten();

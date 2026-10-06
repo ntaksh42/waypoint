@@ -6,54 +6,92 @@
 /// タイプミスの順に扱う。タイプミス許容は 4 文字以上の英数字トークン同士に
 /// 限定し、短い入力で無関係な候補が増えるのを避ける。
 pub(crate) fn match_quality(title: &str, query: &str) -> Option<u8> {
-    let trimmed = query.trim();
-    if trimmed.is_empty() {
-        return Some(QUALITY_PHRASE);
-    }
-    // 数字だけの入力は「PR 番号 / Work Item 番号の指定」とみなし、部分文字列
-    // 一致ではなく先頭 ID との突き合わせで判定する。`contains` だけに任せると
-    // `12345` が `PR 123456` / `PR 112345` / 本文に番号を含む PR と同点になり、
-    // 以降の並びが実質キャッシュ順で決まって正解が先頭に来ない (実測)。
-    if let Some(id) = numeric_query(trimmed) {
-        if leading_id(title) == Some(id) {
-            return Some(QUALITY_ID);
+    TitleQuery::new(query).quality(title, None)
+}
+
+/// 検索語の前処理 (trim・小文字化・語分割・ID 判定) を済ませたもの。
+/// 候補ごとに同じ前処理をやり直さないよう、検索 1 回につき 1 つ作る。
+pub(crate) struct TitleQuery {
+    empty: bool,
+    /// 数字だけの入力 (`#` 付き可) の数字部分。
+    id: Option<String>,
+    /// `#<番号>` 形式 (完全一致だけを求める指定)。
+    exact_id: bool,
+    lower: String,
+    terms: Vec<String>,
+}
+
+impl TitleQuery {
+    pub(crate) fn new(query: &str) -> Self {
+        let trimmed = query.trim();
+        let lower = trimmed.to_lowercase();
+        let terms = lower.split_whitespace().map(str::to_string).collect();
+        Self {
+            empty: trimmed.is_empty(),
+            id: numeric_query(trimmed).map(str::to_string),
+            exact_id: trimmed.starts_with('#'),
+            lower,
+            terms,
         }
-        // `#<番号>` は完全一致だけを求める明示的な指定。部分一致は拾わない。
-        if trimmed.starts_with('#') {
-            return None;
-        }
-        // 入力途中の部分番号を拾うため部分一致は残すが、完全一致より下位に置く。
-        // タイプミス許容は通さない — 数字の 1 文字違いは別の項目でしかない。
-        return title.contains(id).then_some(QUALITY_TERMS);
     }
 
-    let title = title.to_lowercase();
-    let query = trimmed.to_lowercase();
-    if title.contains(&query) {
-        return Some(QUALITY_PHRASE);
-    }
+    /// `title_lower` は `title.to_lowercase()` 済みの値。呼び出し側が持って
+    /// いれば渡して再確保を省く。
+    pub(crate) fn quality(&self, title: &str, title_lower: Option<&str>) -> Option<u8> {
+        if self.empty {
+            return Some(QUALITY_PHRASE);
+        }
+        // 数字だけの入力は「PR 番号 / Work Item 番号の指定」とみなし、部分文字列
+        // 一致ではなく先頭 ID との突き合わせで判定する。`contains` だけに任せると
+        // `12345` が `PR 123456` / `PR 112345` / 本文に番号を含む PR と同点になり、
+        // 以降の並びが実質キャッシュ順で決まって正解が先頭に来ない (実測)。
+        if let Some(id) = self.id.as_deref() {
+            if leading_id(title) == Some(id) {
+                return Some(QUALITY_ID);
+            }
+            // `#<番号>` は完全一致だけを求める明示的な指定。部分一致は拾わない。
+            if self.exact_id {
+                return None;
+            }
+            // 入力途中の部分番号を拾うため部分一致は残すが、完全一致より下位に置く。
+            // タイプミス許容は通さない — 数字の 1 文字違いは別の項目でしかない。
+            return title.contains(id).then_some(QUALITY_TERMS);
+        }
 
-    let mut used_typo = false;
-    for term in query.split_whitespace() {
-        if title.contains(term) {
-            continue;
+        let owned;
+        let title = match title_lower {
+            Some(lower) => lower,
+            None => {
+                owned = title.to_lowercase();
+                &owned
+            }
+        };
+        if title.contains(&self.lower) {
+            return Some(QUALITY_PHRASE);
         }
-        if term.len() < 4
-            || !term.is_ascii()
-            || !title
-                .split(|character: char| !character.is_alphanumeric())
-                .filter(|word| !word.is_empty())
-                .any(|word| word.is_ascii() && one_edit_apart(word.as_bytes(), term.as_bytes()))
-        {
-            return None;
+
+        let mut used_typo = false;
+        for term in &self.terms {
+            if title.contains(term.as_str()) {
+                continue;
+            }
+            if term.len() < 4
+                || !term.is_ascii()
+                || !title
+                    .split(|character: char| !character.is_alphanumeric())
+                    .filter(|word| !word.is_empty())
+                    .any(|word| word.is_ascii() && one_edit_apart(word.as_bytes(), term.as_bytes()))
+            {
+                return None;
+            }
+            used_typo = true;
         }
-        used_typo = true;
+        Some(if used_typo {
+            QUALITY_TYPO
+        } else {
+            QUALITY_TERMS
+        })
     }
-    Some(if used_typo {
-        QUALITY_TYPO
-    } else {
-        QUALITY_TERMS
-    })
 }
 
 /// 項目 ID (`PR 12345` の `12345`) の完全一致。
@@ -163,5 +201,30 @@ mod tests {
         assert_eq!(exact_id_query(" #123 "), Some("123"));
         assert_eq!(exact_id_query("123"), None);
         assert_eq!(exact_id_query("#12a"), None);
+    }
+
+    #[test]
+    fn precomputed_lowercase_title_gives_the_same_quality() {
+        let title = "PR 123: Fix Cache Handling";
+        for query in [
+            "",
+            "cache fix",
+            "fix cahce",
+            "zzzz",
+            "123",
+            "#123",
+            "#12",
+            "xyz",
+        ] {
+            let prepared = TitleQuery::new(query);
+            assert_eq!(
+                prepared.quality(title, Some(&title.to_lowercase())),
+                prepared.quality(title, None),
+                "{query}"
+            );
+            assert_eq!(prepared.quality(title, None), match_quality(title, query));
+        }
+        assert_eq!(match_quality(title, "fix cahce"), Some(QUALITY_TYPO));
+        assert_eq!(match_quality(title, "cache fix"), Some(QUALITY_TERMS));
     }
 }

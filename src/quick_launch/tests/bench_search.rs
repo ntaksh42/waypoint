@@ -321,3 +321,52 @@ fn ms_per_iter(iterations: u32, mut run: impl FnMut()) -> f64 {
     }
     start.elapsed().as_secs_f64() * 1000.0 / f64::from(iterations)
 }
+
+/// `az ` 検索 (`azure_search::search`) の 1 打鍵。候補 3000 件。
+/// タイトル一致の判定 (小文字化・タイプミス許容) が候補ごとに走る。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_azure_search() {
+    let ranking = crate::quick_launch_history::Ranking::default();
+    let words = [
+        "cache", "search", "index", "azure", "pipeline", "review", "latency", "icon", "menu",
+        "hotkey",
+    ];
+    let entries: Vec<Entry> = (0..3000usize)
+        .map(|i| Entry {
+            azure: None,
+            name: format!(
+                "PR {}: Fix {} {} handling for {} module",
+                10000 + i,
+                words[i % 10],
+                words[(i / 10) % 10],
+                words[(i / 100) % 10]
+            ),
+            breadcrumb: "Azure DevOps — proj / repo".to_string(),
+            path: format!(
+                "https://dev.azure.com/org/proj/_git/repo/pullrequest/{}",
+                10000 + i
+            ),
+            action: Action::OpenWithDefaultHandler,
+            branch: None,
+        })
+        .collect();
+    let keys = super::super::search::LowerKeys::build_for(&entries);
+    for query in [
+        "flaky",
+        "fix cache",
+        "cahce search",
+        "zzzzzz",
+        "pipeline latency",
+    ] {
+        let ms = ms_per_iter(200, || {
+            std::hint::black_box(super::super::azure_search::search(
+                entries.iter().zip(&keys),
+                query,
+                true,
+                &ranking,
+            ));
+        });
+        println!("  az 3000 件 {query:<18} {ms:>8.4} ms");
+    }
+}
