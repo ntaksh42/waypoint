@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::sync::{Arc, Mutex};
 
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::Graphics::Gdi::{DeleteObject, HBITMAP};
@@ -10,6 +11,9 @@ use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
 
 pub(crate) const WM_ICON_READY: u32 = WM_APP + 30;
 const QUEUE_LIMIT: usize = 64;
+/// 読み込みスレッド数。不達 UNC のシェルアイコン取得 (2.1 秒) やウィンドウ
+/// アイコンの応答待ちなど遅い 1 件が、後続の全アイコンを塞がないようにする。
+const WORKER_THREADS: usize = 3;
 type Loader = Box<dyn FnOnce() -> Option<HBITMAP> + Send>;
 
 struct Request {
@@ -46,34 +50,45 @@ struct Worker {
 impl Worker {
     fn new() -> Self {
         let (requests, incoming) = mpsc::sync_channel::<Request>(QUEUE_LIMIT);
+        let incoming = Arc::new(Mutex::new(incoming));
         let (outgoing, replies) = mpsc::channel();
-        std::thread::spawn(move || {
-            let _com = crate::shell::ComGuard::new();
-            for request in incoming {
-                let bitmap = std::panic::catch_unwind(std::panic::AssertUnwindSafe(request.load))
-                    .ok()
-                    .flatten()
-                    .map(|bitmap| bitmap.0 as isize);
-                let reply = Reply {
-                    key: request.key,
-                    generation: request.generation,
-                    bitmap,
-                };
-                if outgoing.send(reply).is_err() {
-                    break;
-                }
-                if request.notify != 0 {
-                    unsafe {
-                        let _ = PostMessageW(
-                            Some(HWND(request.notify as *mut _)),
-                            WM_ICON_READY,
-                            WPARAM(0),
-                            LPARAM(0),
-                        );
+        for _ in 0..WORKER_THREADS {
+            let incoming = Arc::clone(&incoming);
+            let outgoing = outgoing.clone();
+            std::thread::spawn(move || {
+                let _com = crate::shell::ComGuard::new();
+                loop {
+                    // 取り出す間だけロックする。読み込み中は他のスレッドが次を取れる
+                    let next = incoming.lock().unwrap_or_else(|e| e.into_inner()).recv();
+                    let Ok(request) = next else {
+                        break;
+                    };
+                    let bitmap =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(request.load))
+                            .ok()
+                            .flatten()
+                            .map(|bitmap| bitmap.0 as isize);
+                    let reply = Reply {
+                        key: request.key,
+                        generation: request.generation,
+                        bitmap,
+                    };
+                    if outgoing.send(reply).is_err() {
+                        break;
+                    }
+                    if request.notify != 0 {
+                        unsafe {
+                            let _ = PostMessageW(
+                                Some(HWND(request.notify as *mut _)),
+                                WM_ICON_READY,
+                                WPARAM(0),
+                                LPARAM(0),
+                            );
+                        }
                     }
                 }
-            }
-        });
+            });
+        }
         Self {
             requests,
             replies,
@@ -181,20 +196,15 @@ mod tests {
         start.recv_timeout(Duration::from_secs(5)).unwrap();
         worker.request("slow", Box::new(|| panic!("duplicate loader")));
         assert_eq!(worker.pending.len(), 1);
+        // 遅い 1 件が残っていても、後続は別のスレッドが先に返す
         worker.request("after", Box::new(|| None));
-        assert!(worker.take_ready().is_empty());
+        let first = worker.replies.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(first.key, "after");
+        assert!(worker.take_ready().len() <= 1);
         finish.send(()).unwrap();
         let reply = worker.replies.recv_timeout(Duration::from_secs(5)).unwrap();
         assert_eq!(reply.key, "slow");
         assert!(reply.bitmap.is_none());
-        assert_eq!(
-            worker
-                .replies
-                .recv_timeout(Duration::from_secs(5))
-                .unwrap()
-                .key,
-            "after"
-        );
     }
 
     #[test]

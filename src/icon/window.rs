@@ -64,7 +64,7 @@ unsafe fn window_icon_via_message(hwnd: HWND, large_first: bool) -> Option<HICON
         ]
     };
     unsafe {
-        order.into_iter().find_map(|which| {
+        for which in order {
             let mut result = 0usize;
             let sent = SendMessageTimeoutW(
                 hwnd,
@@ -75,8 +75,17 @@ unsafe fn window_icon_via_message(hwnd: HWND, large_first: bool) -> Option<HICON
                 100,
                 Some(&mut result),
             );
-            (sent.0 != 0 && result != 0).then_some(HICON(result as *mut _))
-        })
+            // 応答が無い (タイムアウト・ハング) ウィンドウは、残りの種別を
+            // 試しても同じだけ待たされる。1 回目で諦めて呼び出し側のクラス
+            // アイコンへ回す
+            if sent.0 == 0 {
+                return None;
+            }
+            if result != 0 {
+                return Some(HICON(result as *mut _));
+            }
+        }
+        None
     }
 }
 
@@ -144,7 +153,9 @@ mod tests {
         let drawing = started.elapsed();
         println!("unresponsive window: synchronous={blocking:?}, drawing={drawing:?}");
         // スケジューラの揺れを許容しても、外部応答の待ちが表示へ乗らない。
-        assert!(blocking >= Duration::from_millis(200));
+        // 1 回目のタイムアウト (100ms) で諦める。以前は 3 回試して約 300ms だった
+        assert!(blocking >= Duration::from_millis(80));
+        assert!(blocking < Duration::from_millis(250));
         assert!(drawing < blocking / 2);
         let mut pid = 0;
         unsafe {
