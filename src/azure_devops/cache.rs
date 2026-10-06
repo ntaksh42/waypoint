@@ -1,6 +1,7 @@
 //! SQLite キャッシュの読み書き。
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use rusqlite::{Connection, OpenFlags, params};
@@ -36,8 +37,19 @@ pub(crate) struct CachedRow {
     pub(crate) is_stale: bool,
 }
 
+/// スキーマの初期化・移行を済ませたか。開くたびに実行すると、読み取りしか
+/// しない呼び出しまで書き込みロックを取り (`INSERT OR REPLACE`)、移行済みなら
+/// 必ず失敗する `ALTER` も走る。プロセスで 1 回にする。
+static SCHEMA_READY: AtomicBool = AtomicBool::new(false);
+
 pub(crate) fn open_cache() -> Result<Connection, String> {
     let path = cache_path().ok_or_else(|| "AppData path is unavailable.".to_string())?;
+    open_at(&path, &SCHEMA_READY)
+}
+
+fn open_at(path: &Path, schema_ready: &AtomicBool) -> Result<Connection, String> {
+    // ファイルが消えていたら (利用者が削除した等) 初期化済みとは見なさない
+    let existed = path.exists();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
@@ -48,6 +60,15 @@ pub(crate) fn open_cache() -> Result<Connection, String> {
     connection
         .busy_timeout(Duration::from_secs(5))
         .map_err(|error| error.to_string())?;
+    if existed && schema_ready.load(Ordering::Acquire) {
+        return Ok(connection);
+    }
+    init_schema(&connection)?;
+    schema_ready.store(true, Ordering::Release);
+    Ok(connection)
+}
+
+fn init_schema(connection: &Connection) -> Result<(), String> {
     connection
         .execute_batch(
             "CREATE TABLE IF NOT EXISTS candidates (
@@ -98,7 +119,7 @@ pub(crate) fn open_cache() -> Result<Connection, String> {
         "ALTER TABLE project_state ADD COLUMN work_items_delta_synced_at INTEGER",
         [],
     );
-    Ok(connection)
+    Ok(())
 }
 
 pub(crate) fn open_cache_read_only() -> Result<Connection, String> {
@@ -204,7 +225,7 @@ pub(crate) fn record_project_error(
 /// read path (`cached_candidates`, no network access allowed) can compute
 /// "is this mine" against the shared cache without an API call.
 pub(crate) fn read_identity(organization: &str) -> Option<String> {
-    let connection = open_cache().ok()?;
+    let connection = open_cache_read_only().ok()?;
     connection
         .query_row(
             "SELECT user_id FROM identity WHERE organization = ?1",
@@ -278,5 +299,73 @@ mod tests {
         );
         drop(connection);
         std::fs::remove_file(path).unwrap();
+    }
+
+    fn temp_db(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "waypoint-cache-{name}-{}-{}.db",
+            std::process::id(),
+            unix_timestamp()
+        ))
+    }
+
+    #[test]
+    fn schema_is_initialized_once_and_again_when_the_file_disappears() {
+        let path = temp_db("init-once");
+        let ready = AtomicBool::new(false);
+        let count_meta = |connection: &Connection| -> i64 {
+            connection
+                .query_row("SELECT COUNT(*) FROM cache_meta", [], |row| row.get(0))
+                .unwrap()
+        };
+
+        let connection = open_at(&path, &ready).unwrap();
+        assert_eq!(count_meta(&connection), 1);
+        // 初期化済みなら 2 回目以降は書き込まない (行を消しても戻らない)
+        connection.execute("DELETE FROM cache_meta", []).unwrap();
+        drop(connection);
+        let connection = open_at(&path, &ready).unwrap();
+        assert_eq!(count_meta(&connection), 0);
+        drop(connection);
+
+        // ファイルが消えたら作り直す
+        std::fs::remove_file(&path).unwrap();
+        let connection = open_at(&path, &ready).unwrap();
+        assert_eq!(count_meta(&connection), 1);
+        drop(connection);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// `open_cache` 1 回の所要時間。初期化を毎回やっていた旧実装との比較用。
+    #[test]
+    #[ignore = "手動計測用"]
+    fn bench_open_cache() {
+        let path = temp_db("bench");
+        let ready = AtomicBool::new(false);
+        let first = std::time::Instant::now();
+        drop(open_at(&path, &ready).unwrap());
+        println!(
+            "  初回 (初期化込み) {:.3} ms",
+            first.elapsed().as_secs_f64() * 1000.0
+        );
+        let start = std::time::Instant::now();
+        for _ in 0..100 {
+            drop(open_at(&path, &ready).unwrap());
+        }
+        println!(
+            "  2 回目以降 {:.3} ms/回",
+            start.elapsed().as_secs_f64() * 10.0
+        );
+        let start = std::time::Instant::now();
+        for _ in 0..100 {
+            // 旧実装 = 毎回初期化
+            ready.store(false, Ordering::Release);
+            drop(open_at(&path, &ready).unwrap());
+        }
+        println!(
+            "  毎回初期化 (旧) {:.3} ms/回",
+            start.elapsed().as_secs_f64() * 10.0
+        );
+        let _ = std::fs::remove_file(&path);
     }
 }

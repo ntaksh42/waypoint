@@ -27,6 +27,7 @@ mod work_items;
 
 use std::cell::RefCell;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, params};
@@ -50,8 +51,15 @@ fn path() -> Option<PathBuf> {
     dirs::config_dir().map(|dir| dir.join(DIR_NAME).join(FILE_NAME))
 }
 
+/// スキーマの初期化・移行を済ませたか。`Index::build` は毎回新しいスレッドで
+/// 動くため `with_cached_connection` の thread_local が効かず、開くたびに
+/// WAL 切替・移行確認・DDL をやり直していた。プロセスで 1 回にする。
+static SCHEMA_READY: AtomicBool = AtomicBool::new(false);
+
 pub(crate) fn open() -> Result<Connection, String> {
     let path = path().ok_or_else(|| "AppData path is unavailable.".to_string())?;
+    // ファイルが消えていたら (利用者が削除した等) 初期化済みとは見なさない
+    let existed = path.exists();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
@@ -59,13 +67,23 @@ pub(crate) fn open() -> Result<Connection, String> {
     connection
         .busy_timeout(Duration::from_secs(3))
         .map_err(|error| error.to_string())?;
-    connection
-        .pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))
-        .map_err(|error| error.to_string())?;
+    // synchronous は接続ごとの設定なので毎回入れる
     connection
         .pragma_update(None, "synchronous", "NORMAL")
         .map_err(|error| error.to_string())?;
-    migrate_work_items_primary_key(&connection)?;
+    if existed && SCHEMA_READY.load(Ordering::Acquire) {
+        return Ok(connection);
+    }
+    init_schema(&connection)?;
+    SCHEMA_READY.store(true, Ordering::Release);
+    Ok(connection)
+}
+
+fn init_schema(connection: &Connection) -> Result<(), String> {
+    connection
+        .pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))
+        .map_err(|error| error.to_string())?;
+    migrate_work_items_primary_key(connection)?;
     connection
         .execute_batch(
             "CREATE TABLE IF NOT EXISTS pull_requests (
@@ -128,8 +146,7 @@ pub(crate) fn open() -> Result<Connection, String> {
             );
             INSERT OR IGNORE INTO cache_meta (key, value) VALUES ('schema_version', '1');",
         )
-        .map_err(|error| error.to_string())?;
-    Ok(connection)
+        .map_err(|error| error.to_string())
 }
 
 /// 旧スキーマ (`PRIMARY KEY (organization, id)`) の `work_items` を新スキーマ

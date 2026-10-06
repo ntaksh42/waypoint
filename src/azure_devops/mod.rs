@@ -260,7 +260,9 @@ pub fn project_candidates(settings: &AzureDevOpsSettings) -> Vec<Candidate> {
 
 /// 監視対象の最後の同期状態。DB が無い・壊れている場合も空状態として扱う。
 pub fn cache_status(settings: &AzureDevOpsSettings) -> CacheStatus {
-    let Ok(connection) = open_cache() else {
+    // トレイメニューの表示 (UI スレッド) から呼ばれる。読み取りだけなので
+    // 書き込みを伴う初期化 (`open_cache`) は通さない
+    let Ok(connection) = cache::open_cache_read_only() else {
         return CacheStatus {
             refresh_in_progress: REFRESHING.load(Ordering::Relaxed),
             ..Default::default()
