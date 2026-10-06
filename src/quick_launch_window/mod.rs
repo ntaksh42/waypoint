@@ -30,10 +30,10 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, SetFocus, VK_CONTROL, VK_MENU, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, HMENU, LBS_HASSTRINGS, LBS_NOTIFY, LBS_OWNERDRAWVARIABLE,
-    RegisterClassW, SW_SHOW, SetForegroundWindow, SetWindowTextW, ShowWindow, WINDOW_STYLE, WM_APP,
-    WM_KEYDOWN, WM_SYSKEYDOWN, WNDCLASSW, WS_CHILD, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
-    WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+    CreateWindowExW, DefWindowProcW, GetWindowTextLengthW, HMENU, LBS_HASSTRINGS, LBS_NOTIFY,
+    LBS_OWNERDRAWVARIABLE, RegisterClassW, SW_SHOW, SetForegroundWindow, SetWindowTextW,
+    ShowWindow, WINDOW_STYLE, WM_APP, WM_KEYDOWN, WM_SYSKEYDOWN, WNDCLASSW, WS_CHILD,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
 };
 use windows::core::{PCWSTR, Result, w};
 
@@ -88,13 +88,17 @@ pub fn show(owner: HWND, origin: Option<HWND>) -> Result<()> {
     };
     let dpi = target_monitor_dpi();
     apply_dpi(window, dpi);
+    // 前回の入力が残っているときは SetWindowTextW が同期で EN_CHANGE を送り、
+    // update_results が走る。明示呼び出しを重ねると表示経路で 2 回走るので、
+    // 前回も空 (EN_CHANGE が飛ばない) のときだけ明示的に行う。
+    // STATE の借用外で呼ぶ。
+    let had_text = unsafe { GetWindowTextLengthW(edit) } > 0;
     unsafe {
-        // SetWindowTextW は前回と同じ空文字列だと EN_CHANGE を送らないことが
-        // あるため、リストの再構築とウィンドウの高さ合わせは update_results
-        // 側で明示的に行う (STATE の借用外で呼ぶ)。
         let _ = SetWindowTextW(edit, w!(""));
     }
-    STATE.with(update_results);
+    if !had_text {
+        STATE.with(update_results);
+    }
     unsafe {
         let _ = windows::Win32::Graphics::Gdi::InvalidateRect(Some(window), None, true);
         let _ = ShowWindow(window, SW_SHOW);
