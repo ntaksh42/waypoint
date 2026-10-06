@@ -80,6 +80,12 @@ pub(crate) fn handle_dynamic_refreshed() {
         let Some(state) = state.as_mut() else {
             return;
         };
+        // 表示・終了のたびに届くが、Recent と窓一覧が前回と同じなら索引の
+        // 組み直しも一覧の再構築も要らない (`install_index` は差し替え時に
+        // `state.dynamic` で組み直すので、索引と常に一致している)
+        if state.dynamic == dynamic {
+            return;
+        }
         quick_launch_window::configure_dynamic(&state.config, &dynamic);
         state.dynamic = dynamic;
     });
