@@ -77,6 +77,7 @@ The goal is to be the most capable general launcher on Windows — broader than 
 | 描画の `CreateSolidBrush` / `CreatePen` を色ごとに使い回す | Quick Launch の 24 行で 0.027ms → 0.022ms、メニューの 48 項目で 0.056ms → 0.036ms。ブラシ生成は `GetDC` より 1 桁以上安い |
 | 起動時の `register_native_host` を変更時のみ書き込みにする | 実測 0.9ms (`--startup-timing`)。直す価値なし |
 | `apps::scan` の並列を 4 → 8 スレッドに | 差が出ない (4 スレッドで頭打ち) |
+| `draw_list_item` のハイライト範囲・`Entry` clone・見出し有無の再計算を `update_results` 側へ前倒し | 再描画 1 回 (24 行) あたり `highlight_ranges` 0.007〜0.043ms (`bench_highlight_ranges`)、`Entry::clone` 0.0016ms (`bench_row_entry_clone`)。フレーム 16ms の 0.3% 未満で、前倒しすると `State` に行ごとの派生データを持たせることになり見合わない。`WM_ICON_READY` の行単位無効化は実 `WM_PAINT` を測れていないため未着手 (Windows が `WM_PAINT` を合体させる) |
 | `favicons::lookup` の SQLite 接続を使い回す (更新日時キー) | 24 件 16.9ms → 5.8ms と速くなるが、接続を持ち続けるとブラウザの `Favicons` を削除・置換できなくなる (Windows の共有モード)。バックグラウンドスレッドの 17ms のために他アプリへ副作用を出す価値は無い。アイドルで閉じる仕組みを足すほどでもない |
 
 **「GDI の生成・破棄は重い」と一括りにしないこと。** 同じ 48 回でも

@@ -441,3 +441,31 @@ fn bench_config_save() {
         start.elapsed().as_secs_f64() * 1000.0 / 20.0
     );
 }
+
+/// 1 行描くたびに走るハイライト範囲の計算 (`draw_list_item` → `highlight_ranges`)。
+/// 24 行ぶん = 再描画 1 回ぶん。
+#[test]
+#[ignore = "手動計測用"]
+fn bench_highlight_ranges() {
+    use std::time::Instant;
+    const VISIBLE_ROWS: usize = 24;
+    let index = large_index(2000, 3000, 5000, 500);
+    for term in ["project", "prj 4", "zzz"] {
+        let results: Vec<Entry> = index
+            .search("project")
+            .into_iter()
+            .take(VISIBLE_ROWS)
+            .cloned()
+            .collect();
+        let start = Instant::now();
+        for _ in 0..2000 {
+            for entry in &results {
+                std::hint::black_box(super::super::highlight_ranges(&entry.name, term));
+            }
+        }
+        println!(
+            "highlight_ranges x{VISIBLE_ROWS} {term:<8} (再描画 1 回ぶん) {:>8.4} ms",
+            start.elapsed().as_secs_f64() * 1000.0 / 2000.0
+        );
+    }
+}
