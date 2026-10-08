@@ -76,11 +76,11 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                     }
                     quick_launch::Action::FocusBrowserTab(target) => {
                         if !crate::browser_tabs::request_focus(&target) && !target.url.is_empty() {
-                            let _ = shell::open_shell_item(&target.url);
+                            let _ = shell::open_url(&target.url);
                         }
                     }
                     quick_launch::Action::OpenUrl(url) => {
-                        let _ = shell::open_shell_item(&url);
+                        let _ = shell::open_url(&url);
                     }
                     // 昇格要求 (Ctrl+Alt+Enter) が立つのはこの 2 種だけ
                     // (queue_selected_elevated で絞っている、FR-9.8.4)

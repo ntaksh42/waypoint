@@ -53,6 +53,9 @@ fn fetch_token() -> Result<CachedToken, String> {
             "--output",
             "json",
         ])
+        // cmd.exe は PATH より先にカレントディレクトリを探す。ユーザー書き込み可能な
+        // 場所に置かれた az.cmd を拾わないよう、作業ディレクトリをシステム領域にする
+        .current_dir(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()))
         .creation_flags(CREATE_NO_WINDOW.0)
         .output()
         .map_err(|error| format!("Could not run Azure CLI: {error}"))?;

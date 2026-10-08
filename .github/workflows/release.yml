@@ -17,6 +17,8 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       should_release: ${{ steps.check.outputs.should_release }}
       next_version: ${{ steps.check.outputs.next_version }}
