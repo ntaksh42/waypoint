@@ -60,6 +60,9 @@ pub fn open_editor(command: &str, path: &str) -> std::io::Result<()> {
             .arg(&program)
             .arg(".")
             .current_dir(path)
+            // 作業ディレクトリは開く(信頼できない)フォルダなので、ラッパーが
+            // 呼ぶ引数なしのコマンド名をそこから拾わせない
+            .env("NoDefaultCurrentDirectoryInExePath", "1")
             .creation_flags(CREATE_NO_WINDOW.0)
             .spawn()
             .map(|_| ());
@@ -398,6 +401,48 @@ mod tests {
         assert_eq!(lines.next(), Some("."));
         assert_eq!(lines.next(), Some(folder.to_str().unwrap()));
         assert_eq!(lines.next(), None, "余計なコマンドが実行された: {text}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 開いたフォルダに置かれた実行ファイルを、ラッパー (.cmd) が引数なしの
+    /// コマンド名として呼んでも拾わないこと。cmd.exe は既定でカレント
+    /// ディレクトリを PATH より先に探す
+    #[test]
+    fn batch_editor_does_not_run_programs_planted_in_the_folder() {
+        let base = std::env::temp_dir().join("waypoint_editor_planted");
+        let _ = std::fs::remove_dir_all(&base);
+        let folder = base.join("project");
+        std::fs::create_dir_all(&folder).unwrap();
+        let marker = base.join("planted_ran.txt");
+        let done = base.join("wrapper_done.txt");
+        std::fs::write(
+            folder.join("wpplanted.cmd"),
+            format!("@echo off\r\necho x> \"{}\"\r\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::write(
+            base.join("fakeeditor.cmd"),
+            format!(
+                "@echo off\r\nwpplanted\r\necho x> \"{}\"\r\n",
+                done.display()
+            ),
+        )
+        .unwrap();
+
+        open_editor(
+            base.join("fakeeditor.cmd").to_str().unwrap(),
+            folder.to_str().unwrap(),
+        )
+        .unwrap();
+        for _ in 0..30 {
+            if done.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+
+        assert!(done.exists(), "ラッパーが最後まで実行されていない");
+        assert!(!marker.exists(), "フォルダ内の実行ファイルが実行された");
         let _ = std::fs::remove_dir_all(&base);
     }
 
