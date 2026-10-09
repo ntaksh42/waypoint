@@ -125,6 +125,8 @@ public static class AzureCredential
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
+            // cmd.exe は PATH より先にカレントディレクトリを探すため、システム領域に固定する
+            WorkingDirectory = Environment.SystemDirectory,
         };
         using var process = System.Diagnostics.Process.Start(start) ?? throw new InvalidOperationException("Could not run Azure CLI.");
         var output = process.StandardOutput.ReadToEndAsync();

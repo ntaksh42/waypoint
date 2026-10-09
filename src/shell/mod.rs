@@ -155,6 +155,24 @@ pub fn open_shell_item(target: &str) -> std::io::Result<()> {
     }
 }
 
+/// Web の URL か。ブックマーク・タブ・Azure DevOps の URL は外部から届く値なので、
+/// `file:` や `ms-msdt:` のような `ShellExecuteW` が実行してしまう scheme を弾く。
+pub fn is_web_url(url: &str) -> bool {
+    let url = url.trim_start().to_ascii_lowercase();
+    url.starts_with("http://") || url.starts_with("https://")
+}
+
+/// 外部から届いた URL を既定ブラウザで開く。http / https 以外は開かない。
+pub fn open_url(url: &str) -> std::io::Result<()> {
+    if !is_web_url(url) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "only http(s) URLs can be opened",
+        ));
+    }
+    open_shell_item(url)
+}
+
 /// Windows の既定のフォルダーハンドラーで開く。
 fn open_new_window(path: &str) -> std::io::Result<()> {
     open_shell_item(path)

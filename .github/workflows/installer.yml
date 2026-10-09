@@ -67,12 +67,14 @@ jobs:
       # GH_REPO で明示する (checkout を足すより速い)。
       - name: Attach to release
         run: |
-          gh release view "${{ github.ref_name }}" 2>$null
+          gh release view "$env:TAG" 2>$null
           if ($LASTEXITCODE -ne 0) {
-            gh release create "${{ github.ref_name }}" --title "${{ github.ref_name }}" --generate-notes
+            gh release create "$env:TAG" --title "$env:TAG" --generate-notes
           }
-          gh release upload "${{ github.ref_name }}" (Get-Item dist/*.msi).FullName --clobber
+          gh release upload "$env:TAG" (Get-Item dist/*.msi).FullName --clobber
         shell: pwsh
         env:
+          # タグ名をスクリプトへ直接展開しない (展開後のテキストがそのままコードになる)
+          TAG: ${{ github.ref_name }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

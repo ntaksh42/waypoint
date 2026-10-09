@@ -93,3 +93,15 @@ fn activating_responsive_minimized_window_restores_it() {
     owner.join().unwrap();
     assert!(result.is_ok(), "target window was not restored");
 }
+
+#[test]
+fn only_http_urls_are_treated_as_web_urls() {
+    use super::is_web_url;
+    assert!(is_web_url("https://example.com/"));
+    assert!(is_web_url("HTTP://example.com/"));
+    assert!(!is_web_url("file:///C:/Windows/System32/calc.exe"));
+    assert!(!is_web_url("ms-msdt:/id PCWDiagnostic"));
+    assert!(!is_web_url("javascript:alert(1)"));
+    assert!(!is_web_url(r"\\attacker\share\x.lnk"));
+    assert!(!is_web_url(""));
+}

@@ -51,12 +51,18 @@ pub fn open_editor(command: &str, path: &str) -> std::io::Result<()> {
 
     // `.cmd` / `.bat` は CreateProcessW が直接起動できないので cmd.exe を挟む。
     // VS Code が PATH へ置くのは `code.cmd` なので、既定値がこちらに来る。
-    // CREATE_NO_WINDOW を付けないとコンソールが一瞬開いて閉じる
+    // CREATE_NO_WINDOW を付けないとコンソールが一瞬開いて閉じる。
+    // フォルダ名の `&` や `%` を cmd.exe に解釈させないよう、パスはコマンド
+    // ラインへ載せず作業ディレクトリで渡して引数は `.` にする
     if is_batch_script(&program) {
         return std::process::Command::new("cmd.exe")
             .arg("/c")
             .arg(&program)
-            .arg(path)
+            .arg(".")
+            .current_dir(path)
+            // 作業ディレクトリは開く(信頼できない)フォルダなので、ラッパーが
+            // 呼ぶ引数なしのコマンド名をそこから拾わせない
+            .env("NoDefaultCurrentDirectoryInExePath", "1")
             .creation_flags(CREATE_NO_WINDOW.0)
             .spawn()
             .map(|_| ());
@@ -78,7 +84,7 @@ pub fn open_claude_code(path: &str, session_name: Option<&str>) -> std::io::Resu
         ));
     }
     let command = match session_name {
-        Some(session_name) => format!("& claude --name '{}'", session_name.replace('\'', "''")),
+        Some(session_name) => format!("& claude --name '{}'", escape_single_quoted(session_name)),
         None => "& claude".to_string(),
     };
     run_in_terminal(path, &command)
@@ -98,7 +104,7 @@ pub fn resume_agent_session(
             format!("folder not found: {path}"),
         ));
     }
-    let id = id.replace('\'', "''");
+    let id = escape_single_quoted(id);
     let command = match agent {
         crate::agent_sessions::Agent::ClaudeCode => format!("& claude --resume '{id}'"),
         crate::agent_sessions::Agent::Codex => format!("& codex resume '{id}'"),
@@ -161,7 +167,7 @@ pub fn open_codex(path: &str) -> std::io::Result<()> {
     let codex = find_executable("codex")
         .map(|program| program.display().to_string())
         .unwrap_or_else(|| "codex".to_string());
-    let command = format!("& '{}'", codex.replace('\'', "''"));
+    let command = format!("& '{}'", escape_single_quoted(&codex));
 
     if let Some(pwsh) = find_pwsh()
         && std::process::Command::new("wt.exe")
@@ -177,6 +183,20 @@ pub fn open_codex(path: &str) -> std::io::Result<()> {
     powershell_fallback(path, Some(&command))
         .spawn()
         .map(|_| ())
+}
+
+/// PowerShell の単一引用符文字列へ埋め込む値をエスケープする。
+/// PowerShell は ASCII の `'` のほかに `‘ ’ ‚ ‛` も単一引用符として扱うため、
+/// 4 種類すべてを二重化しないと文字列から抜けられてしまう。
+fn escape_single_quoted(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        escaped.push(ch);
+        if matches!(ch, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            escaped.push(ch);
+        }
+    }
+    escaped
 }
 
 /// PowerShell 7 が無い環境で使う Windows PowerShell の起動コマンド。
@@ -337,6 +357,93 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn single_quote_variants_are_doubled() {
+        assert_eq!(escape_single_quoted("it's"), "it''s");
+        assert_eq!(
+            escape_single_quoted("x\u{2019}; calc; \u{2018}"),
+            "x\u{2019}\u{2019}; calc; \u{2018}\u{2018}"
+        );
+        assert_eq!(escape_single_quoted("plain"), "plain");
+    }
+
+    /// フォルダ名の `&` が cmd.exe にコマンド区切りとして解釈されないこと。
+    /// パスは引数でなく作業ディレクトリで渡す (エディターには `.` が届く)
+    #[test]
+    fn batch_editor_does_not_put_the_path_on_the_command_line() {
+        let base = std::env::temp_dir().join("waypoint_editor_inject");
+        let _ = std::fs::remove_dir_all(&base);
+        let folder = base.join("a&hostname&b");
+        std::fs::create_dir_all(&folder).unwrap();
+        let report = base.join("report.txt");
+        std::fs::write(
+            base.join("fakeeditor.cmd"),
+            "@echo off\r\necho %~1> \"%~dp0report.txt\"\r\ncd >> \"%~dp0report.txt\"\r\n",
+        )
+        .unwrap();
+
+        open_editor(
+            base.join("fakeeditor.cmd").to_str().unwrap(),
+            folder.to_str().unwrap(),
+        )
+        .unwrap();
+        for _ in 0..30 {
+            if std::fs::read_to_string(&report).is_ok_and(|text| text.lines().count() >= 2) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+
+        let text = std::fs::read_to_string(&report).unwrap();
+        let mut lines = text.lines();
+        assert_eq!(lines.next(), Some("."));
+        assert_eq!(lines.next(), Some(folder.to_str().unwrap()));
+        assert_eq!(lines.next(), None, "余計なコマンドが実行された: {text}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 開いたフォルダに置かれた実行ファイルを、ラッパー (.cmd) が引数なしの
+    /// コマンド名として呼んでも拾わないこと。cmd.exe は既定でカレント
+    /// ディレクトリを PATH より先に探す
+    #[test]
+    fn batch_editor_does_not_run_programs_planted_in_the_folder() {
+        let base = std::env::temp_dir().join("waypoint_editor_planted");
+        let _ = std::fs::remove_dir_all(&base);
+        let folder = base.join("project");
+        std::fs::create_dir_all(&folder).unwrap();
+        let marker = base.join("planted_ran.txt");
+        let done = base.join("wrapper_done.txt");
+        std::fs::write(
+            folder.join("wpplanted.cmd"),
+            format!("@echo off\r\necho x> \"{}\"\r\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::write(
+            base.join("fakeeditor.cmd"),
+            format!(
+                "@echo off\r\nwpplanted\r\necho x> \"{}\"\r\n",
+                done.display()
+            ),
+        )
+        .unwrap();
+
+        open_editor(
+            base.join("fakeeditor.cmd").to_str().unwrap(),
+            folder.to_str().unwrap(),
+        )
+        .unwrap();
+        for _ in 0..30 {
+            if done.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+
+        assert!(done.exists(), "ラッパーが最後まで実行されていない");
+        assert!(!marker.exists(), "フォルダ内の実行ファイルが実行された");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
