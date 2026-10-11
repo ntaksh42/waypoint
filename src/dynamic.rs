@@ -3,30 +3,28 @@
 //! 列挙はメニューを閉じた後に行い、表示経路ではキャッシュだけを使う。
 
 use std::collections::{BTreeMap, HashSet};
-use std::ffi::c_void;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{LazyLock, Mutex};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
-use windows::Win32::System::Threading::GetCurrentProcessId;
-use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GW_OWNER, GWL_EXSTYLE, GetWindow, GetWindowLongW, GetWindowTextLengthW,
-    GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, PostMessageW, WS_EX_APPWINDOW,
-    WS_EX_TOOLWINDOW,
-};
-use windows::core::BOOL;
+use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 
 use crate::shell::ComGuard;
 
+mod open_windows;
+use open_windows::enumerate_windows;
+
 const ITEM_LIMIT: usize = 10;
 
-/// 非同期更新を一つに直列化する。多重に列挙・COM 解決を走らせない。
+/// Recent の走査を一つに直列化する。多重に COM 解決を走らせない。
 static REFRESHING: AtomicBool = AtomicBool::new(false);
+/// ウィンドウ列挙の多重起動を避ける。Recent の走査とは独立に回す。
+static ENUMERATING: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PathEntry {
@@ -84,35 +82,45 @@ struct HistoryEntry {
     last_used: u64,
 }
 
-/// `refresh()` をバックグラウンドスレッドで実行する。
+/// 列挙をバックグラウンドスレッドで実行する。
 ///
 /// Recent フォルダの `.lnk` を 1 件ずつ COM (`IPersistFile`) で解決する
 /// コストが実測で数十 ms あり、UI スレッド (`wnd_proc`) 上でメニューを
 /// 閉じるたびに同期実行すると次のトリガーへの応答が詰まる。
 /// COM は STA なので、このスレッド自身で `CoInitializeEx` してから使う。
 ///
-/// 既に実行中なら何もしない (`false` を返す)。結果は `notify` へ
-/// `message` で通知するので、呼び出し側は `take_refreshed()` で取り出す。
+/// 開いているウィンドウ (`w ` の一覧) は別スレッドで先に届ける。Recent の
+/// 走査は実体の存在確認で不達のネットワークパスに当たると長く止まるため、
+/// 同じスレッドに載せると窓一覧の更新まで道連れで遅れる。
+///
+/// Recent 側が実行中なら何もしない (`false` を返す)。結果は `notify` へ
+/// `message` で、各段が終わるたびに通知する。呼び出し側は `take_refreshed()` で
+/// 取り出す (どの時点でも窓一覧と Recent の両方を含む一貫した値になる)。
 pub fn refresh_async(notify: HWND, message: u32) -> bool {
+    let notify = notify.0 as isize;
+    if !ENUMERATING.swap(true, Ordering::AcqRel) {
+        thread::spawn(move || {
+            let all_windows = enumerate_windows();
+            publish(notify, message, |menus| set_windows(menus, all_windows));
+            // 通知の後に下ろす。先に下ろすと次の列挙の結果が追い越される
+            ENUMERATING.store(false, Ordering::Release);
+        });
+    }
     if REFRESHING.swap(true, Ordering::AcqRel) {
         return false;
     }
-    let notify = notify.0 as isize;
     thread::spawn(move || {
         let started = crate::startup_timing::enabled().then(std::time::Instant::now);
         let _guard = ComGuard::new();
-        let menus = refresh();
+        let recent = refresh_recent();
         if let Some(started) = started {
             crate::startup_timing::mark_elapsed(
                 "background dynamic refresh finished",
                 started.elapsed(),
             );
         }
-        RESULT.with_lock(|slot| *slot = Some(menus));
+        publish(notify, message, |menus| recent.apply_to(menus));
         REFRESHING.store(false, Ordering::Release);
-        unsafe {
-            let _ = PostMessageW(Some(HWND(notify as *mut _)), message, WPARAM(0), LPARAM(0));
-        }
     });
     true
 }
@@ -136,8 +144,56 @@ impl ResultSlot {
 
 static RESULT: ResultSlot = ResultSlot(std::sync::Mutex::new(None));
 
+/// 最新の列挙結果。窓一覧と Recent は別スレッドが自分の担当分だけ書き換える
+/// ので、通知する値は常にここから複製する (片方だけの値を渡さない)。
+static CURRENT: LazyLock<Mutex<Menus>> = LazyLock::new(Mutex::default);
+
+/// `CURRENT` を更新し、その複製を `RESULT` に置いて `notify` へ知らせる。
+fn publish(notify: isize, message: u32, update: impl FnOnce(&mut Menus)) {
+    {
+        // RESULT への書き込みも CURRENT のロック内で行い、古い複製が
+        // 新しい複製を追い越して置かれないようにする
+        let mut current = CURRENT.lock().unwrap_or_else(|e| e.into_inner());
+        update(&mut current);
+        let snapshot = current.clone();
+        RESULT.with_lock(|slot| *slot = Some(snapshot));
+    }
+    unsafe {
+        let _ = PostMessageW(Some(HWND(notify as *mut _)), message, WPARAM(0), LPARAM(0));
+    }
+}
+
+/// Recent / Frequent 側の列挙結果。
+struct RecentPart {
+    recent_folders: Vec<PathEntry>,
+    recent_files: Vec<PathEntry>,
+    frequent_folders: Vec<PathEntry>,
+    frequent_files: Vec<PathEntry>,
+}
+
+impl RecentPart {
+    fn apply_to(self, menus: &mut Menus) {
+        menus.recent_folders = self.recent_folders;
+        menus.recent_files = self.recent_files;
+        menus.frequent_folders = self.frequent_folders;
+        menus.frequent_files = self.frequent_files;
+    }
+}
+
+fn set_windows(menus: &mut Menus, all_windows: Vec<WindowEntry>) {
+    menus.current_windows = all_windows.iter().take(ITEM_LIMIT).cloned().collect();
+    menus.all_windows = all_windows;
+}
+
 /// Windows の状態を読み、次回表示用のスナップショットを作る。
 pub fn refresh() -> Menus {
+    let mut menus = Menus::default();
+    refresh_recent().apply_to(&mut menus);
+    set_windows(&mut menus, enumerate_windows());
+    menus
+}
+
+fn refresh_recent() -> RecentPart {
     let recent = scan_recent_items();
     let mut history = load_history();
     // 何も変わっていないのに書くと、原子的保存だけで 12〜15ms かかる
@@ -151,16 +207,11 @@ pub fn refresh() -> Menus {
         let _ = save_history(&history);
     }
 
-    let all_windows = enumerate_windows();
-    let current_windows = all_windows.iter().take(ITEM_LIMIT).cloned().collect();
-
-    Menus {
+    RecentPart {
         recent_folders: recent_entries(&recent, true),
         recent_files: recent_entries(&recent, false),
         frequent_folders: frequent_entries(&history, true),
         frequent_files: frequent_entries(&history, false),
-        current_windows,
-        all_windows,
     }
 }
 
@@ -216,7 +267,13 @@ fn scan_recent_items() -> Vec<RecentItem> {
         {
             continue;
         }
-        let Some(path) = crate::apps::resolve_target_cached(&link.to_string_lossy()) else {
+        // 更新日時は列挙で得た値を使う (リンクごとの stat をもう一度払わない)。
+        // 取れないリンクは解決しない (これまでも `resolve_target_cached` が弾いていた)
+        let Some(modified_time) = file.metadata().and_then(|m| m.modified()).ok() else {
+            continue;
+        };
+        let Some(path) = crate::apps::resolve_target_at(&link.to_string_lossy(), modified_time)
+        else {
             continue;
         };
         let target = PathBuf::from(&path);
@@ -232,11 +289,8 @@ fn scan_recent_items() -> Vec<RecentItem> {
         if !seen.insert(key) {
             continue;
         }
-        let modified = file
-            .metadata()
-            .and_then(|metadata| metadata.modified())
-            .ok()
-            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        let modified = modified_time
+            .duration_since(UNIX_EPOCH)
             .map_or(0, |duration| duration.as_secs());
         items.push(RecentItem {
             entry: PathEntry {
@@ -345,92 +399,6 @@ fn display_name(path: &Path) -> String {
         .filter(|name| !name.is_empty())
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.to_string_lossy().into_owned())
-}
-
-/// タスクバー / Alt+Tab に出る「実際に開いているウィンドウ」かどうか。
-///
-/// `EnumWindows` は可視ならヘルパーウィンドウ (`Program Manager` など)
-/// まで返してしまう。オーナーを持つウィンドウとツールウィンドウを除く
-/// (`WS_EX_APPWINDOW` が立っていれば強制的に含める) のが Explorer と
-/// 同じ判定基準。
-///
-/// UWP / ApplicationFrameHost 系アプリ (設定アプリなど) は、可視状態
-/// のままホスト側のウィンドウを DWM 上で覆い隠す (`DWMWA_CLOAKED`) 。
-/// これを見ないと同じアプリが 2 枚重複して列挙される (実測で確認済み) 。
-fn is_taskbar_window(hwnd: HWND) -> bool {
-    unsafe {
-        if is_cloaked(hwnd) {
-            return false;
-        }
-        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
-        if ex_style & WS_EX_APPWINDOW.0 != 0 {
-            return true;
-        }
-        if ex_style & WS_EX_TOOLWINDOW.0 != 0 {
-            return false;
-        }
-        GetWindow(hwnd, GW_OWNER).is_err()
-    }
-}
-
-fn is_cloaked(hwnd: HWND) -> bool {
-    let mut cloaked = 0u32;
-    unsafe {
-        let result = DwmGetWindowAttribute(
-            hwnd,
-            DWMWA_CLOAKED,
-            std::ptr::from_mut(&mut cloaked).cast(),
-            size_of::<u32>() as u32,
-        );
-        result.is_ok() && cloaked != 0
-    }
-}
-
-fn enumerate_windows() -> Vec<WindowEntry> {
-    let mut windows = Vec::new();
-    unsafe {
-        let _ = EnumWindows(
-            Some(enum_window),
-            LPARAM((&mut windows as *mut Vec<WindowEntry>) as isize),
-        );
-    }
-    windows
-}
-
-unsafe extern "system" fn enum_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
-    unsafe {
-        if !IsWindowVisible(hwnd).as_bool() {
-            return true.into();
-        }
-        let mut process_id = 0;
-        GetWindowThreadProcessId(hwnd, Some(&mut process_id));
-        if process_id == GetCurrentProcessId() {
-            return true.into();
-        }
-        if !is_taskbar_window(hwnd) {
-            return true.into();
-        }
-        // GetWindowTextLengthW を判定用と確保用の 2 回に分けて呼ぶと、
-        // その間の別ウィンドウへの Win32 呼び出しが挟まる間にタイトルが
-        // 変わり得て (通知件数の更新など) 、1 回目は空でないのに 2 回目が
-        // 0 を返してウィンドウごと取りこぼす余地があった。1 回だけ呼んで
-        // その結果でバッファを確保し、空なら以降は評価しない
-        let length = GetWindowTextLengthW(hwnd);
-        if length <= 0 {
-            return true.into();
-        }
-        let mut title = vec![0u16; length as usize + 1];
-        let len = GetWindowTextW(hwnd, &mut title);
-        if len > 0 {
-            let windows = &mut *(lparam.0 as *mut c_void as *mut Vec<WindowEntry>);
-            windows.push(WindowEntry {
-                title: String::from_utf16_lossy(&title[..len as usize]),
-                hwnd: hwnd.0 as isize,
-                process_name: crate::process::process_name_of(hwnd).unwrap_or_default(),
-            });
-        }
-        true.into()
-    }
 }
 
 #[cfg(test)]

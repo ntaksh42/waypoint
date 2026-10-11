@@ -65,6 +65,19 @@ The goal is to be the most capable general launcher on Windows — broader than 
   同期実行していた (ウィンドウ作成後・メッセージループ開始前なので、ブロードキャストを
   `SendMessage` した他プロセスまで待たされ、起動時に固まる)
   → `tray/index_build.rs` でバックグラウンド構築し、`WM_INDEX_BUILT` で差し替えるだけに
+- `dynamic::refresh_async` が Recent の走査 (リンク先の存在確認) と `w ` の窓一覧を
+  1 スレッドで続けて行っていた。リンク先が不達のネットワークパスだと確認が SMB の
+  タイムアウトまで止まり、窓一覧の更新も `REFRESHING` ごと道連れで遅れる
+  → 窓の列挙を別スレッド (`dynamic/open_windows.rs`) へ分け、窓一覧を先に届ける。
+  合わせて Recent のリンクごとの stat を、列挙で得た更新日時を渡す形で 1 回減らした
+  (この機は Recent が 0 件のため速度は未計測。ネットワークパス待ちの切り離しが主目的)
+- パスを持たない `.lnk` (File Explorer / Control Panel / Run のシェル項目) は解決に
+  成功しても結果が空で、「失敗」と同じ扱いで記憶されず `apps::scan` のたびに
+  `IPersistFile::Load` されていた → 空も記憶する (失敗は従来どおり記憶しない。
+  warm 4〜5 → 3ms)
+- `agent_sessions::refresh_async` が Quick Launch を開くたびに 400 件超のセッション
+  ファイルを列挙していた (warm 約 5ms)。`cs ` を使わない表示でも毎回
+  → 前回の読み取りから 5 秒以内は走らせない
 
 **試して駄目だったもの** (繰り返さないこと):
 
@@ -80,6 +93,7 @@ The goal is to be the most capable general launcher on Windows — broader than 
 | 打鍵ごとの `azure_command` 多重解析 / `az ` 補完の `LowerKeys::build_for_names` / `to_hiragana` の確保を直す | 1 回あたり 0.0002ms / 0.0004ms / 0.006ms (`bench_keystroke_overheads`)。全部足しても 0.01ms 未満で打鍵の予算に対して誤差。`cc ` の `format!` (全フォルダ分、0.29ms) だけは効いたので直した |
 | `build_rows` の未使用ラベル (`format!` + `HSTRING`) を省く / `LBS_NODATA` の仮想リストへ移行 | 24 行で 0.022ms (`bench_build_rows`)。`LB_ADDSTRING` の往復を足しても 0.05ms 級で、アクセシビリティ用の文字列を失うほどではない。同サイズ時の `MoveWindow` 省略だけ採用した |
 | `draw_list_item` のハイライト範囲・`Entry` clone・見出し有無の再計算を `update_results` 側へ前倒し | 再描画 1 回 (24 行) あたり `highlight_ranges` 0.007〜0.043ms (`bench_highlight_ranges`)、`Entry::clone` 0.0016ms (`bench_row_entry_clone`)。フレーム 16ms の 0.3% 未満で、前倒しすると `State` に行ごとの派生データを持たせることになり見合わない。`WM_ICON_READY` の行単位無効化は実 `WM_PAINT` を測れていないため未着手 (Windows が `WM_PAINT` を合体させる) |
+| `Index::install_index` で旧 `Index` の drop を別スレッドへ逃がす | 実測 0.26ms (履歴 680 / アプリ 85 件)。起動時とリロード時にしか走らず、スレッド生成 (0.1ms 前後) と相殺される。入れていない |
 | `favicons::lookup` の SQLite 接続を使い回す (更新日時キー) | 24 件 16.9ms → 5.8ms と速くなるが、接続を持ち続けるとブラウザの `Favicons` を削除・置換できなくなる (Windows の共有モード)。バックグラウンドスレッドの 17ms のために他アプリへ副作用を出す価値は無い。アイドルで閉じる仕組みを足すほどでもない |
 
 **「GDI の生成・破棄は重い」と一括りにしないこと。** 同じ 48 回でも
