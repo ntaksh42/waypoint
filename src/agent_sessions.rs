@@ -11,7 +11,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 /// セッション記録の先頭・末尾それぞれから読む量。
 ///
@@ -59,6 +59,18 @@ type ParsedCache = HashMap<PathBuf, (SystemTime, Option<Parsed>)>;
 static PARSED: Mutex<Option<ParsedCache>> = Mutex::new(None);
 static LATEST: Mutex<Option<Arc<Vec<Session>>>> = Mutex::new(None);
 static RUNNING: AtomicBool = AtomicBool::new(false);
+/// 直近の読み取りが終わった時刻。開閉を続けたときの再読み取りを間引く。
+static LAST_FINISHED: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// 前回の読み取りからこの時間は読み直さない。Quick Launch は表示のたびに
+/// 呼ぶが、ほとんどの表示では `cs ` を使わず、使うときも直前の一覧で足りる。
+/// 更新日時が変わったファイルだけを読み直す作りなので、間引いても古くなるのは
+/// この間に始まったセッションの分だけ。
+const MIN_INTERVAL: Duration = Duration::from_secs(5);
+
+fn scan_due(last_finished: Option<Instant>, now: Instant) -> bool {
+    last_finished.is_none_or(|last| now.saturating_duration_since(last) >= MIN_INTERVAL)
+}
 
 /// 直近の読み取り結果 (新しい順)。まだ一度も読み終えていなければ空。
 pub fn latest() -> Arc<Vec<Session>> {
@@ -71,7 +83,8 @@ pub fn latest() -> Arc<Vec<Session>> {
 
 /// セッション一覧の読み直しを専用スレッドで始める。実行中なら何もしない。
 pub fn refresh_async() {
-    if RUNNING.swap(true, Ordering::AcqRel) {
+    let last_finished = *LAST_FINISHED.lock().unwrap_or_else(|e| e.into_inner());
+    if !scan_due(last_finished, Instant::now()) || RUNNING.swap(true, Ordering::AcqRel) {
         return;
     }
     std::thread::spawn(|| {
@@ -79,6 +92,7 @@ pub fn refresh_async() {
         if let Some(sessions) = sessions {
             *LATEST.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(sessions));
         }
+        *LAST_FINISHED.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
         RUNNING.store(false, Ordering::Release);
     });
 }
@@ -339,7 +353,17 @@ pub fn age_label(modified: SystemTime, now: SystemTime) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+
+    #[test]
+    fn scan_is_due_only_after_the_minimum_interval() {
+        let base = Instant::now();
+        assert!(scan_due(None, base));
+        assert!(!scan_due(
+            Some(base),
+            base + MIN_INTERVAL - Duration::from_millis(1)
+        ));
+        assert!(scan_due(Some(base), base + MIN_INTERVAL));
+    }
 
     #[test]
     fn claude_prefers_custom_title_over_ai_title() {

@@ -146,13 +146,15 @@ fn target_exists(shortcut_path: &str) -> bool {
     resolve_target_cached(shortcut_path).is_some_and(|target| Path::new(&target).exists())
 }
 
-/// `.lnk` ごとの更新日時と解決したリンク先。
+/// `.lnk` ごとの更新日時と解決したリンク先。リンク先が空文字列のものは
+/// 「パスを持たないショートカット」(File Explorer / Control Panel など
+/// シェル項目へのリンク) で、解決は成功しているので同じく記憶する。
 type TargetCache = Mutex<HashMap<String, (SystemTime, String)>>;
 
 /// 解決結果の記憶。設定の再読み込みのたびに全 `.lnk` を `IPersistFile::Load`
 /// し直さないための物 (実測で warm 時も 83 件で約 20ms)。リンク先が消えたかは
 /// 呼び出し側が毎回 `exists` で見るので、記憶するのは解決結果だけ。
-/// 失敗は記憶しない (COM が未初期化の間の失敗などが居座らないように)。
+/// 失敗 (COM 未初期化・読み込み失敗) は記憶しない。居座らないように。
 static TARGETS: LazyLock<TargetCache> = LazyLock::new(Mutex::default);
 
 /// 更新日時が前回と同じなら記憶したリンク先を返し、変わっていれば解決し直す。
@@ -160,21 +162,30 @@ pub(crate) fn resolve_target_cached(shortcut_path: &str) -> Option<String> {
     let modified = fs::metadata(shortcut_path)
         .and_then(|m| m.modified())
         .ok()?;
+    resolve_target_at(shortcut_path, modified)
+}
+
+/// `resolve_target_cached` の、更新日時を呼び出し側が既に持っている版。
+/// ディレクトリ列挙で得た値を渡せば、リンクごとの stat を省ける。
+pub(crate) fn resolve_target_at(shortcut_path: &str, modified: SystemTime) -> Option<String> {
     let cached = TARGETS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .get(shortcut_path)
         .filter(|(at, _)| *at == modified)
         .map(|(_, target)| target.clone());
-    if cached.is_some() {
-        return cached;
-    }
-    let target = resolve_target(shortcut_path)?;
-    TARGETS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(shortcut_path.to_string(), (modified, target.clone()));
-    Some(target)
+    let target = match cached {
+        Some(target) => target,
+        None => {
+            let target = resolve_target(shortcut_path)?;
+            TARGETS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(shortcut_path.to_string(), (modified, target.clone()));
+            target
+        }
+    };
+    (!target.is_empty()).then_some(target)
 }
 
 fn resolve_target(shortcut_path: &str) -> Option<String> {
@@ -190,6 +201,7 @@ fn resolve_target(shortcut_path: &str) -> Option<String> {
         let mut target = vec![0u16; 32768];
         link.GetPath(&mut target, std::ptr::null_mut(), 0).ok()?;
         let len = target.iter().position(|ch| *ch == 0)?;
-        (len > 0).then(|| String::from_utf16_lossy(&target[..len]))
+        // 空はシェル項目へのリンク (パスを持たない)。解決自体は成功している
+        Some(String::from_utf16_lossy(&target[..len]))
     }
 }
