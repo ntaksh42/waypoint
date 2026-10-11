@@ -102,6 +102,20 @@ pub(super) fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM)
                         true,
                     );
                 }
+                // 縦に伸びたとき、Windows は旧クライアント領域の画素を残して
+                // 新たに露出した下端だけを無効化する。旧位置の操作ヒント帯が
+                // リスト下の隙間に残るので、リストより下を丸ごと描き直させる
+                let below_list = RECT {
+                    left: 0,
+                    top: height - footer,
+                    right: width,
+                    bottom: height,
+                };
+                let _ = windows::Win32::Graphics::Gdi::InvalidateRect(
+                    Some(hwnd),
+                    Some(&below_list),
+                    true,
+                );
             }
             LRESULT(0)
         }
