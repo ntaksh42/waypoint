@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>az コマンド — 現状と仕様整理の課題</title>
+<style>
+:root{color-scheme:light;--ink:#203047;--muted:#57677b;--line:#d9e1ea;--blue:#155db1}
+*{box-sizing:border-box}body{margin:0;background:#f3f6fa;color:var(--ink);font:16px/1.75 "Segoe UI","Yu Gothic UI",sans-serif}main{max-width:1120px;margin:auto;padding:48px 32px 72px}header{border-top:5px solid var(--blue);padding:24px 0}h1{font-size:36px;line-height:1.3;margin:8px 0 16px}h2{font-size:25px;margin:36px 0 16px}h3{font-size:19px;margin:0 0 10px}p{margin:10px 0}small,.meta{color:var(--muted)}nav{display:flex;gap:20px;flex-wrap:wrap;padding:16px 0;border-block:1px solid var(--line)}a{color:var(--blue)}section{scroll-margin-top:20px}.card{background:white;border:1px solid var(--line);border-radius:10px;padding:22px;margin:16px 0}table{width:100%;border-collapse:collapse;background:white;font-size:14px}th,td{border:1px solid var(--line);padding:13px 15px;text-align:left;vertical-align:top}th{background:#eaf0f7}code{font:14px/1.5 Consolas,monospace;background:#eaf0f7;padding:2px 5px;border-radius:4px}.tag{display:inline-block;font-size:12px;font-weight:700;padding:2px 9px;border-radius:4px;background:#e7effb;color:#194e91}.high{background:#fce9e4;color:#923c24}.source{font-size:13px;color:var(--muted);overflow-wrap:anywhere}.flow{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.flow span{background:#eaf0f7;padding:10px 16px;border-radius:6px}li{margin:6px 0}.note{border-left:4px solid var(--blue);padding:10px 20px;background:#eaf0f7}@media(max-width:720px){main{padding:24px 16px}h1{font-size:28px}.table-wrap{overflow:auto}table{min-width:730px}}@media print{body{background:white}main{padding:0}nav{display:none}.card{break-inside:avoid}a{color:inherit}}
+</style>
+</head>
+<body><main>
+<header>
+<div class="meta">waypoint / Specification review / 2026-10-14</div>
+<h1><code>az</code> コマンドの現状と、仕様整理の課題</h1>
+<p>現在の実装は「キャッシュで探す」「Liveで追加取得する」「Webページへ進む」「検索設定を自動更新する」の4種類を、同じプレフィックスにまとめている。最初に整理すべきなのは、キャッシュとLiveの検索範囲・一致条件・順位の違いである。</p>
+<p class="meta">対象はwaypointのQuick Launch内の <code>az </code>。認証時に呼ぶAzure CLIの <code>az</code> とは別。仕様書・Rust実装・既存テストを確認した静的調査であり、実アカウントへのAPI問い合わせやGUI操作の実機検証は含まない。</p>
+</header>
+<nav><a href="#current">現行仕様</a><a href="#syntax">構文と操作</a><a href="#limits">取得範囲</a><a href="#issues">課題</a><a href="#decisions">整理案</a><a href="#validation">確認範囲</a></nav>
+<section id="current">
+<h2>1. 現行仕様の全体像</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>入力</th><th>入力時の候補</th><th>Enter</th><th>Ctrl+Enter</th></tr></thead>
+<tbody>
+<tr><td><code>az </code></td><td>使用履歴のあるPR・WIを各最大3件、その後にショートカットと6コマンド。履歴がなければCommands見出しなし。</td><td>選択候補を実行。検索系コマンドは入力補完。</td><td>空の条件でPR・WI・PipelineをLive検索。</td></tr>
+<tr><td><code>az &lt;query&gt;</code></td><td>ローカルのPR・WI・Projectを横断検索。単語1つでコマンド補完に一致すると補完を優先。</td><td>Webを開く。未取得のPR番号には取得用候補。</td><td>PR・WI・Pipelineを並列取得。表示順はPR → WI → Pipeline。Projectは含まない。</td></tr>
+<tr><td><code>az pr [属性] [query]</code></td><td>Active共有キャッシュ＋Completed/Abandonedのローカル履歴。</td><td>PRを開く。0件または指定ID不在ならLive取得候補。</td><td>指定条件でLive取得。状態省略時はActive。</td></tr>
+<tr><td><code>az wit [live] [query]</code></td><td>共有キャッシュのWI。検索語ありで0件ならLive検索候補。</td><td>WIを開く、またはLive候補を実行。</td><td>空なら最近更新、文字列なら全文検索、<code>#ID</code>ならWIQLでID取得。</td></tr>
+<tr><td><code>az pipeline [属性] [query]</code></td><td>永続キャッシュなし。Live検索を実行する候補。</td><td>Live候補を実行。取得後の候補はWebを開く。</td><td>定義・直近Buildを取得して絞り込み。</td></tr>
+<tr><td><code>az project [query]</code></td><td>設定したProjectの候補。</td><td>ProjectのWebページを開く。</td><td>Enterと同じ。</td></tr>
+<tr><td><code>az new [type]</code></td><td>作成種別 → Project → PRの場合は監視Repository。独自WI Typeも同期済みなら表示。</td><td>次の選択へ進む、またはブラウザの作成ページを開く。</td><td>Enterと同じ。書き込みAPIは呼ばない。</td></tr>
+<tr><td><code>az optimize</code></td><td>自動最適化の実行候補1件。</td><td>直近90日の自分の活動からProject priorityとinterestIterationsを保存。</td><td>Enterと同じ。</td></tr>
+</tbody></table></div>
+<p class="source">根拠: src/quick_launch/search.rs:213、src/quick_launch/azure_search.rs:73、src/quick_launch_window/search.rs:92、src/quick_launch_window/azure_live/mod.rs:236、src/quick_launch/azure_new.rs:31、src/azure_devops/mod.rs:83</p>
+<div class="card"><h3>ショートカット</h3><p>My review requests → <code>active needs-review</code>、My active PRs → <code>active author</code>、Waiting for others → <code>active waiting</code>、Stale PRs → <code>active stale</code>。監視Repositoryごとの3候補も追加される。</p><p>Repository別review requestsは <code>reviewer</code> を使い、未投票に限定する <code>needs-review</code> とは異なる。Repository名は構造化したスコープではなく通常の検索語として補完される。</p><p class="source">根拠: src/quick_launch/azure_entries.rs:49</p></div>
+</section>
+<section id="syntax"><h2>2. 構文と操作のルール</h2>
+<div class="card">
+<ul>
+<li>プレフィックスは厳密に小文字の <code>az </code>（半角スペース込み）。サブコマンド・属性はASCIIの大文字小文字を区別しない。</li>
+<li>属性は先頭から連続している間だけ解釈する。<code>az pr mine active foo</code> は両条件を適用、<code>az pr foo mine</code> は <code>foo mine</code> 全体が検索語。</li>
+<li>状態を複数書くと最後が勝つ。関係属性はすべてAND。<code>author reviewer</code> は「作成者またはreviewer」にはならない。</li>
+<li><code>live</code> はPR/WIの互換属性。入力だけではAPIを呼ばず、明示操作が必要。</li>
+<li>数字のみは部分一致も許す。<code>#ID</code> はID完全一致。PRのID取得は状態条件より番号を優先する。</li>
+<li><code>Ctrl+C</code> は選択候補のURL（入力文字列の選択時は通常コピー）、<code>Ctrl+Shift+C</code> はPRのsource branch。</li>
+<li>APIはバックグラウンドで動く。入力変更後の古い応答は捨てるが、ネットワークリクエスト自体は中断しない。種別ごと同時1件、同一条件の完了後2秒以内は抑止。</li>
+</ul>
+<p class="source">根拠: src/quick_launch/azure.rs:104、src/quick_launch/azure.rs:134、src/quick_launch/azure.rs:153、src/quick_launch_window/input.rs:306、src/quick_launch_window/input.rs:324、src/quick_launch_window/azure_live/mod.rs:318 / 同ディレクトリの各種別実装</p>
+</div>
+<div class="table-wrap"><table><thead><tr><th>系統</th><th>正式名・別名</th><th>属性</th></tr></thead><tbody>
+<tr><td>PR</td><td>pr / prs</td><td>active / completed (complete) / abandoned (abandon) / all、mine (me)、author (authored)、reviewer (review)、needs-review (needsreview)、waiting (waiting-for-others)、draft (drafts)、ready (ready-to-complete)、stale、live</td></tr>
+<tr><td>WI</td><td>wit / wi / workitem / workitems</td><td>live</td></tr>
+<tr><td>Pipeline</td><td>pipeline / pipelines / pipe / build / builds</td><td>failed (fail) / definition (definitions, def) / all</td></tr>
+<tr><td>その他</td><td>project / projects、new、optimize / suggest / rank</td><td>Projectとnewには検索・選択文字列。optimizeの後続文字列は実行内容に影響しない。</td></tr>
+</tbody></table></div><p class="source">根拠: src/quick_launch/azure.rs:104、src/quick_launch/azure.rs:153、src/quick_launch/azure.rs:213、src/quick_launch/azure.rs:226</p>
+</section>
+<section id="limits"><h2>3. 取得範囲・鮮度・認証</h2>
+<div class="table-wrap"><table><thead><tr><th>データ</th><th>現在の範囲</th><th>留意点</th></tr></thead><tbody>
+<tr><td>Active PR / WI</td><td><code>%APPDATA%\AzDoSharedCache\cache.db</code> をDevDeckと共有。同期時、10分以内の共有キャッシュならAPI取得を省く。</td><td>最新・全件の保証ではない。共有DBが使えない場合は該当候補が空になる。</td></tr>
+<tr><td>Completed / Abandoned PR</td><td>waypointのDB。通常履歴は90日、最大2,000件。Liveの履歴取得は365日、最大2,000件。ID指定は単体取得API。</td><td>Liveでも一覧スキャンは有限。1年以上前は番号による取得が有効。</td></tr>
+<tr><td>WI</td><td>最近更新はProjectごと最大800件。文字列LiveはSearch APIで最大300件。空の取得はArea/Iteration条件、文字列LiveはProject全体。</td><td>ローカルとLiveで検索対象・検索エンジンが変わる。</td></tr>
+<tr><td>Pipeline</td><td>Projectごと定義を最大1,000件、Buildを直近100件取得し、ローカルで属性・タイトルを絞る。</td><td>failedでも「失敗Build100件」の取得ではない。取得した100件に失敗がなければ0件。</td></tr>
+<tr><td>認証</td><td>組織ごとのCredential Manager PATを優先。PATなしはAzure CLIのEntraトークン。期限5分前まで再利用。</td><td>Microsoft個人アカウントの組織はPATが必要。認証処理はバックグラウンド。</td></tr>
+</tbody></table></div>
+<p class="source">根拠: src/azure_devops/api/pull_requests.rs:20、src/azure_devops/api/pull_requests.rs:33、src/azure_devops/api/work_items.rs:17、src/azure_devops/api/work_items.rs:175、src/azure_devops/api/pipelines.rs:10、docs/spec.md:217、docs/spec.md:218</p>
+</section>
+<section id="issues"><h2>4. 整理すべき課題</h2>
+<p>以下は確認できた挙動・文書不整合と、そこからの設計上の懸念を分けて記載した。変更はまだ実施していない。</p>
+<article class="card"><span class="tag high">優先度 高 / 検索契約</span><h3>A. Liveは同じ検索の更新になっていない</h3>
+<p><strong>確認事実:</strong> PRはキャッシュの状態省略がall、Liveはactive。ローカルはタイトル・所属・URL・branchを照合するが、PR Liveはタイトル照合。WI Liveは別の全文検索API。横断キャッシュはProjectも含むが横断Liveは3種のみ。</p>
+<p><strong>影響:</strong> <code>az pr completedのタイトル</code> やRepository名でヒットした候補が、Ctrl+Enter後に消える可能性がある。「最新に更新したら減った」と見える。</p>
+<p><strong>推奨:</strong> 「キャッシュ検索」と「追加取得」の契約を明記し、状態・検索フィールド・対象種別の差を表にする。まず差を明示する方がAPI負荷を増やさず整理できる。</p>
+<p class="source">根拠: src/quick_launch/azure.rs:64、src/quick_launch/search.rs:238、src/quick_launch/azure_search.rs:33、src/azure_devops/sync/pull_requests.rs:150、src/azure_devops/api/work_items.rs:188、src/quick_launch_window/azure_live/mod.rs:265</p></article>
+<article class="card"><span class="tag high">優先度 高 / 検索の取りこぼし</span><h3>B. コマンド補完が通常検索を置き換える</h3>
+<p><strong>確認事実:</strong> 単語1つの未知入力はコマンド名へfuzzy照合し、候補があればAzure項目検索へ進まず返す。<code>az pln</code> は補完用の既存テストがある。</p>
+<p><strong>影響:</strong> コマンド名に似たProject名・タイトルを検索したいとき、検索対象が補完へ切り替わる。引用符などの明示的な回避構文はこのパーサーにない。</p>
+<p><strong>推奨:</strong> 補完と検索結果を併記するか、補完専用の操作を決める。正式サブコマンド入力と通常検索語の区別を成功例・衝突例で仕様化する。</p>
+<p class="source">根拠: src/quick_launch/search.rs:219、src/quick_launch/azure.rs:256、src/quick_launch/tests/search_azure_test.rs:309</p></article>
+<article class="card"><span class="tag high">優先度 高 / スコープ</span><h3>C. RepositoryショートカットがRepository限定を保証しない</h3>
+<p><strong>確認事実:</strong> Repository別候補はRepository名を通常の検索語へ挿入する。組織・Project・Repositoryの識別子フィルタは渡さない。review requestsの個人版はneeds-review、Repository版はreviewer。</p>
+<p><strong>影響:</strong> 同名Repositoryや同じ語を含むタイトルを拾う可能性がある。Liveではタイトル一致なので、対象RepositoryのPRでもタイトルにRepository名がなければ落ちる。</p>
+<p><strong>推奨:</strong> スコープを限定するショートカットなのか、キーワード入力の省略なのかを先に決める。限定するなら識別子による絞り込みが必要。review requestsの意味も揃える。</p>
+<p class="source">根拠: src/quick_launch/azure_entries.rs:49、src/quick_launch/azure_entries.rs:93、src/azure_devops/sync/pull_requests.rs:150</p></article>
+<article class="card"><span class="tag">優先度 中 / 構文</span><h3>D. 属性語と検索語の境界・競合が暗黙</h3>
+<p><strong>確認事実:</strong> 未知語で属性解析を止め、状態属性は最後を採用する。<code>az pr ready</code> はready状態のフィルタになり、「ready」というタイトルの検索にはならない。</p>
+<p><strong>推奨:</strong> 属性は検索語の前、関係属性はAND、状態は1つという説明と例を追加する。予約語を検索できる区切り構文を設けるかは、別の設計判断として扱う。</p>
+<p class="source">根拠: src/quick_launch/azure.rs:134、src/quick_launch/azure.rs:153</p></article>
+<article class="card"><span class="tag">優先度 中 / 結果の信頼性</span><h3>E. 部分失敗と取得上限が結果から分からない</h3>
+<p><strong>確認事実:</strong> Liveは一部Projectが失敗しても、他に結果があればmessageをNoneにする。Pipelineは取得後にfailedを絞り、WIは300件まで。成功候補があると失敗したProjectは主にログで追うことになる。</p>
+<p><strong>推奨:</strong> 0件を「対象なし」「取得失敗」「取得範囲外」で区別し、部分失敗と上限到達を結果の状態として表す。ページングを追加する前に、有限検索であることを明示する。</p>
+<p class="source">根拠: src/azure_devops/sync/work_items.rs:108、src/azure_devops/sync/pull_requests.rs:189、src/azure_devops/sync/pipelines.rs:117、src/azure_devops/api/pipelines.rs:24</p></article>
+<article class="card"><span class="tag">優先度 中 / 順位</span><h3>F. 順位付けの規則が経路ごとに異なる</h3>
+<p><strong>確認事実:</strong> キャッシュはタイトル品質 → 状態/自分との関係 → 一致スコア・使用履歴。PR/Pipeline Liveはタイトル品質 → Project priority → 名前、WIの文字列Liveはpriority → 名前。横断Liveは種別ごとの順に連結する。</p>
+<p><strong>推奨:</strong> 「自分優先」「Project優先」「関連度優先」の優先順を一覧にする。全経路で統一するか、経路別規則を維持するかを決めてから実装を変える。</p>
+<p class="source">根拠: src/quick_launch/azure_search.rs:46、src/azure_devops/sync/pull_requests.rs:180、src/azure_devops/sync/work_items.rs:103、docs/spec.md:216</p></article>
+<article class="card"><span class="tag">優先度 中 / 設定変更</span><h3>G. optimize / suggest / rankは提案ではなく即時保存</h3>
+<p><strong>確認事実:</strong> optimizeはpriorityを振り直し、活動があるProjectの最頻Iterationを1件保存する。成功・失敗はログへ記録。一部Projectの活動取得失敗は0件として扱われ、他で成功すればpriorityの末尾へ回る。全件失敗または活動0件なら保存しない。</p>
+<p><strong>影響:</strong> suggest/rankという別名でも手動のIteration設定が置き換わる。検索専用コマンド群と同じ位置に設定変更操作がある。</p>
+<p><strong>推奨:</strong> 自動保存する操作であること、変更対象、部分失敗時の扱いを仕様へまとめる。実行結果の表示と失敗Projectのpriorityを保つかを検討する。</p>
+<p class="source">根拠: src/azure_devops/mod.rs:83、src/azure_devops/sync/activity.rs:102、src/azure_devops/sync/activity.rs:134、src/quick_launch/azure_entries.rs:144</p></article>
+<article class="card"><span class="tag">優先度 中 / 文書の整合性</span><h3>H. 仕様書の説明と番号が重複・旧状態のまま</h3>
+<ul><li>scope表は「PR・PipelineはSQLiteキャッシュ、WIはAPI」と説明するが、現行はPR/WIがキャッシュ、PipelineがLive専用。</li><li>FR-9.18はMy review requestsをreviewer補完と記載し、FR-9.18.5と実装はneeds-reviewを使用。</li><li>FR-9.18.5がPRフィルタと共有DB障害耐性の2つに重複。</li><li>FR-9.18.4はArea条件でWI検索を絞ると記載するが、文字列Liveは意図的にProject全体を検索。</li><li>HelpのAzureコマンド一覧はaz newを含まない。</li></ul>
+<p><strong>推奨:</strong> 振る舞いの正を1か所に置き、scope表とHelpは短い説明から参照する。既存番号の参照を確認してから重複を解消する。</p>
+<p class="source">根拠: docs/spec.md:64、docs/spec.md:216、docs/spec.md:222、docs/spec.md:223、help/index.html:121</p></article>
+</section>
+<section id="decisions"><h2>5. 仕様整理の進め方</h2>
+<div class="note">推奨は、まず現在の検索契約を文書で固定し、その後にA〜Cの操作上の不整合を修正する順序。API取得の自動化は、表示50msと明示操作の現行原則を維持して検討する。</div>
+<ol><li><strong>現状を固定:</strong> このコマンド表を基に構文・属性・Enter/Ctrl+Enter・取得範囲・順位を分割し、文書の重複を除く。</li><li><strong>先に決める:</strong> Liveは同条件の更新か範囲拡大か、補完と検索は併記するか、Repositoryショートカットは厳密限定か。</li><li><strong>その後に決める:</strong> 部分失敗・上限・鮮度の表示、optimizeの保存結果と部分失敗の扱い。</li><li><strong>検証条件を作る:</strong> 同名Repositoryを持つ別Project、コマンドに似たタイトル、属性語タイトル、Completed PR、1Projectだけ認証失敗、Pipelineの直近100件に失敗がない場合を用意する。</li></ol>
+<p>このレポートは検討材料。提案する仕様変更・コード修正はまだ適用していない。</p>
+</section>
+<section id="validation"><h2>6. 確認範囲</h2>
+<p>docs/spec.md、help/index.html、Quick Launchのパーサー・索引検索・作成メニュー・入力操作・Live dispatch、Azure API取得・共有同期・最適化処理、Azure関連の既存テストを確認した。</p>
+<p id="test-result">既存Azure関連テスト: <code>cargo test --lib azure</code> — 144成功 / 0失敗 / 4スキップ。設定画面ビルドを省略して実行。</p>
+<p>今回の成果物はこのHTMLのみ。常駐アプリのコード・仕様書・設定・DBは変更していない。APIの実測応答時間、実データ件数、ブラウザでの作成可否は未検証。</p>
+</section>
+</main></body></html>

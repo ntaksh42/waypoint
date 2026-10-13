@@ -134,7 +134,7 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                             let _ = crate::azure_devops::optimize_async(
                                 settings,
                                 hwnd,
-                                WM_RELOAD_CONFIG,
+                                super::WM_AZURE_OPTIMIZED,
                             );
                         }
                     }
@@ -158,6 +158,15 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         }
         WM_RELOAD_CONFIG => {
             reload(hwnd);
+            LRESULT(0)
+        }
+        super::WM_AZURE_OPTIMIZED => {
+            if let Some((saved, message)) = crate::azure_devops::take_optimization_result() {
+                if saved {
+                    reload(hwnd);
+                }
+                super::notifications::show_optimization_result(hwnd, saved, &message);
+            }
             LRESULT(0)
         }
         WM_AZURE_DEVOPS_REFRESHED => {

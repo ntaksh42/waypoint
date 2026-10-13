@@ -71,6 +71,7 @@ pub(crate) fn azure_shortcut_entries(settings: &crate::config::AzureDevOpsSettin
             if repository.is_empty() {
                 continue;
             }
+            let scope = super::azure_scope::repository_token(project, repository);
             entries.push(azure_shortcut(
                 &format!("{repository} — review requests"),
                 &format!(
@@ -78,7 +79,7 @@ pub(crate) fn azure_shortcut_entries(settings: &crate::config::AzureDevOpsSettin
                     project.organization.trim(),
                     project.project.trim()
                 ),
-                &format!("az pr active reviewer {repository} "),
+                &format!("az pr active needs-review {scope} "),
             ));
             entries.push(azure_shortcut(
                 &format!("{repository} — my PRs"),
@@ -87,7 +88,7 @@ pub(crate) fn azure_shortcut_entries(settings: &crate::config::AzureDevOpsSettin
                     project.organization.trim(),
                     project.project.trim()
                 ),
-                &format!("az pr active author {repository} "),
+                &format!("az pr active author {scope} "),
             ));
             entries.push(azure_shortcut(
                 &format!("{repository} — waiting for others"),
@@ -96,7 +97,7 @@ pub(crate) fn azure_shortcut_entries(settings: &crate::config::AzureDevOpsSettin
                     project.organization.trim(),
                     project.project.trim()
                 ),
-                &format!("az pr active waiting {repository} "),
+                &format!("az pr active waiting {scope} "),
             ));
         }
     }
@@ -121,7 +122,8 @@ pub(crate) fn azure_suggest_entry() -> Entry {
     Entry {
         azure: None,
         name: "az optimize".to_string(),
-        breadcrumb: "Automatically rank projects & iterations from recent activity".to_string(),
+        breadcrumb: "Save project priorities and replace iteration filters from recent activity"
+            .to_string(),
         path: String::new(),
         action: Action::AzureOptimize,
         branch: None,
@@ -185,7 +187,7 @@ mod tests {
         assert_eq!(entries[0].name, "My review requests");
         assert_eq!(
             entries[4].action,
-            Action::ReplaceQuery("az pr active reviewer waypoint ".into())
+            Action::ReplaceQuery("az pr active needs-review repo:org/project/waypoint ".into())
         );
     }
 }

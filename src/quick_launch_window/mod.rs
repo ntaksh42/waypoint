@@ -14,6 +14,7 @@ mod draw_row;
 mod highlight;
 mod input;
 mod layout;
+mod list;
 mod row_parts;
 mod search;
 mod snapshot;

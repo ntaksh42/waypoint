@@ -97,9 +97,12 @@ pub fn search_pipelines_live_async(
                     }
                 }
             }
-            Err(error) => crate::panic_log::record(&format!(
-                "azure devops: could not initialize pipeline client: {error}"
-            )),
+            Err(error) => {
+                crate::panic_log::record(&format!(
+                    "azure devops: could not initialize pipeline client: {error}"
+                ));
+                failures.push("HTTP client".to_string());
+            }
         }
         results.retain(|candidate: &Candidate| filter.matches(&candidate.status));
         if !query.trim().is_empty() {
@@ -114,18 +117,12 @@ pub fn search_pipelines_live_async(
         });
         failures.sort();
         failures.dedup();
-        let empty_message = if results.is_empty() {
-            if failures.is_empty() {
-                Some("No matching pipelines.".to_string())
-            } else {
-                Some(format!(
-                    "Azure DevOps search unavailable ({})",
-                    failures.join(", ")
-                ))
-            }
-        } else {
-            None
-        };
+        let empty_message = Some(super::live_message::live_message(
+            results.is_empty(),
+            &failures,
+            "No matching pipelines in fetched range.",
+            "Live pipelines: first 1,000 definitions / 100 recent builds per project.",
+        ));
         let mut pending = lock_recovering(pending_pipelines());
         pending.insert(
             request_id,

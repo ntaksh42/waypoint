@@ -15,21 +15,22 @@ pub(in crate::quick_launch_window) fn live_pull_request_search_entry(
     filter: crate::quick_launch::PullRequestFilter,
     query: &str,
 ) -> Entry {
+    let term = crate::quick_launch::split_repository_query(query).1;
     // 番号指定は一覧の検索ではなく PR 単体の API を直接叩く
     // (`search_pull_requests_live_async`)。何が起きるかを文言で区別する
-    let (label, breadcrumb) = if crate::azure_devops::is_item_id_query(query) {
+    let (label, breadcrumb) = if crate::azure_devops::is_item_id_query(term) {
         (
-            format!("Look up PR {} on Azure DevOps", query.trim()),
+            format!("Look up PR {} on Azure DevOps", term.trim()),
             "Not in cache — press Enter to fetch it by number",
         )
-    } else if query.is_empty() {
+    } else if term.is_empty() {
         (
             "Search Azure DevOps for older pull requests".to_string(),
             "Not in cache — press Enter to search live (widens to 1 year)",
         )
     } else {
         (
-            format!("Search Azure DevOps for pull requests matching \"{query}\""),
+            format!("Search Azure DevOps for pull requests matching \"{term}\""),
             "Not in cache — press Enter to search live (widens to 1 year)",
         )
     };
@@ -52,6 +53,7 @@ pub(in crate::quick_launch_window) fn missing_azure_item_id(
     results: &[Entry],
     query: &str,
 ) -> bool {
+    let query = crate::quick_launch::split_repository_query(query).1;
     crate::azure_devops::is_item_id_query(query)
         && !results
             .iter()
@@ -102,7 +104,10 @@ pub(in crate::quick_launch_window) fn start_azure_pull_request_live_search(
         state.azure_pull_request_reply_id = next_azure_reply_id(state.azure_pull_request_reply_id);
         // 集約モードは Work Item / Pipeline と一覧を共有するのでハイライトを付けない
         state.highlight_term = if state.azure_live_combined.is_none() {
-            crate::quick_launch::azure_highlight_term(query.trim()).to_string()
+            crate::quick_launch::azure_highlight_term(
+                crate::quick_launch::split_repository_query(query).1.trim(),
+            )
+            .to_string()
         } else {
             String::new()
         };

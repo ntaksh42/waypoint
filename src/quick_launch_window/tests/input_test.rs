@@ -77,6 +77,19 @@ fn selectable_row_helpers_return_none_for_an_empty_list() {
     assert_eq!(last_selectable_row(&[]), None);
 }
 
+#[test]
+fn keyboard_navigation_skips_search_status_rows() {
+    let rows = [RowKind::Message, RowKind::Item(0), RowKind::Message];
+    assert_eq!(first_selectable_row(&rows), Some(1));
+    assert_eq!(last_selectable_row(&rows), Some(1));
+    assert_eq!(
+        super::super::input::next_selectable_row(&rows, 0, 1),
+        Some(1)
+    );
+    assert_eq!(super::super::input::next_selectable_row(&rows, 1, 1), None);
+    assert_eq!(first_selectable_row(&[RowKind::Message]), None);
+}
+
 /// 見出しなしのフラットな一覧では Home/End は単純に先頭・最終行へ着地する。
 #[test]
 fn home_and_end_on_a_flat_list_without_headers() {

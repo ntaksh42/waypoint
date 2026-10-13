@@ -6,8 +6,8 @@
 
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Gdi::{
-    CreatePen, CreateSolidBrush, DeleteObject, FillRect, HFONT, PS_SOLID, RoundRect, SelectObject,
-    SetBkMode, SetTextColor, TRANSPARENT,
+    CreatePen, CreateSolidBrush, DT_NOPREFIX, DT_WORDBREAK, DeleteObject, DrawTextW, FillRect,
+    HFONT, PS_SOLID, RoundRect, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::UI::Controls::{DRAWITEMSTRUCT, ODS_SELECTED};
 
@@ -112,7 +112,14 @@ pub(super) unsafe fn draw_list_item(draw: &DRAWITEMSTRUCT) {
                 SetTextColor(draw.hDC, TEXT_SECONDARY);
                 let mut rect = draw.rcItem;
                 rect.left += scale(16, dpi);
-                draw_text(draw.hDC, &message, &mut rect);
+                if badge == Some("AZURE DEVOPS") {
+                    rect.right -= scale(16, dpi);
+                    rect.top += scale(4, dpi);
+                    let mut text: Vec<u16> = message.encode_utf16().collect();
+                    DrawTextW(draw.hDC, &mut text, &mut rect, DT_WORDBREAK | DT_NOPREFIX);
+                } else {
+                    draw_text(draw.hDC, &message, &mut rect);
+                }
                 SelectObject(draw.hDC, old);
             }
             return;

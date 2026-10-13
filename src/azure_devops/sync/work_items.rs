@@ -94,9 +94,12 @@ pub fn search_work_items_async(
                     }
                 }
             }
-            Err(error) => crate::panic_log::record(&format!(
-                "azure devops: could not initialize work item client: {error}"
-            )),
+            Err(error) => {
+                crate::panic_log::record(&format!(
+                    "azure devops: could not initialize work item client: {error}"
+                ));
+                failures.push("HTTP client".to_string());
+            }
         }
         // `az wit` 単体は WIQL の更新日時順を保つ。検索語がある場合だけ
         // 名前順へそろえ、プロジェクト優先度はどちらにも適用する。
@@ -105,22 +108,19 @@ pub fn search_work_items_async(
         } else {
             results.sort_by_key(|candidate| (candidate.priority, candidate.name.to_lowercase()));
         }
-        let empty_message = if results.is_empty() {
-            if failures.is_empty() {
-                Some(if query.trim().is_empty() {
-                    "No recently updated work items.".to_string()
-                } else {
-                    "No matching work items.".to_string()
-                })
-            } else {
-                Some(format!(
-                    "Azure DevOps search unavailable ({})",
-                    failures.join(", ")
-                ))
-            }
+        let scope = if super::super::exact_id_query(&query).is_some() {
+            "Live WI: exact ID in watched projects."
+        } else if query.trim().is_empty() {
+            "Live WI: Area/Iteration scope, up to 800 per project."
         } else {
-            None
+            "Live WI: full project, first 300 per project."
         };
+        let empty_message = Some(super::live_message::live_message(
+            results.is_empty(),
+            &failures,
+            "No matching work items.",
+            scope,
+        ));
         let mut pending = lock_recovering(pending_work_items());
         pending.insert(
             request_id,

@@ -135,7 +135,7 @@ pub(super) fn next_selectable_row(rows: &[RowKind], current: usize, delta: isize
     }
     let step = if delta < 0 { -1isize } else { 1isize };
     let mut next = current.saturating_add_signed(delta).min(rows.len() - 1);
-    while matches!(rows.get(next), Some(RowKind::Header(_))) {
+    while !matches!(rows.get(next), Some(RowKind::Item(_))) {
         let stepped = next.checked_add_signed(step)?;
         if stepped >= rows.len() {
             return None;
@@ -148,14 +148,12 @@ pub(super) fn next_selectable_row(rows: &[RowKind], current: usize, delta: isize
 /// Home キー: 先頭の選択可能な項目行。先頭が見出し行なら後方向へ探す
 /// (`move_selection` と違い、常に先頭からの前進で確定させる)。
 pub(super) fn first_selectable_row(rows: &[RowKind]) -> Option<usize> {
-    rows.iter()
-        .position(|row| !matches!(row, RowKind::Header(_)))
+    rows.iter().position(|row| matches!(row, RowKind::Item(_)))
 }
 
 /// End キー: 末尾の選択可能な項目行。末尾が見出し行なら前方向へ探す。
 pub(super) fn last_selectable_row(rows: &[RowKind]) -> Option<usize> {
-    rows.iter()
-        .rposition(|row| !matches!(row, RowKind::Header(_)))
+    rows.iter().rposition(|row| matches!(row, RowKind::Item(_)))
 }
 
 /// `state.rows[row]` が指す項目行の `Entry` を返す。見出し・メッセージ行は `None`。

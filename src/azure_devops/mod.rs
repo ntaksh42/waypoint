@@ -21,16 +21,13 @@ mod convert;
 #[cfg(test)]
 mod convert_test;
 mod credential;
+mod optimize;
 mod shared_cache;
 mod sync;
 mod title_search;
 mod work_item_types;
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
-
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
+use std::sync::atomic::Ordering;
 
 use rusqlite::params;
 
@@ -43,7 +40,9 @@ use convert::{
     unix_timestamp, valid_project,
 };
 use credential::credential_for_request;
-use sync::{REFRESHING, RunningFlag};
+pub use optimize::optimize_async;
+pub(crate) use optimize::take_optimization_result;
+use sync::REFRESHING;
 pub(crate) use title_search::{
     QUALITY_OTHER as TITLE_QUALITY_OTHER, TitleQuery, exact_id_query, is_item_id_query,
     match_quality as title_match_quality, matches_item_id, numeric_query as item_id_query,
@@ -75,58 +74,6 @@ const PROJECT_PAGE_SIZE: usize = 1_000;
 /// 設定エディターを外部から起動したとき、従来の優先度提案モーダルを
 /// 自動表示するためのコマンドライン引数。`az optimize` 自体は使わない。
 pub const AZURE_SUGGEST_ARG: &str = "--azure-suggest";
-
-static OPTIMIZING: AtomicBool = AtomicBool::new(false);
-
-/// `az optimize` 用。ネットワーク集計と保存を UI スレッド外で完結させ、成功時
-/// だけ設定再読み込みメッセージを返す。同じ最適化を同時に走らせない。
-pub fn optimize_async(settings: AzureDevOpsSettings, notify: HWND, message: u32) -> bool {
-    let Some(running) = RunningFlag::acquire(&OPTIMIZING) else {
-        return false;
-    };
-    let notify = notify.0 as isize;
-    thread::spawn(move || {
-        // パニックしてもフラグを下ろすため、ワーカーの生存期間に紐づける。
-        let _running = running;
-        let result = suggest_priorities_async(settings)
-            .recv()
-            .map_err(|_| "Recent activity worker stopped unexpectedly.".to_string())
-            .and_then(|result| result)
-            .and_then(|activity| match crate::config::load() {
-                crate::config::LoadOutcome::Loaded(mut config)
-                | crate::config::LoadOutcome::Created(mut config) => {
-                    let optimized = apply_optimization(
-                        &mut config.settings.quick_launch.azure_devops,
-                        &activity,
-                    );
-                    if optimized == 0 {
-                        return Err(
-                            "No recent work item activity found in the last 90 days.".to_string()
-                        );
-                    }
-                    crate::config::save(&config)
-                        .map_err(|error| format!("Could not save optimization: {error}"))?;
-                    Ok(optimized)
-                }
-                crate::config::LoadOutcome::Failed(error) => Err(error),
-            });
-        match result {
-            Ok(optimized) => {
-                crate::panic_log::record(&format!(
-                    "azure devops: optimized {optimized} project(s) from recent activity"
-                ));
-                unsafe {
-                    let _ =
-                        PostMessageW(Some(HWND(notify as *mut _)), message, WPARAM(0), LPARAM(0));
-                }
-            }
-            Err(error) => {
-                crate::panic_log::record(&format!("azure devops: optimize failed: {error}"))
-            }
-        }
-    });
-    true
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {

@@ -2,25 +2,22 @@
 
 use std::cell::RefCell;
 
-use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
+use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Gdi::InvalidateRect;
-use windows::Win32::UI::WindowsAndMessaging::{
-    GetClientRect, LB_ADDSTRING, LB_RESETCONTENT, LB_SETCURSEL,
-};
-use windows::core::HSTRING;
+use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 
 use super::azure_live::{
     invalidate_azure_live_searches, live_pipeline_search_entry, live_pull_request_search_entry,
     missing_azure_item_id, missing_azure_pull_request_id, show_azure_suggest_entry,
     start_azure_work_item_query,
 };
-use super::layout::{position_window, rows_height};
+pub(super) use super::list::{build_rows, populate_empty_message, populate_list};
 use super::{
     EDIT_HEIGHT, EVERYTHING_MAX_RESULTS, EVERYTHING_REPLY_ID_START, MAX_LIST_RESULTS, PADDING,
-    RowKind, STATE, State,
+    STATE, State,
 };
 use crate::config::OpenMode;
-use crate::quick_launch::{AzureCommand, Entry, azure_command};
+use crate::quick_launch::{AzureCommand, azure_command};
 
 /// 検索結果を作り直し、リストボックスへ反映する。
 ///
@@ -224,14 +221,13 @@ pub(super) fn update_results(state: &RefCell<State>) {
             state.empty_message =
                 Some("No matching creation command. Try az new bug, task, story, or pr.".into());
         }
-        state.previous_query = Some(query);
-        let (mut labels, mut rows) = build_rows(&state.results, &section_headers);
-        if rows.is_empty()
-            && let Some(message) = &state.empty_message
-        {
-            labels.push(HSTRING::from(message));
-            rows.push(RowKind::Message);
+        if state.empty_message.is_none() {
+            state.empty_message = azure_cache_notice(&query).map(str::to_string);
         }
+        state.previous_query = Some(query);
+        let (labels, rows) = build_rows(&state.results, &section_headers);
+        let (labels, rows) =
+            super::list::with_message(labels, rows, state.empty_message.as_deref());
         state.rows = rows.clone();
         (
             state.list,
@@ -251,6 +247,24 @@ pub(super) fn update_results(state: &RefCell<State>) {
         return;
     };
     populate_list(list, &labels, &rows);
+}
+
+fn azure_cache_notice(query: &str) -> Option<&'static str> {
+    match azure_command(query)? {
+        (AzureCommand::PullRequests(filter), _) if !filter.status_explicit => {
+            Some("Cached PRs: all states. Ctrl+Enter: Active PRs, titles only.")
+        }
+        (AzureCommand::PullRequests(_), _) => {
+            Some("Cached PRs. Ctrl+Enter: live, titles only (history up to 1 year / 2,000).")
+        }
+        (AzureCommand::All, _) if query != crate::quick_launch::AZURE_DEVOPS_PREFIX => {
+            Some("Cache: PRs, work items, projects. Ctrl+Enter: Active PRs, work items, pipelines.")
+        }
+        (AzureCommand::Pipelines(_), _) => {
+            Some("Live only: up to 1,000 definitions and 100 recent builds per project.")
+        }
+        _ => None,
+    }
 }
 
 /// `f ` プレフィックスに入った。Everything へ非同期クエリを送り、
@@ -401,97 +415,4 @@ fn local_search_scope(query: &str) -> Option<(&'static str, &str)> {
     } else {
         Some(("normal", query))
     }
-}
-
-/// リストボックスの中身を丸ごと差し替える。通常検索と Everything の
-/// 非同期結果受信 (`handle_everything_results`) の双方から使う。
-/// `rows` が空でも構わない (見出しも項目もない = 空一覧)。
-/// 初期カーソルは、見出し行を飛ばした最初の項目行に置く。
-///
-/// 合わせてウィンドウの高さを `rows` の実際の行数へ合わせ直す。候補数が
-/// 変わるたびに呼ぶことで、候補が少ないときに下部の空きリストボックス分の
-/// 余白が残るのを防ぐ。
-pub(super) fn populate_list(list: HWND, labels: &[HSTRING], rows: &[RowKind]) {
-    unsafe {
-        let _ = windows::Win32::UI::WindowsAndMessaging::SendMessageW(
-            list,
-            LB_RESETCONTENT,
-            None,
-            None,
-        );
-        for label in labels {
-            let _ = windows::Win32::UI::WindowsAndMessaging::SendMessageW(
-                list,
-                LB_ADDSTRING,
-                None,
-                Some(LPARAM(label.as_ptr() as isize)),
-            );
-        }
-        if let Some(row) = rows.iter().position(|row| matches!(row, RowKind::Item(_))) {
-            let _ = windows::Win32::UI::WindowsAndMessaging::SendMessageW(
-                list,
-                LB_SETCURSEL,
-                Some(WPARAM(row)),
-                None,
-            );
-        }
-    }
-    resize_to_rows(rows);
-    super::draw_footer::invalidate_footer();
-}
-
-/// `populate_list` から呼ぶ、ウィンドウ再配置の実処理。表示中でなければ何もしない。
-fn resize_to_rows(rows: &[RowKind]) {
-    let (window, dpi, visible_results) = STATE.with(|state| {
-        let state = state.borrow();
-        (state.window, state.dpi, state.visible_results)
-    });
-    let Some(window) = window else {
-        return;
-    };
-    let height = rows_height(rows, visible_results);
-    position_window(window, height, dpi);
-}
-
-/// `results` と区分見出し (`results` 側インデックス昇順の `(挿入位置, ラベル)`) から、
-/// リストボックスへ渡す行ラベルと `State::rows` を作る。
-/// `section_headers` が空なら見出しなしのフラットな 1:1 対応になる。
-pub(super) fn build_rows(
-    results: &[Entry],
-    section_headers: &[(usize, &'static str)],
-) -> (Vec<HSTRING>, Vec<RowKind>) {
-    let mut labels = Vec::with_capacity(results.len() + section_headers.len());
-    let mut rows = Vec::with_capacity(results.len() + section_headers.len());
-    let mut headers = section_headers.iter().peekable();
-    for (index, entry) in results.iter().enumerate() {
-        while let Some((at, label)) = headers.peek() {
-            if *at != index {
-                break;
-            }
-            labels.push(HSTRING::from(*label));
-            rows.push(RowKind::Header(label));
-            headers.next();
-        }
-        labels.push(HSTRING::from(format!(
-            "{}    {}",
-            entry.name,
-            super::draw_row::entry_context(entry)
-        )));
-        rows.push(RowKind::Item(index));
-    }
-    // 末尾 (results が空、または最後の区分) に付く見出しも取りこぼさない
-    for (_, label) in headers {
-        labels.push(HSTRING::from(*label));
-        rows.push(RowKind::Header(label));
-    }
-    (labels, rows)
-}
-
-/// 説明用の 1 行を出す。`results` には追加しないため Enter で実行されない。
-/// 呼び出し元は `state.rows` もこの内容に合わせて更新すること
-/// (古い `RowKind::Item` が残ると、表示上は消えた項目を選択・実行できてしまう)。
-pub(super) fn populate_empty_message(list: HWND, message: Option<&str>) {
-    let labels = message.map(HSTRING::from).into_iter().collect::<Vec<_>>();
-    let rows = vec![RowKind::Message; labels.len()];
-    populate_list(list, &labels, &rows);
 }

@@ -3,6 +3,7 @@
 
 mod activity;
 mod common;
+mod live_message;
 mod pipelines;
 mod pull_requests;
 mod work_items;

@@ -131,6 +131,19 @@ mod tests {
     }
 
     #[test]
+    fn pull_request_urls_use_repository_names_even_when_web_link_contains_a_guid() {
+        let project = pr_project();
+        let row = pull_request_row(&project, &json!({
+            "pullRequestId": 7, "title": "Fix", "repository": { "name": "App Name" },
+            "_links": { "web": { "href": "https://dev.azure.com/org/project/_git/repository-guid/pullrequest/7" } }
+        }), None).unwrap();
+        assert_eq!(
+            row.url,
+            format!("{}/_git/App%20Name/pullrequest/7", project_url(&project))
+        );
+    }
+
+    #[test]
     fn pull_request_row_marks_ready_to_complete_when_every_required_reviewer_approved() {
         let row = pull_request_row(
             &pr_project(),

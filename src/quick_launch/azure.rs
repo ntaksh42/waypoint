@@ -32,8 +32,8 @@ pub enum AzureCommand {
     WorkItems {
         live: bool,
     },
-    /// `az optimize`（`suggest` / `rank` でも入れる）— 直近のアサイン・
-    /// メンションから優先 Project / Area を提案する専用画面を開く。
+    /// `az optimize`（`suggest` / `rank` でも入れる）— 直近の活動から
+    /// Project の優先度と Iteration を自動保存する。
     /// 検索対象を持たず確定候補を 1 件だけ返す。
     Suggest,
 }
@@ -78,7 +78,7 @@ pub use crate::azure_devops::PipelineFilter;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AzureLiveRequest {
     /// `az <query>` (サブコマンド無し) — PR / Work Item / Pipeline を
-    /// まとめて Live 検索する。横断検索の候補一覧と対象が揃う。
+    /// まとめて Live 検索する。キャッシュ側の Project は取得対象外。
     AllKinds {
         query: String,
     },
