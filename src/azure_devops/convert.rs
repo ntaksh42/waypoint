@@ -147,9 +147,10 @@ pub(crate) fn pull_request_row(
             .as_str()
             .and_then(parse_rfc3339_unix)
             .is_some_and(|created| unix_timestamp().saturating_sub(created) >= 14 * 24 * 60 * 60);
-    let url = item["_links"]["web"]["href"]
-        .as_str()
-        .map(str::to_string)
+    // Repository 名を持つ URL に統一し、GUID 形式の Web リンクでもスコープ照合できるようにする。
+    let url = (!repository.is_empty())
+        .then(|| pull_request_url(project, repository, id))
+        .or_else(|| item["_links"]["web"]["href"].as_str().map(str::to_string))
         .unwrap_or_else(|| {
             format!(
                 "{}/_git/{}/pullrequest/{id}",
@@ -185,6 +186,14 @@ pub(crate) fn pull_request_row(
         ready_to_complete,
         is_stale,
     })
+}
+
+pub(crate) fn pull_request_url(project: &AzureDevOpsProject, repository: &str, id: i64) -> String {
+    format!(
+        "{}/_git/{}/pullrequest/{id}",
+        project_url(project),
+        encode_segment(repository)
+    )
 }
 
 pub(crate) fn pipeline_definition_row(

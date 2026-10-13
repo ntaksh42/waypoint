@@ -47,6 +47,9 @@ pub fn search_pull_requests_live_async(
     message: u32,
 ) {
     let notify = notify.0 as isize;
+    let (scope, term) = crate::quick_launch::split_repository_query(&query);
+    let scope = scope.map(str::to_string);
+    let query = term.to_string();
     // 番号指定 (`az pr 68` / `az 68`) は一覧をスキャンせず PR 単体の API を
     // 直接叩く。一覧の打ち切りより古い PR も拾え、リクエストもプロジェクト
     // ごとに 1 本で済む。番号は状態より強い指定なので状態ごとには分けない
@@ -64,7 +67,13 @@ pub fn search_pull_requests_live_async(
                 let targets: Vec<_> = settings
                     .projects
                     .iter()
-                    .filter(|project| valid_project(project) && project.include_pull_requests)
+                    .filter(|project| {
+                        valid_project(project)
+                            && project.include_pull_requests
+                            && scope.as_deref().is_none_or(|scope| {
+                                crate::quick_launch::repository_matches_project(scope, project)
+                            })
+                    })
                     .collect();
                 let auth = OrganizationValues::new(
                     targets.iter().map(|project| project.organization.as_str()),
@@ -143,9 +152,17 @@ pub fn search_pull_requests_live_async(
                     }
                 }
             }
-            Err(error) => crate::panic_log::record(&format!(
-                "azure devops: could not initialize pull request client: {error}"
-            )),
+            Err(error) => {
+                crate::panic_log::record(&format!(
+                    "azure devops: could not initialize pull request client: {error}"
+                ));
+                failures.push("HTTP client".to_string());
+            }
+        }
+        if let Some(scope) = &scope {
+            results.retain(|candidate| {
+                crate::quick_launch::repository_matches_url(scope, &candidate.url)
+            });
         }
         if !query.trim().is_empty() {
             results.retain(|candidate| title_match_quality(&candidate.name, &query).is_some());
@@ -186,21 +203,24 @@ pub fn search_pull_requests_live_async(
         });
         failures.sort();
         failures.dedup();
-        let empty_message = if results.is_empty() {
-            if failures.is_empty() {
-                Some(match &item_id {
-                    Some(id) => format!("PR {id} was not found in the watched projects."),
-                    None => "No matching pull requests.".to_string(),
-                })
-            } else {
-                Some(format!(
-                    "Azure DevOps search unavailable ({})",
-                    failures.join(", ")
-                ))
-            }
+        let no_results = item_id.as_ref().map_or_else(
+            || "No matching pull requests in fetched range.".to_string(),
+            |id| format!("PR {id} was not found in the watched projects."),
+        );
+        let range = if item_id.is_some() {
+            "Live PR: by number (status ignored).".to_string()
         } else {
-            None
+            format!(
+                "Live PR: {}, titles only; history up to 1 year / 2,000 per state.",
+                statuses.join("/")
+            )
         };
+        let empty_message = Some(super::live_message::live_message(
+            results.is_empty(),
+            &failures,
+            &no_results,
+            &range,
+        ));
         let mut pending = lock_recovering(pending_pull_requests());
         pending.insert(
             request_id,

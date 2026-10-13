@@ -1,3 +1,4 @@
+mod azure_contract_test;
 mod bench_fixture;
 mod bench_io;
 mod bench_scoring;

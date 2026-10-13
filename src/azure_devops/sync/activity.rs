@@ -17,6 +17,8 @@ pub struct ProjectActivity {
     pub organization: String,
     pub project: String,
     pub count: usize,
+    /// 取得失敗と活動0件を区別し、失敗した Project の設定を保持する。
+    pub failed: bool,
     /// このプロジェクト内での Area Path 別件数 (件数の多い順)。
     pub areas: Vec<(String, usize)>,
     /// このプロジェクト内での Iteration Path 別件数 (件数の多い順)。
@@ -25,7 +27,7 @@ pub struct ProjectActivity {
 
 /// 設定画面の「Suggest priorities from recent activity」用。監視中の全
 /// プロジェクトを並列に叩き、直近 90 日の自分の作業件数を集計する。
-/// 一部の API が失敗したプロジェクトは 0 件として結果に含める。全件失敗は
+/// 一部の API が失敗したプロジェクトは failed を付けて結果に含める。全件失敗は
 /// 呼び出し側へエラーを返す。設定画面は
 /// `start_area_load` 等と同じく `Receiver` を直接ポーリングする方式なので、
 /// ここも HWND 通知は使わない。
@@ -92,6 +94,7 @@ pub fn suggest_priorities_async(
                 .into_iter()
                 .map(|(project, outcome)| match outcome {
                     Ok(paths) => ProjectActivity {
+                        failed: false,
                         organization: project.organization.trim().to_string(),
                         project: project.project.trim().to_string(),
                         count: paths.items,
@@ -104,6 +107,7 @@ pub fn suggest_priorities_async(
                             project.organization, project.project
                         ));
                         ProjectActivity {
+                            failed: true,
                             organization: project.organization.trim().to_string(),
                             project: project.project.trim().to_string(),
                             count: 0,
@@ -121,13 +125,16 @@ pub fn suggest_priorities_async(
 
 /// 直近アクティビティの多い順に Project の優先度を振り直し、各 Project の
 /// 最頻 Iteration Path を Work Item 検索の対象へ設定する。アクティビティが
-/// 無い Project は既存の優先度順で末尾へ置く。
+/// 無い Project は成功分の末尾へ置き、取得失敗分は設定を保持する。
 pub fn apply_optimization(
     settings: &mut AzureDevOpsSettings,
     activity: &[ProjectActivity],
 ) -> usize {
     let mut activity_by_project = HashMap::new();
     for entry in activity {
+        if entry.failed {
+            continue;
+        }
         activity_by_project.insert(
             activity_key(&entry.organization, &entry.project),
             (
@@ -140,10 +147,10 @@ pub fn apply_optimization(
         .projects
         .iter()
         .enumerate()
-        .map(|(index, project)| {
+        .filter_map(|(index, project)| {
             let key = activity_key(&project.organization, &project.project);
-            let (count, iteration) = activity_by_project.get(&key).cloned().unwrap_or((0, None));
-            (index, count, iteration, project.priority)
+            let (count, iteration) = activity_by_project.get(&key)?.clone();
+            Some((index, count, iteration, project.priority))
         })
         .collect();
     ranked.sort_by(|left, right| {
@@ -155,9 +162,20 @@ pub fn apply_optimization(
     });
 
     let mut optimized = 0;
-    for (priority, (index, count, iteration, _)) in ranked.into_iter().enumerate() {
+    // 失敗した Project の priority を予約し、成功した Project だけを並べ替える。
+    let reserved: std::collections::HashSet<_> = settings
+        .projects
+        .iter()
+        .filter(|project| {
+            !activity_by_project
+                .contains_key(&activity_key(&project.organization, &project.project))
+        })
+        .map(|project| project.priority)
+        .collect();
+    let mut priorities = (0..u32::MAX).filter(|priority| !reserved.contains(priority));
+    for (index, count, iteration, _) in ranked {
         let project = &mut settings.projects[index];
-        project.priority = priority as u32;
+        project.priority = priorities.next().unwrap();
         if count > 0 {
             // 最頻 Iteration が取れたときだけ書き換える。空で上書きすると、
             // Iteration を運用していないプロジェクトで手動設定した
@@ -225,13 +243,24 @@ mod tests {
                 project("contoso", "Active", 1),
             ],
         };
-        let activity = vec![ProjectActivity {
-            organization: "contoso".to_string(),
-            project: "Active".to_string(),
-            count: 3,
-            areas: Vec::new(),
-            iterations: vec![("Active\\Sprint 2".to_string(), 3)],
-        }];
+        let activity = vec![
+            ProjectActivity {
+                organization: "contoso".to_string(),
+                project: "Active".to_string(),
+                count: 3,
+                failed: false,
+                areas: Vec::new(),
+                iterations: vec![("Active\\Sprint 2".to_string(), 3)],
+            },
+            ProjectActivity {
+                organization: "contoso".into(),
+                project: "Idle".into(),
+                count: 0,
+                failed: false,
+                areas: Vec::new(),
+                iterations: Vec::new(),
+            },
+        ];
 
         assert_eq!(apply_optimization(&mut settings, &activity), 1);
         assert_eq!(settings.projects[1].priority, 0);
@@ -254,6 +283,7 @@ mod tests {
             organization: "contoso".to_string(),
             project: "Active".to_string(),
             count: 2,
+            failed: false,
             areas: Vec::new(),
             iterations: vec![("Active\\Sprint 1".to_string(), 2)],
         }];
@@ -278,12 +308,45 @@ mod tests {
             organization: "contoso".to_string(),
             project: "Active".to_string(),
             count: 4,
+            failed: false,
             areas: vec![("Active\\Area".to_string(), 4)],
             iterations: Vec::new(),
         }];
 
         assert_eq!(apply_optimization(&mut settings, &activity), 1);
         assert_eq!(settings.projects[0].interest_iterations, ["Active\\Manual"]);
+    }
+
+    #[test]
+    fn optimization_reserves_failed_project_priority_and_keeps_its_iterations() {
+        let mut settings = AzureDevOpsSettings {
+            enabled: true,
+            projects: vec![project("org", "Failed", 0), project("org", "Active", 5)],
+        };
+        settings.projects[0].interest_iterations = vec!["Failed\\Manual".into()];
+        let before = settings.projects[0].clone();
+        let activity = vec![
+            ProjectActivity {
+                organization: "org".into(),
+                project: "Failed".into(),
+                count: 0,
+                failed: true,
+                areas: Vec::new(),
+                iterations: Vec::new(),
+            },
+            ProjectActivity {
+                organization: "org".into(),
+                project: "Active".into(),
+                count: 4,
+                failed: false,
+                areas: Vec::new(),
+                iterations: vec![("Active\\Sprint".into(), 4)],
+            },
+        ];
+        assert_eq!(apply_optimization(&mut settings, &activity), 1);
+        assert_eq!(settings.projects[0], before);
+        assert_eq!(settings.projects[1].priority, 1);
+        assert_eq!(settings.projects[1].interest_iterations, ["Active\\Sprint"]);
     }
 
     fn project(

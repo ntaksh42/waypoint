@@ -231,6 +231,15 @@ fn read_candidate_groups(
                     let my_id = read_identity(organization);
                     for row in rows {
                         let Some(url) = row.web_url else { continue };
+                        let url = if row.repository_name.is_empty() {
+                            url
+                        } else {
+                            super::convert::pull_request_url(
+                                project,
+                                &row.repository_name,
+                                row.pull_request_id,
+                            )
+                        };
                         let is_mine = my_id.as_deref().is_some_and(|my_id| {
                             row.created_by_id.as_deref() == Some(my_id)
                                 || reviewers.iter().any(|reviewer| {

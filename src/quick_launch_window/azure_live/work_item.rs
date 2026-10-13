@@ -47,7 +47,13 @@ pub(in crate::quick_launch_window) fn start_azure_work_item_query(
                 "No matching work items.".to_string()
             })
         } else {
-            None
+            Some(if trimmed.is_empty() {
+                "Cached work items. Ctrl+Enter: Area/Iteration scope, up to 800 per project."
+            } else if crate::azure_devops::exact_id_query(trimmed).is_some() {
+                "Cached work items by ID. Ctrl+Enter: fetch that ID in watched projects."
+            } else {
+                "Cached work items. Ctrl+Enter: full-project text search (up to 300 per project)."
+            }.into())
         };
         (state.list, !state.results.is_empty())
     };
@@ -57,6 +63,8 @@ pub(in crate::quick_launch_window) fn start_azure_work_item_query(
     let (labels, rows, message) = {
         let mut state = state.borrow_mut();
         let (labels, rows) = build_rows(&state.results, &[]);
+        let (labels, rows) =
+            super::super::list::with_message(labels, rows, state.empty_message.as_deref());
         state.rows = if rows.is_empty() {
             vec![RowKind::Message]
         } else {

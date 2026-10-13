@@ -147,6 +147,10 @@ impl CombinedLiveSearch {
         }
         if let Some(message) = message {
             self.messages.push(message);
+            self.messages.sort_by_key(|message| {
+                !message.starts_with("Partial results")
+                    && !message.starts_with("Search unavailable")
+            });
         }
         self.pending = self.pending.saturating_sub(1);
         let merged: Vec<Entry> = self
@@ -158,7 +162,7 @@ impl CombinedLiveSearch {
             .cloned()
             .collect();
         let message = if !merged.is_empty() {
-            None
+            (!self.messages.is_empty()).then(|| self.messages.join(" / "))
         } else if self.pending > 0 {
             Some("Searching Azure DevOps…".to_string())
         } else if self.messages.is_empty() {
@@ -213,11 +217,8 @@ pub(super) fn apply_live_results(
         state.empty_message = message;
     }
     let (labels, rows) = build_rows(&state.results, &[]);
-    state.rows = if rows.is_empty() {
-        vec![RowKind::Message]
-    } else {
-        rows.clone()
-    };
+    let (labels, rows) = super::list::with_message(labels, rows, state.empty_message.as_deref());
+    state.rows = rows.clone();
     (labels, rows, state.empty_message.clone())
 }
 

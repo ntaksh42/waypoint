@@ -216,58 +216,67 @@ impl Index {
                 .chain(azure_command_entries())
                 .collect();
         }
-        if let Some(command_text) = super::azure::incomplete_azure_command(query) {
+        let completions = if let Some(command_text) = super::azure::incomplete_azure_command(query)
+        {
             // コマンド名だけで照合する。説明文も対象にすると `az alice` が
             // `az optimize` の説明 "Automatically rank ... activity" に fuzzy で
-            // 一致し、検索結果の代わりに補完候補だけが出てしまう。
+            // 一致し、無関係な補完候補が検索結果へ混ざってしまう。
             let commands = azure_command_entries();
-            let completions = search_entries_cached(
+            search_entries_cached(
                 commands,
                 &LowerKeys::build_for_names(commands),
                 command_text,
                 false,
                 &self.ranking,
-            );
-            if !completions.is_empty() {
-                return completions;
-            }
-        }
+            )
+        } else {
+            Vec::new()
+        };
         if let Some((command, rest)) = azure_command(query) {
             return match command {
                 AzureCommand::New => super::azure_new::search(&self.azure_new, rest),
-                AzureCommand::All => super::azure_search::search(
-                    self.azure
-                        .iter()
-                        .map(|entry| (&entry.entry, &entry.lower))
-                        .chain(
-                            self.azure_work_items
-                                .iter()
-                                .zip(&self.azure_work_items_lower),
-                        ),
-                    rest,
-                    true,
-                    &self.ranking,
-                ),
-                AzureCommand::PullRequests(filter) => super::azure_search::search(
-                    self.azure
-                        .iter()
-                        .filter(|entry| {
-                            entry.kind == crate::azure_devops::Kind::PullRequest
-                                && filter.status.matches(&entry.status)
-                                && (!filter.mine || entry.is_mine)
-                                && (!filter.author || entry.is_author)
-                                && (!filter.reviewer || entry.is_reviewer)
-                                && (!filter.needs_review || entry.needs_my_review)
-                                && (!filter.waiting || entry.waiting_for_others)
-                                && (!filter.draft || entry.is_draft)
-                                && (!filter.ready || entry.ready_to_complete)
-                                && (!filter.stale || entry.is_stale)
-                        })
-                        .map(|entry| (&entry.entry, &entry.lower)),
-                    rest,
-                    true,
-                    &self.ranking,
-                ),
+                AzureCommand::All => completions
+                    .into_iter()
+                    .chain(super::azure_search::search(
+                        self.azure
+                            .iter()
+                            .map(|entry| (&entry.entry, &entry.lower))
+                            .chain(
+                                self.azure_work_items
+                                    .iter()
+                                    .zip(&self.azure_work_items_lower),
+                            ),
+                        rest,
+                        true,
+                        &self.ranking,
+                    ))
+                    .collect(),
+                AzureCommand::PullRequests(filter) => {
+                    let (scope, rest) = super::split_repository_query(rest);
+                    super::azure_search::search(
+                        self.azure
+                            .iter()
+                            .filter(|entry| {
+                                entry.kind == crate::azure_devops::Kind::PullRequest
+                                    && scope.is_none_or(|scope| {
+                                        super::repository_matches_url(scope, &entry.entry.path)
+                                    })
+                                    && filter.status.matches(&entry.status)
+                                    && (!filter.mine || entry.is_mine)
+                                    && (!filter.author || entry.is_author)
+                                    && (!filter.reviewer || entry.is_reviewer)
+                                    && (!filter.needs_review || entry.needs_my_review)
+                                    && (!filter.waiting || entry.waiting_for_others)
+                                    && (!filter.draft || entry.is_draft)
+                                    && (!filter.ready || entry.ready_to_complete)
+                                    && (!filter.stale || entry.is_stale)
+                            })
+                            .map(|entry| (&entry.entry, &entry.lower)),
+                        rest,
+                        true,
+                        &self.ranking,
+                    )
+                }
                 AzureCommand::Projects => super::azure_search::search(
                     self.azure
                         .iter()

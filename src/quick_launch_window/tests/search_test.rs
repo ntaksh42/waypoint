@@ -314,6 +314,36 @@ fn combined_live_search_reports_empty_only_when_all_kinds_finish() {
     assert_eq!(message.as_deref(), Some("No Azure DevOps results."));
 }
 
+#[test]
+fn combined_live_search_keeps_failure_notice_when_another_kind_has_matches() {
+    use super::super::azure_live::{CombinedLiveSearch, LiveSearchKind};
+    let mut combined = CombinedLiveSearch::new(2);
+    combined.absorb(
+        LiveSearchKind::WorkItems,
+        Vec::new(),
+        Some("Search unavailable (org/failed)".into()),
+    );
+    let entry = Entry {
+        azure: None,
+        name: "PR 1: Fix".into(),
+        breadcrumb: String::new(),
+        path: String::new(),
+        action: Action::OpenUrl(String::new()),
+        branch: None,
+    };
+    let (results, message) = combined.absorb(
+        LiveSearchKind::PullRequests,
+        vec![entry],
+        Some("Live PR: active".into()),
+    );
+    assert_eq!(results.len(), 1);
+    assert!(
+        message
+            .unwrap()
+            .starts_with("Search unavailable (org/failed)")
+    );
+}
+
 /// PR 番号を指定したのに、その ID の候補がキャッシュに無い状態。番号が
 /// 部分一致する別 PR が 1 件でも居ると `results.is_empty()` が false になり、
 /// 以前はライブ検索の入口が出ずに正解へ辿り着けなかった。

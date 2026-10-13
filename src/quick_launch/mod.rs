@@ -11,6 +11,7 @@ mod azure;
 mod azure_entries;
 mod azure_meta;
 mod azure_new;
+mod azure_scope;
 mod azure_search;
 mod index;
 mod index_azure;
@@ -27,6 +28,9 @@ pub use azure::{
 };
 pub(crate) use azure_entries::{azure_shortcut_entries, azure_suggest_entry};
 pub use azure_meta::AzureMeta;
+pub(crate) use azure_scope::{
+    repository_matches_project, repository_matches_url, split_repository_query,
+};
 pub(crate) use index_azure::{AzureBuilt, build_azure};
 pub(crate) use rank::search_entries;
 pub(crate) use scoring::highlight_ranges;
@@ -135,7 +139,12 @@ pub fn effective_search_term(query: &str) -> &str {
             return rest;
         }
     }
-    if let Some((_, rest)) = azure_command(query) {
+    if let Some((command, rest)) = azure_command(query) {
+        let rest = if matches!(command, AzureCommand::PullRequests(_)) {
+            split_repository_query(rest).1
+        } else {
+            rest
+        };
         return azure_highlight_term(rest);
     }
     if let Some(rest) = query.strip_prefix(WEB_SEARCH_PREFIX) {
