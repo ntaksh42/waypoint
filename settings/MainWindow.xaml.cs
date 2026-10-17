@@ -294,6 +294,13 @@ public partial class MainWindow : Window
         try
         {
             ApplyControls();
+            // 開いた後に他の設定画面や Quick Launch (Ctrl+Shift+Enter) が保存した
+            // 内容を、黙って古い設定で上書きしない
+            if (_store.ChangedOnDisk() && MessageBox.Show(this,
+                    "The configuration was changed outside this window (another Settings window or a Quick Launch favorite) after it was opened.\n\n" +
+                    "Saving now overwrites those changes. Close and reopen Settings to keep them.\n\nOverwrite anyway?",
+                    "Waypoint", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes)
+                return false;
             _store.Save();
             _dirty = false;
             StatusText.Text = "Saved and reloaded.";

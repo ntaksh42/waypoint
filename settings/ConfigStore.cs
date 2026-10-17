@@ -22,12 +22,16 @@ public sealed class ConfigStore
     public string ConfigPath { get; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "waypoint", "config.json");
     private string SharedSettingsPath => Path.Combine(Path.GetDirectoryName(ConfigPath)!, "shared.json");
+    // 最後に読んだ / 書いた config.json の内容。保存前に外部からの変更
+    // (別の設定画面・Quick Launch のお気に入り登録) を検出するのに使う。
+    private string? _diskText;
 
     public void Load()
     {
         if (File.Exists(ConfigPath))
         {
-            Root = JsonNode.Parse(File.ReadAllText(ConfigPath)) as JsonObject
+            _diskText = File.ReadAllText(ConfigPath);
+            Root = JsonNode.Parse(_diskText) as JsonObject
                 ?? throw new InvalidDataException("config.json must be a JSON object.");
             EnsureShape();
             ApplySharedSettings();
@@ -58,12 +62,17 @@ public sealed class ConfigStore
     {
         EnsureShape();
         var options = new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
-        WriteAtomic(ConfigPath, Root.ToJsonString(options));
+        var text = Root.ToJsonString(options);
+        WriteAtomic(ConfigPath, text);
+        _diskText = text;
         try { WriteAtomic(SharedSettingsPath, Root["settings"]!.ToJsonString(options)); }
         catch (IOException) { }
         var tray = FindWindow("WaypointMessageWindow", null);
         if (tray != 0) _ = PostMessage(tray, WmReloadConfig, 0, 0);
     }
+
+    /// <summary>読み込み後に config.json が他から書き換えられたか。</summary>
+    public bool ChangedOnDisk() => File.Exists(ConfigPath) && File.ReadAllText(ConfigPath) != _diskText;
 
     public JsonObject Settings => RequireObject(Root, "settings");
     public JsonObject Variables => RequireObject(Root, "variables");
