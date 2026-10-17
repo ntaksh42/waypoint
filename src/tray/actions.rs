@@ -41,6 +41,9 @@ pub(crate) fn add_entry_to_favorites(entry: quick_launch::Entry) {
         }
         if let Err(e) = crate::config::save(&state.config) {
             crate::panic_log::record(&format!("failed to save added favorite: {e}"));
+            // メモリにだけ残すと、再登録が「登録済み」扱いになり保存を再試行できない。
+            // `add_item_if_new` は末尾へ足すので、それを取り消す
+            state.config.items.pop();
             return None;
         }
         Some(state.dynamic.clone())
