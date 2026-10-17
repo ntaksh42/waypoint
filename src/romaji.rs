@@ -204,16 +204,19 @@ fn is_kana_only(name: &str) -> bool {
             .all(|ch| matches!(ch, 'ぁ'..='ゖ' | 'ァ'..='ヶ' | 'ー' | '・' | ' ' | '　'))
 }
 
-/// 項目名がかな/カナのみのとき、ローマ字クエリを読みに変換して一致するか判定する。
+/// 項目名がかな/カナのみのとき、ローマ字・かな・カナ混在のクエリを読みに変換して一致するか判定する。
 pub fn kana_name_matches(name: &str, term: &str) -> bool {
     if !is_kana_only(name) || term.is_empty() {
         return false;
     }
-    // ローマ字綴りに現れない文字 (数字・記号) は音マッチの対象外
-    if !term.chars().all(|ch| ch.is_ascii_alphabetic() || ch == '-') {
+    // ローマ字綴りにもかなにも現れない文字 (数字・記号) は音マッチの対象外
+    if !term.chars().all(|ch| {
+        ch.is_ascii_alphabetic() || ch == '-' || matches!(ch, 'ぁ'..='ゖ' | 'ァ'..='ヶ' | 'ー')
+    }) {
         return false;
     }
     let name_hiragana = katakana_to_hiragana(name);
-    let term_hiragana = to_hiragana(term);
+    // カナを先にひらがなへ寄せてから変換する (to_hiragana はかなを素通しする)
+    let term_hiragana = to_hiragana(&katakana_to_hiragana(term));
     name_hiragana.contains(&term_hiragana)
 }
