@@ -1,4 +1,5 @@
 mod badge_test;
+mod copy_feedback_test;
 mod focus_test;
 mod input_test;
 mod layout_test;

@@ -35,7 +35,10 @@ pub(super) fn update_badge(state: &RefCell<State>, query: &str) {
     let live_hint = crate::quick_launch::azure_live_request(query).is_some();
     let (window, dpi, changed) = {
         let mut state = state.borrow_mut();
-        let changed = state.badge != badge || state.live_search_hint != live_hint;
+        let changed =
+            state.copy_feedback || state.badge != badge || state.live_search_hint != live_hint;
+        // 専用検索への早期 return より前に COPIED を解除し、同じモードでも再描画する。
+        state.copy_feedback = false;
         state.badge = badge;
         state.live_search_hint = live_hint;
         (state.window, state.dpi, changed)
@@ -105,16 +108,11 @@ pub(super) fn update_results(state: &RefCell<State>) {
     }
     let mut path_select = None;
     let is_path = crate::quick_launch::normalize_path_input(&query).is_some();
-    let (list, labels, rows, copy_feedback_cleared, window, dpi) = {
+    let (list, labels, rows) = {
         let mut state = state.borrow_mut();
         // プレフィックスを外れたら、遅れて届く Everything の応答を無視させる
         state.everything_active = false;
         state.empty_message = None;
-        // COPIED バッジは update_badge のプレフィックスバッジ変化検知の
-        // 対象外なので、ここで変化を見て自前で再描画要求しないと、次に
-        // 何か別の理由で再描画されるまで古い COPIED 表示が残り続ける。
-        let copy_feedback_cleared = state.copy_feedback;
-        state.copy_feedback = false;
         state.highlight_term = if query.is_empty() {
             String::new()
         } else {
@@ -241,19 +239,8 @@ pub(super) fn update_results(state: &RefCell<State>) {
         let (labels, rows) =
             super::list::with_message(labels, rows, state.empty_message.as_deref());
         state.rows = rows.clone();
-        (
-            state.list,
-            labels,
-            rows,
-            copy_feedback_cleared,
-            state.window,
-            state.dpi,
-        )
+        (state.list, labels, rows)
     }; // ← ここで借用が切れる。以降の再入は borrow() できる
-
-    if copy_feedback_cleared {
-        invalidate_search_bar(window, dpi);
-    }
 
     let Some(list) = list else {
         return;
