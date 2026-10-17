@@ -83,7 +83,7 @@ public partial class MainWindow
 
     private void MoveToMenu_Click(object sender, RoutedEventArgs e)
     {
-        if (_selectedMenu is null || string.IsNullOrWhiteSpace(ItemSearch.Text)) return;
+        if (_selectedMenu is null || !string.IsNullOrWhiteSpace(ItemSearch.Text)) return;
         var rows = SelectedRows();
         if (rows.Count == 0) return;
         var picker = new MoveItemsWindow(MenuChoices()) { Owner = this };
