@@ -27,6 +27,17 @@ use super::{
 
 pub(super) fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match message {
+        super::WM_WORKSPACES_READY => {
+            STATE.with(|state| {
+                let edit = state.borrow().edit;
+                if edit.is_some_and(|edit| {
+                    super::input::read_text(edit).starts_with(crate::quick_launch::WORKSPACE_PREFIX)
+                }) {
+                    update_results(state);
+                }
+            });
+            LRESULT(0)
+        }
         WM_SETFOCUS => {
             // 遅れて届く WM_ACTIVATE の既定処理は親へフォーカスを置く。
             // show() で設定済みでも、入力先を検索欄へ戻す必要がある。

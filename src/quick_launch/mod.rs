@@ -64,6 +64,8 @@ pub const TABS_PREFIX: &str = "t ";
 const TERMINAL_PREFIX: &str = "ps ";
 /// フォルダを設定済みエディターで開く検索モードに入るプレフィックス (末尾の半角スペース込み)。
 const EDITOR_PREFIX: &str = "ed ";
+/// VS Code / Cursor の最近のワークスペース検索。
+pub const WORKSPACE_PREFIX: &str = "vs ";
 /// Claude Code を表示名付きで起動するコマンドのプレフィックス。
 pub const CLAUDE_CODE_PREFIX: &str = "cc ";
 /// フォルダを作業ディレクトリにして Codex CLI を起動する検索モードのプレフィックス
@@ -98,6 +100,8 @@ pub fn prefix_badge(query: &str) -> Option<&'static str> {
         Some("TABS")
     } else if query.starts_with(TERMINAL_PREFIX) {
         Some("TERMINAL")
+    } else if query.starts_with(WORKSPACE_PREFIX) {
+        Some("WORKSPACES")
     } else if query.starts_with(EDITOR_PREFIX) {
         Some("EDITOR")
     } else if query.starts_with(CLAUDE_CODE_PREFIX) {
@@ -130,6 +134,7 @@ pub fn effective_search_term(query: &str) -> &str {
         TABS_PREFIX,
         TERMINAL_PREFIX,
         EDITOR_PREFIX,
+        WORKSPACE_PREFIX,
         CLAUDE_CODE_PREFIX,
         CODEX_PREFIX,
         AGENT_SESSIONS_PREFIX,
@@ -239,6 +244,8 @@ pub enum Action {
     OpenInTerminal,
     /// フォルダを設定済みエディターで開く (`ed ` プレフィックス)。
     OpenInEditor(String),
+    /// 元のエディターにワークスペース URI を渡す。bool はファイルか。
+    OpenEditorWorkspace(crate::editor_workspaces::Editor, String, bool),
     /// Claude Code を指定フォルダと表示名で起動する (`cc ` コマンド)。
     OpenClaudeCode(Option<String>),
     /// Codex CLI を指定フォルダで起動する (`cx ` プレフィックス、FR-9.15.5)。
@@ -327,6 +334,7 @@ impl Entry {
             | Action::OpenUrl(_)
             | Action::OpenInTerminal
             | Action::OpenInEditor(_)
+            | Action::OpenEditorWorkspace(..)
             | Action::OpenClaudeCode(_)
             | Action::OpenCodex
             | Action::ResumeAgentSession(..)

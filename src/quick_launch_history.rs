@@ -86,6 +86,7 @@ fn key_kind(action: &Action) -> Option<&'static str> {
         Action::LaunchApp => Some("app"),
         Action::OpenInTerminal => Some("terminal"),
         Action::OpenInEditor(_) => Some("editor"),
+        Action::OpenEditorWorkspace(..) => None,
         Action::OpenClaudeCode(_) | Action::OpenCodex | Action::ResumeAgentSession(..) => None,
         Action::FocusWindow(_)
         | Action::FocusBrowserTab(_)

@@ -484,3 +484,14 @@ fn bench_build_rows() {
         start.elapsed().as_secs_f64() * 1000.0 / 5000.0
     );
 }
+
+#[test]
+fn disabled_workspaces_hide_even_a_cached_snapshot() {
+    let state = std::cell::RefCell::new(State::default());
+    state.borrow_mut().workspace_snapshot = Some((
+        std::sync::Arc::default(),
+        Snapshot::new(vec![folder_entry("cached workspace")]),
+    ));
+    super::super::snapshot::show_workspace_results(&state, "");
+    assert!(state.borrow().results.is_empty());
+}

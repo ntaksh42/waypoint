@@ -14,6 +14,7 @@ pub mod browser_tabs;
 pub mod clipboard;
 pub mod config;
 pub mod dynamic;
+pub mod editor_workspaces;
 pub mod everything;
 pub mod favicons;
 pub mod folder_import;

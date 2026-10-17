@@ -50,6 +50,8 @@ pub(super) fn action_tag(action: &Action, badge: Option<&str>, path: &str) -> &'
         Action::LaunchApp => "App",
         Action::OpenInTerminal => "Terminal",
         Action::OpenInEditor(_) => "Editor",
+        Action::OpenEditorWorkspace(_, uri, _) if uri.starts_with("vscode-remote://") => "Remote",
+        Action::OpenEditorWorkspace(..) => "Workspace",
         Action::OpenClaudeCode(_) => "Claude Code",
         Action::OpenCodex => "Codex",
         Action::ResumeAgentSession(agent, _) => agent.label(),
@@ -94,6 +96,7 @@ pub(super) fn action_verb(action: &Action) -> &'static str {
         | Action::OpenWithDefaultHandler
         | Action::OpenInTerminal
         | Action::OpenInEditor(_)
+        | Action::OpenEditorWorkspace(..)
         | Action::OpenSettings
         | Action::OpenHelp => "Open \u{21B5}",
     }

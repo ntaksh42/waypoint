@@ -38,6 +38,7 @@ pub fn configure_settings(config: &Config, dynamic: &Menus) {
                 .visible_results
                 .clamp(12, MAX_LIST_RESULTS);
             state.monitor = config.settings.quick_launch.monitor;
+            state.workspaces_enabled = config.settings.quick_launch.include_editor_workspaces;
             state.everything_enabled = config.settings.quick_launch.include_everything;
             state.azure_devops = config.settings.quick_launch.azure_devops.clone();
             state.window.is_some()

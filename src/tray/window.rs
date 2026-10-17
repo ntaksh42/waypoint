@@ -95,6 +95,9 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                     quick_launch::Action::OpenInTerminal => {
                         let _ = shell::open_terminal(&entry.path);
                     }
+                    quick_launch::Action::OpenEditorWorkspace(editor, uri, is_file) => {
+                        let _ = shell::open_editor_workspace(editor, &uri, is_file);
+                    }
                     quick_launch::Action::OpenInEditor(command) => {
                         let _ = shell::open_editor(&command, &entry.path);
                     }

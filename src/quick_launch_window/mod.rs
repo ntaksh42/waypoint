@@ -68,6 +68,7 @@ pub const WM_QUICK_LAUNCH_EXECUTE: u32 = WM_APP + 4;
 pub const WM_QUICK_LAUNCH_ADD_TO_FAVORITES: u32 = WM_APP + 6;
 /// Azure DevOps の Work Item 検索スレッドが結果を返す通知。
 pub const WM_QUICK_LAUNCH_AZURE_RESULTS: u32 = WM_APP + 7;
+pub(super) const WM_WORKSPACES_READY: u32 = WM_APP + 60;
 
 pub fn show(owner: HWND, origin: Option<HWND>) -> Result<()> {
     ensure_window(owner)?;
@@ -76,6 +77,22 @@ pub fn show(owner: HWND, origin: Option<HWND>) -> Result<()> {
     }
     // `cs ` (FR-9.15.6) 用。読み取りは専用スレッドで、表示を待たせない
     crate::agent_sessions::refresh_async();
+    STATE.with(|state| {
+        let state = state.borrow();
+        if state.workspaces_enabled
+            && let Some(window) = state.window
+        {
+            let handle = window.0 as usize;
+            crate::editor_workspaces::refresh_async(move || unsafe {
+                let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                    Some(HWND(handle as *mut _)),
+                    WM_WORKSPACES_READY,
+                    WPARAM(0),
+                    LPARAM(0),
+                );
+            });
+        }
+    });
     let (window, edit) = STATE.with(|state| {
         let mut state = state.borrow_mut();
         state.owner = Some(owner);

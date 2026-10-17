@@ -45,6 +45,8 @@ pub struct QuickLaunchSettings {
     pub include_browser_history: bool,
     #[serde(default = "default_true")]
     pub include_apps: bool,
+    #[serde(default = "default_true")]
+    pub include_editor_workspaces: bool,
     #[serde(default)]
     pub azure_devops: AzureDevOpsSettings,
     /// `az ` 直後に「最近開いた Azure 項目」を出す (FR-9.18.7)
@@ -82,6 +84,7 @@ impl Default for QuickLaunchSettings {
             include_bookmarks: true,
             include_browser_history: true,
             include_apps: true,
+            include_editor_workspaces: true,
             azure_devops: AzureDevOpsSettings::default(),
             include_azure_recent: true,
             include_everything: true,
