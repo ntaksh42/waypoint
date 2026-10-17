@@ -13,7 +13,8 @@ use windows::Win32::System::Registry::{
     RegCreateKeyExW, RegSetValueExW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowExW, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_COPYDATA,
+    ASFW_ANY, AllowSetForegroundWindow, FindWindowExW, SMTO_ABORTIFHUNG, SendMessageTimeoutW,
+    WM_COPYDATA,
 };
 use windows::core::{PCWSTR, w};
 
@@ -222,6 +223,11 @@ pub fn request_focus(target: &TabTarget) -> bool {
         cbData: payload.len() as u32,
         lpData: payload.as_ptr().cast_mut().cast(),
     };
+    // 前面化は host → ブラウザ → 拡張の順に非同期で届き、ブラウザには
+    // 前面化の権限が無い。ユーザー操作に由来する今のうちに許可しておく
+    unsafe {
+        let _ = AllowSetForegroundWindow(ASFW_ANY);
+    }
     let mut previous = None;
     let mut sent = false;
     loop {
