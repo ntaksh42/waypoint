@@ -274,14 +274,18 @@ pub fn load() -> LoadOutcome {
         // 失われる。.bak.json が残っていればまずそちらを試す
         let bak = path.with_extension("bak.json");
         if let Ok(text) = std::fs::read_to_string(&bak)
-            && let Ok(cfg) = serde_json::from_str::<Config>(&text)
+            && let Ok(mut cfg) = serde_json::from_str::<Config>(&text)
         {
             crate::panic_log::record(
                 "config.json が見つからず .bak.json から復元した (中断された保存の可能性)",
             );
+            apply_shared_settings(&mut cfg);
             return LoadOutcome::Loaded(cfg);
         }
-        let cfg = default_config();
+        // 既定設定の保存は shared.json も書き換えるため、既存の共有設定
+        // (別 PC からの持ち出し等) を先に取り込んでから保存する
+        let mut cfg = default_config();
+        apply_shared_settings(&mut cfg);
         if let Err(e) = save(&cfg) {
             return LoadOutcome::Failed(format!("既定設定の書き出しに失敗: {e}"));
         }

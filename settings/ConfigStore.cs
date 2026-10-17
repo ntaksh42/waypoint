@@ -25,25 +25,33 @@ public sealed class ConfigStore
 
     public void Load()
     {
-        if (!File.Exists(ConfigPath))
+        if (File.Exists(ConfigPath))
         {
-            Root = DefaultConfig();
-            Save();
+            Root = JsonNode.Parse(File.ReadAllText(ConfigPath)) as JsonObject
+                ?? throw new InvalidDataException("config.json must be a JSON object.");
+            EnsureShape();
+            ApplySharedSettings();
             return;
         }
 
-        Root = JsonNode.Parse(File.ReadAllText(ConfigPath)) as JsonObject
-            ?? throw new InvalidDataException("config.json must be a JSON object.");
+        // 常駐部 (config::load) と同じく、中断された保存で config.json だけが
+        // 消えた場合は .bak.json から戻す。保存は shared.json も書き換えるので、
+        // 既存の共有設定を取り込んでから書き出す。
+        Root = TryReadObject(Path.ChangeExtension(ConfigPath, "bak.json")) ?? DefaultConfig();
         EnsureShape();
-        try
-        {
-            if (File.Exists(SharedSettingsPath)
-                && JsonNode.Parse(File.ReadAllText(SharedSettingsPath)) is JsonObject shared)
-            {
-                Root["settings"] = shared;
-            }
-        }
-        catch (JsonException) { }
+        ApplySharedSettings();
+        Save();
+    }
+
+    private void ApplySharedSettings()
+    {
+        if (TryReadObject(SharedSettingsPath) is { } shared) Root["settings"] = shared;
+    }
+
+    private static JsonObject? TryReadObject(string path)
+    {
+        try { return File.Exists(path) ? JsonNode.Parse(File.ReadAllText(path)) as JsonObject : null; }
+        catch (JsonException) { return null; }
     }
 
     public void Save()
