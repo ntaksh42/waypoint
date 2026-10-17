@@ -399,13 +399,27 @@ pub struct Index {
 /// しないため)。呼び出し側 (`quick_launch_window::search`) が生成し、
 /// 検索は通常の `search_entries` に乗せる。
 pub fn kill_process_entries() -> Vec<Entry> {
-    crate::process::list_processes()
+    let titles = crate::dynamic::window_titles_by_pid();
+    let mut processes = crate::process::list_processes();
+    // タスクマネージャーと同じく、ウィンドウを持つ「アプリ」を先頭に置く。
+    // 同点時は並び順が効くので、空入力でも打鍵後でもアプリが上に出る
+    processes.sort_by_cached_key(|process| {
+        (
+            !titles.contains_key(&process.pid),
+            process.name.to_lowercase(),
+        )
+    });
+    processes
         .into_iter()
         .map(|process| Entry {
             azure: None,
+            breadcrumb: match titles.get(&process.pid) {
+                Some(title) => format!("App: {title} — PID {}", process.pid),
+                None => format!("Background — PID {}", process.pid),
+            },
+            // 行頭のアイコンを実行ファイルから引く (取れないプロセスは空 → 汎用アイコン)
+            path: crate::process::process_path_of_pid(process.pid).unwrap_or_default(),
             name: process.name,
-            breadcrumb: format!("Kill Process — PID {}", process.pid),
-            path: String::new(),
             action: Action::KillProcess(process.pid),
             branch: None,
         })

@@ -65,6 +65,18 @@ pub(super) fn enumerate_windows() -> Vec<WindowEntry> {
     windows
 }
 
+/// タスクバーに出るウィンドウを持つプロセスの PID と、その先頭ウィンドウのタイトル。
+/// `k ` でタスクマネージャーの「アプリ」相当を上に出すために使う。
+pub(crate) fn window_titles_by_pid() -> std::collections::HashMap<u32, String> {
+    let mut titles = std::collections::HashMap::new();
+    for window in enumerate_windows() {
+        let mut pid = 0;
+        unsafe { GetWindowThreadProcessId(HWND(window.hwnd as *mut c_void), Some(&mut pid)) };
+        titles.entry(pid).or_insert(window.title);
+    }
+    titles
+}
+
 unsafe extern "system" fn enum_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
     unsafe {
         if !IsWindowVisible(hwnd).as_bool() {

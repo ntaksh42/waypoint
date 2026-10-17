@@ -277,6 +277,11 @@ unsafe fn draw_entry_icon(
             Action::ReplaceQuery(_) if !entry.path.is_empty() => {
                 draw_path_icon(draw.hDC, &entry.path, draw.rcItem, dpi)
             }
+            // `k ` は実行ファイルのアイコン。パスが取れないプロセス (保護プロセス等) は
+            // 下のコマンドアイコンへ回す
+            Action::KillProcess(_) if !entry.path.is_empty() => {
+                draw_path_icon(draw.hDC, &entry.path, draw.rcItem, dpi)
+            }
             Action::FocusWindow(hwnd) => {
                 draw_window_icon(draw.hDC, HWND(hwnd as *mut _), draw.rcItem, dpi)
             }

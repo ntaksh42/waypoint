@@ -95,6 +95,11 @@ pub fn process_path_of(hwnd: HWND) -> Option<String> {
     }
     let mut pid = 0u32;
     unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+    process_path_of_pid(pid)
+}
+
+/// 指定 PID のプロセスの実行ファイルのフルパス。
+pub fn process_path_of_pid(pid: u32) -> Option<String> {
     if pid == 0 {
         return None;
     }

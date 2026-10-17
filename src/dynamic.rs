@@ -18,6 +18,7 @@ use crate::shell::ComGuard;
 
 mod open_windows;
 use open_windows::enumerate_windows;
+pub(crate) use open_windows::window_titles_by_pid;
 
 const ITEM_LIMIT: usize = 10;
 
