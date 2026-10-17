@@ -74,6 +74,36 @@ fn romaji_query_matches_kana_name() {
     assert_eq!(found[0].name, "かいはつしつ");
 }
 
+/// かな・カナ・ローマ字が混在した入力でも同じかな名に音マッチする (FR-9.27)。
+/// 数字・記号が混じる入力は従来どおり不一致。
+#[test]
+fn mixed_kana_romaji_query_matches_kana_name() {
+    for name in ["でぃすこーど", "ディスコード"] {
+        let index = Index {
+            entries: vec![Entry {
+                azure: None,
+                name: name.into(),
+                breadcrumb: String::new(),
+                path: r"E:\dev".into(),
+                action: Action::OpenFolder(OpenMode::NewWindow),
+                branch: None,
+            }],
+            ..Index::default()
+        };
+        for term in [
+            "でぃすこーど",
+            "でぃすこ-do",
+            "ディスコード",
+            "dhisuko-do",
+            "でぃsuko-do",
+        ] {
+            assert_eq!(index.search(term).len(), 1, "{name} / {term}");
+        }
+        assert!(index.search("でぃすこ1").is_empty());
+        assert!(index.search("でぃすこ-d0").is_empty());
+    }
+}
+
 /// 漢字が混じる項目名は音マッチの対象外 (読みが一意に定まらないため)。
 #[test]
 fn romaji_query_does_not_match_kanji_name() {
