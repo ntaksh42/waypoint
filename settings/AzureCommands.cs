@@ -157,8 +157,7 @@ public partial class MainWindow
             foreach (var project in projects)
             {
                 if (project is not JsonObject entry) throw new InvalidDataException("Every entry must be a JSON object.");
-                if (entry["organization"] is not JsonValue || entry["project"] is not JsonValue)
-                    throw new InvalidDataException("Every entry must have \"organization\" and \"project\".");
+                ValidateImportedProject(entry);
                 imported.Add(entry.DeepClone());
             }
             AzureSettings()["projects"] = imported;
@@ -167,6 +166,24 @@ public partial class MainWindow
             Changed();
         }
         catch (Exception error) { MessageBox.Show(this, error.Message, "Import Azure DevOps projects", MessageBoxButton.OK, MessageBoxImage.Error); }
+    }
+
+    // 常駐部 (AzureDevOpsProject) が読めない型・範囲を拒否する。1 件でも
+    // 型が合わないと config 全体のパースが失敗するため (priority: -1 など)。
+    private static void ValidateImportedProject(JsonObject entry)
+    {
+        static bool IsString(JsonNode? node) => node is JsonValue value && value.TryGetValue<string>(out _);
+        if (!IsString(entry["organization"]) || !IsString(entry["project"]))
+            throw new InvalidDataException("Every entry must have string \"organization\" and \"project\".");
+        if (entry.TryGetPropertyValue("priority", out var priority)
+            && !(priority is JsonValue p && p.TryGetValue<int>(out var number) && number >= 0))
+            throw new InvalidDataException("\"priority\" must be a non-negative integer.");
+        foreach (var key in new[] { "includePullRequests", "includePipelines", "includeWorkItems" })
+            if (entry.TryGetPropertyValue(key, out var flag) && !(flag is JsonValue v && v.TryGetValue<bool>(out _)))
+                throw new InvalidDataException($"\"{key}\" must be true or false.");
+        foreach (var key in new[] { "aliases", "interestRepositories", "interestAreas", "interestIterations" })
+            if (entry.TryGetPropertyValue(key, out var list) && !(list is JsonArray array && array.All(IsString)))
+                throw new InvalidDataException($"\"{key}\" must be an array of strings.");
     }
 
     private static JsonObject NewAzureProject(string organization, string project) => new()
