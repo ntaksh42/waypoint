@@ -12,6 +12,8 @@ use std::time::SystemTime;
 
 use rusqlite::{Connection, OpenFlags};
 
+use crate::url_key::duplicate_key;
+
 const HISTORY_LIMIT_PER_BROWSER: usize = 1_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,7 +44,8 @@ fn scan_profiles(profiles: impl IntoIterator<Item = Profile>) -> Vec<Visit> {
         for (last_visit, visit) in visits {
             // URL のパス・クエリは大小文字を区別するので、Windows パスと
             // 同じ小文字化でまとめると別ページの履歴が消えてしまう。
-            let key = history_url_key(&visit.url);
+            // 正規化規則は `duplicate_key` を参照。
+            let key = duplicate_key(&visit.url);
             if by_url
                 .get(&key)
                 .is_none_or(|(known, _)| *known < last_visit)
@@ -55,38 +58,6 @@ fn scan_profiles(profiles: impl IntoIterator<Item = Profile>) -> Vec<Visit> {
     let mut visits: Vec<_> = by_url.into_values().collect();
     visits.sort_by_key(|(last_visit, _)| std::cmp::Reverse(*last_visit));
     visits.into_iter().map(|(_, visit)| visit).collect()
-}
-
-/// Learn の表示タブ・記事内アンカーは同じ記事としてまとめる。
-/// 他サイトのクエリや SPA のフラグメントはページを識別するため保持する。
-fn history_url_key(url: &str) -> String {
-    // 大半の URL は対象外。パースして組み立て直す前に、ホスト名が
-    // 含まれるかだけを確保なしで見る (ホスト名は大文字小文字を区別しない)
-    const HOST: &[u8] = b"learn.microsoft.com";
-    if !url
-        .as_bytes()
-        .windows(HOST.len())
-        .any(|window| window.eq_ignore_ascii_case(HOST))
-    {
-        return url.to_string();
-    }
-    let Ok(mut parsed) = reqwest::Url::parse(url) else {
-        return url.to_string();
-    };
-    if parsed.host_str() != Some("learn.microsoft.com") {
-        return url.to_string();
-    }
-    parsed.set_fragment(None);
-    let query: Vec<_> = parsed
-        .query_pairs()
-        .filter(|(key, _)| key != "tabs")
-        .map(|pair| (pair.0.into_owned(), pair.1.into_owned()))
-        .collect();
-    parsed.set_query(None);
-    if !query.is_empty() {
-        parsed.query_pairs_mut().extend_pairs(query);
-    }
-    parsed.to_string()
 }
 
 /// `History` ごとの更新日時・サイズと、そのときに読み取った結果。
