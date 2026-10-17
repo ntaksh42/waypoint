@@ -11,6 +11,8 @@ use std::time::SystemTime;
 
 use serde::Deserialize;
 
+use crate::url_key::url_key;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bookmark {
     pub name: String,
@@ -79,7 +81,29 @@ pub fn scan() -> Vec<Bookmark> {
             .insert(path, (modified, len, parsed.clone()));
         bookmarks.extend(parsed);
     }
-    bookmarks
+    dedup(bookmarks)
+}
+
+/// 同じ URL (`url_key` 基準) は 1 件に畳む。Chrome と Edge の両方にある場合など。
+/// 代表は最初のもの。名前が空なら、名前のある後続で置き換える。
+fn dedup(bookmarks: Vec<Bookmark>) -> Vec<Bookmark> {
+    let mut index: HashMap<String, usize> = HashMap::new();
+    let mut out: Vec<Bookmark> = Vec::with_capacity(bookmarks.len());
+    for bookmark in bookmarks {
+        match index.entry(url_key(&bookmark.url)) {
+            std::collections::hash_map::Entry::Occupied(slot) => {
+                let known = &mut out[*slot.get()];
+                if known.name.is_empty() && !bookmark.name.is_empty() {
+                    *known = bookmark;
+                }
+            }
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                slot.insert(out.len());
+                out.push(bookmark);
+            }
+        }
+    }
+    out
 }
 
 fn read_file(path: &Path) -> Option<Vec<Bookmark>> {
@@ -148,6 +172,23 @@ fn profile_paths() -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dedup_merges_same_page_across_browsers_and_prefers_a_named_one() {
+        let bookmark = |name: &str, url: &str| Bookmark {
+            name: name.into(),
+            url: url.into(),
+            breadcrumb: String::new(),
+        };
+        let merged = dedup(vec![
+            bookmark("", "https://example.com/a"),
+            bookmark("A", "http://example.com/a/?utm_source=x"),
+            bookmark("Upper", "https://example.com/Foo"),
+            bookmark("Lower", "https://example.com/foo"),
+        ]);
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[0].name, "A");
+    }
 
     #[test]
     fn flattens_nested_folders_into_a_breadcrumb() {

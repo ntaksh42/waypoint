@@ -34,4 +34,5 @@ pub mod single;
 pub mod startup_timing;
 pub mod tray;
 pub mod trigger;
+pub mod url_key;
 pub mod web_search;
