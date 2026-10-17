@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Gdi::{HBRUSH, HFONT};
 
-use super::azure_live;
+use super::{azure_live, path_browse};
 use crate::quick_launch::{Entry, Index};
 
 thread_local! {
@@ -137,4 +137,15 @@ pub(in crate::quick_launch_window) struct State {
         std::sync::Arc<Vec<crate::agent_sessions::Session>>,
         crate::quick_launch::Snapshot,
     )>,
+    /// パス入力の Tab 操作 (FR-9.24 / FR-9.25)。列挙済みのディレクトリ一覧。
+    pub(in crate::quick_launch_window) path_list: Option<path_browse::PathList>,
+    /// 列挙スレッドに投げて未着の親ディレクトリ。同じ要求を重ねないために持つ。
+    pub(in crate::quick_launch_window) path_list_requested: Option<String>,
+    /// 最後に投げた列挙の応答 ID。古い応答が現在の候補を上書きするのを防ぐ。
+    pub(in crate::quick_launch_window) path_list_reply_id: u32,
+    /// Tab で閲覧中。立っている間はパス入力の候補を列挙結果で置き換える。
+    pub(in crate::quick_launch_window) path_browse: bool,
+    pub(in crate::quick_launch_window) path_cycle: Option<path_browse::PathCycle>,
+    /// 列挙待ちで保留している Tab を押したときの入力 (到着後に補完を続ける)。
+    pub(in crate::quick_launch_window) path_tab_pending: Option<String>,
 }

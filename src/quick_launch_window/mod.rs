@@ -15,6 +15,7 @@ mod highlight;
 mod input;
 mod layout;
 mod list;
+mod path_browse;
 mod row_parts;
 mod search;
 mod snapshot;
@@ -68,6 +69,8 @@ pub const WM_QUICK_LAUNCH_EXECUTE: u32 = WM_APP + 4;
 pub const WM_QUICK_LAUNCH_ADD_TO_FAVORITES: u32 = WM_APP + 6;
 /// Azure DevOps の Work Item 検索スレッドが結果を返す通知。
 pub const WM_QUICK_LAUNCH_AZURE_RESULTS: u32 = WM_APP + 7;
+/// パスのサブディレクトリ列挙スレッドが結果を返す通知 (FR-9.24)。
+pub const WM_QUICK_LAUNCH_PATH_LIST: u32 = WM_APP + 14;
 
 pub fn show(owner: HWND, origin: Option<HWND>) -> Result<()> {
     ensure_window(owner)?;
@@ -83,6 +86,8 @@ pub fn show(owner: HWND, origin: Option<HWND>) -> Result<()> {
         // `k ` の一覧は表示ごとに取り直す (State::process_snapshot)
         state.process_snapshot = None;
         state.session_snapshot = None;
+        // Tab で列挙したサブフォルダ一覧もウィンドウを開くたびに捨てる
+        path_browse::reset(&mut state);
         (state.window, state.edit)
     });
     let (Some(window), Some(edit)) = (window, edit) else {
@@ -189,6 +194,8 @@ pub fn handle_message(message: &windows::Win32::UI::WindowsAndMessaging::MSG) ->
             });
             hide_window(window, owner);
         }
+        // Tab / Shift+Tab: パスの補完・階層移動、フォルダ候補への潜り (FR-9.24 / FR-9.25)
+        0x09 => path_browse::on_tab(),
         0x26 => move_selection(-1),
         0x28 => move_selection(1),
         // 見出し行 (区分見出し) は選択対象外。results.len() を直接使うと

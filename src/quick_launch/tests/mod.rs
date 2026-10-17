@@ -8,6 +8,7 @@ mod fixture;
 mod convert_test;
 mod fuzzy_test;
 mod index_test;
+mod path_entry_test;
 mod search_azure_rank_test;
 mod search_azure_test;
 mod search_fuzzy_test;
