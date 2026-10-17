@@ -65,8 +65,12 @@ pub(super) fn footer_hints(entry: Option<&Entry>) -> Vec<(&'static str, &'static
                 FAVORITE,
             ]);
         }
+        Action::OpenEditorWorkspace(_, uri, _) if uri.starts_with("vscode-remote://") => {
+            hints.push(("Ctrl+C", "Copy URI"));
+        }
         Action::OpenInTerminal
         | Action::OpenInEditor(_)
+        | Action::OpenEditorWorkspace(..)
         | Action::OpenClaudeCode(_)
         | Action::OpenCodex
         | Action::ResumeAgentSession(..)

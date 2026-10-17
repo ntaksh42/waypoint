@@ -126,6 +126,11 @@ pub(in crate::quick_launch_window) struct State {
     /// ハイライトしない (絞り込みなし一覧や Everything / Azure の
     /// 非同期検索など、一致箇所が `name` に対応しない場合)。
     pub(in crate::quick_launch_window) highlight_term: String,
+    pub(in crate::quick_launch_window) workspaces_enabled: bool,
+    pub(in crate::quick_launch_window) workspace_snapshot: Option<(
+        std::sync::Arc<Vec<crate::editor_workspaces::Workspace>>,
+        crate::quick_launch::Snapshot,
+    )>,
     /// `k ` に入った最初の打鍵で取った実行中プロセス一覧。打鍵のたびに
     /// 取り直すとプロセス列挙だけで 1 回 6ms ほどかかる (実測、323 プロセス)。
     /// ウィンドウを開くたびに捨てる。kill 後はウィンドウが閉じるので古くならない。
@@ -137,7 +142,7 @@ pub(in crate::quick_launch_window) struct State {
         std::sync::Arc<Vec<crate::agent_sessions::Session>>,
         crate::quick_launch::Snapshot,
     )>,
-    /// パス入力の Tab 操作 (FR-9.24 / FR-9.25)。列挙済みのディレクトリ一覧。
+    /// パス入力の Tab 操作 (FR-9.25 / FR-9.26)。列挙済みのディレクトリ一覧。
     pub(in crate::quick_launch_window) path_list: Option<path_browse::PathList>,
     /// 列挙スレッドに投げて未着の親ディレクトリ。同じ要求を重ねないために持つ。
     pub(in crate::quick_launch_window) path_list_requested: Option<String>,

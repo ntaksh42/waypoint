@@ -1,4 +1,4 @@
-//! 入力されたパスの候補化と、Tab による階層ナビゲーション用の純関数 (FR-9.23〜FR-9.25)。
+//! 入力されたパスの候補化と、Tab による階層ナビゲーション用の純関数 (FR-9.24〜FR-9.26)。
 //!
 //! Win32 にもファイルシステムにも触れない。存在確認は FR-9.4 の制約に従い
 //! 入力中には行わず、列挙は呼び出し側が Tab 操作の明示時にだけ別スレッドで行う。
@@ -22,7 +22,7 @@ pub fn normalize_path_input(query: &str) -> Option<String> {
     (is_drive || is_unc).then_some(path)
 }
 
-/// 入力が開けるパスなら確定候補 1 件を作る (FR-9.23)。
+/// 入力が開けるパスなら確定候補 1 件を作る (FR-9.24)。
 pub fn path_entry(query: &str) -> Option<Entry> {
     let path = normalize_path_input(query)?;
     let last = path

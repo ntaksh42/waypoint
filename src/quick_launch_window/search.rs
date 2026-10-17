@@ -83,6 +83,10 @@ pub(super) fn update_results(state: &RefCell<State>) {
         super::snapshot::show_process_results(state, rest);
         return;
     }
+    if let Some(rest) = query.strip_prefix(crate::quick_launch::WORKSPACE_PREFIX) {
+        super::snapshot::show_workspace_results(state, rest);
+        return;
+    }
     if let Some(rest) = query.strip_prefix(crate::quick_launch::AGENT_SESSIONS_PREFIX) {
         super::snapshot::show_session_results(state, rest);
         return;
@@ -217,7 +221,7 @@ pub(super) fn update_results(state: &RefCell<State>) {
             if let Some(entry) = state.index.claude_code_entry(&query) {
                 state.results.push(entry);
             }
-            // パス直接入力 (FR-9.23)。閲覧中は列挙したサブフォルダに置き換わる (FR-9.24)
+            // パス直接入力 (FR-9.24)。閲覧中は列挙したサブフォルダに置き換わる (FR-9.25)
             if let Some(entry) = crate::quick_launch::path_entry(&query) {
                 path_select = super::path_browse::apply_results(&mut state, entry);
             }
@@ -404,6 +408,7 @@ fn local_search_scope(query: &str) -> Option<(&'static str, &str)> {
     if query.starts_with(crate::quick_launch::EVERYTHING_PREFIX)
         || query.starts_with(crate::quick_launch::AZURE_DEVOPS_PREFIX)
         || query.starts_with(crate::quick_launch::KILL_PROCESS_PREFIX)
+        || query.starts_with(crate::quick_launch::WORKSPACE_PREFIX)
         || query.starts_with(crate::quick_launch::AGENT_SESSIONS_PREFIX)
     {
         return None;

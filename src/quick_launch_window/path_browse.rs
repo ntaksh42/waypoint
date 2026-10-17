@@ -1,4 +1,4 @@
-//! パス入力・フォルダ候補での Tab 操作 (FR-9.23〜FR-9.25)。
+//! パス入力・フォルダ候補での Tab 操作 (FR-9.24〜FR-9.26)。
 //!
 //! 列挙 (`read_dir`) は I/O で、切断済みドライブや不達の UNC は SMB のタイムアウトまで
 //! 返らない。UI スレッドでは呼ばず、Tab の明示操作のときだけ別スレッドで行い、
@@ -76,7 +76,7 @@ pub(super) fn reset(state: &mut State) {
 /// パス入力時の候補を組み立てる。`results` には通常検索の結果が入っている。
 ///
 /// 閲覧中・巡回中は検索結果の代わりに列挙したサブディレクトリを並べ、そうでなければ
-/// 確定候補 (FR-9.23) を先頭に足すだけ。戻り値は選択すべき行 (巡回中のみ)。
+/// 確定候補 (FR-9.24) を先頭に足すだけ。戻り値は選択すべき行 (巡回中のみ)。
 pub(super) fn apply_results(state: &mut State, entry: Entry) -> Option<usize> {
     let path = normalize_path_input(&entry.path)?;
     let (dir, prefix) = split_dir_prefix(&path);
@@ -293,7 +293,7 @@ pub(super) fn plan_path_tab(state: &mut State, path: &str, shift: bool) -> Optio
     }
 }
 
-/// 選択中のフォルダ候補の配下へ潜る (FR-9.25)。対象は実パスの `OpenFolder` だけで、
+/// 選択中のフォルダ候補の配下へ潜る (FR-9.26)。対象は実パスの `OpenFolder` だけで、
 /// プレフィックスモード (`ps ` 等) では検索欄の置換でモードが外れるため何もしない。
 fn descend_into_selected(edit: HWND, query: &str) {
     if prefix_badge(query).is_some() {

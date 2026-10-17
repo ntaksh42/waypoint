@@ -69,8 +69,9 @@ pub const WM_QUICK_LAUNCH_EXECUTE: u32 = WM_APP + 4;
 pub const WM_QUICK_LAUNCH_ADD_TO_FAVORITES: u32 = WM_APP + 6;
 /// Azure DevOps の Work Item 検索スレッドが結果を返す通知。
 pub const WM_QUICK_LAUNCH_AZURE_RESULTS: u32 = WM_APP + 7;
-/// パスのサブディレクトリ列挙スレッドが結果を返す通知 (FR-9.24)。
+/// パスのサブディレクトリ列挙スレッドが結果を返す通知 (FR-9.25)。
 pub const WM_QUICK_LAUNCH_PATH_LIST: u32 = WM_APP + 14;
+pub(super) const WM_WORKSPACES_READY: u32 = WM_APP + 60;
 
 pub fn show(owner: HWND, origin: Option<HWND>) -> Result<()> {
     ensure_window(owner)?;
@@ -79,6 +80,22 @@ pub fn show(owner: HWND, origin: Option<HWND>) -> Result<()> {
     }
     // `cs ` (FR-9.15.6) 用。読み取りは専用スレッドで、表示を待たせない
     crate::agent_sessions::refresh_async();
+    STATE.with(|state| {
+        let state = state.borrow();
+        if state.workspaces_enabled
+            && let Some(window) = state.window
+        {
+            let handle = window.0 as usize;
+            crate::editor_workspaces::refresh_async(move || unsafe {
+                let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                    Some(HWND(handle as *mut _)),
+                    WM_WORKSPACES_READY,
+                    WPARAM(0),
+                    LPARAM(0),
+                );
+            });
+        }
+    });
     let (window, edit) = STATE.with(|state| {
         let mut state = state.borrow_mut();
         state.owner = Some(owner);
@@ -194,7 +211,7 @@ pub fn handle_message(message: &windows::Win32::UI::WindowsAndMessaging::MSG) ->
             });
             hide_window(window, owner);
         }
-        // Tab / Shift+Tab: パスの補完・階層移動、フォルダ候補への潜り (FR-9.24 / FR-9.25)
+        // Tab / Shift+Tab: パスの補完・階層移動、フォルダ候補への潜り (FR-9.25 / FR-9.26)
         0x09 => path_browse::on_tab(),
         0x26 => move_selection(-1),
         0x28 => move_selection(1),

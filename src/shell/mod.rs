@@ -17,6 +17,8 @@ use windows::core::{BSTR, HSTRING, Interface, w};
 use crate::config::OpenMode;
 
 mod launch;
+mod workspace;
+pub use workspace::open_editor_workspace;
 #[cfg(test)]
 mod tests;
 pub use launch::{open_claude_code, open_codex, open_editor, open_terminal, resume_agent_session};

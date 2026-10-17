@@ -217,7 +217,7 @@ fn powershell_fallback(path: &str, command: Option<&str>) -> std::process::Comma
 /// `std::process::Command` の実行ファイル探索は `CreateProcessW` 任せで、
 /// `PATHEXT` を見ない。VS Code が PATH へ置くのは `code.cmd` だけなので、
 /// 既定の `code` が「program not found」で黙って落ちていた。
-fn find_executable(command: &str) -> Option<PathBuf> {
+pub(super) fn find_executable(command: &str) -> Option<PathBuf> {
     let paths = std::env::var_os("PATH").unwrap_or_default();
     find_executable_in(command, std::env::split_paths(&paths))
 }

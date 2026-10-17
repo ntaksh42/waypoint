@@ -194,6 +194,9 @@ impl Index {
                 &self.ranking,
             );
         }
+        if query.starts_with(super::WORKSPACE_PREFIX) {
+            return Vec::new();
+        }
         if let Some(rest) = query.strip_prefix(EDITOR_PREFIX) {
             return search_entries_cached(
                 &self.editor_folders,

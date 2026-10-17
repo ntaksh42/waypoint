@@ -347,7 +347,9 @@ pub(super) fn reveal_selected_in_explorer() {
     let Some(entry) = selected_entry() else {
         return;
     };
-    if entry.path.is_empty() {
+    if entry.path.is_empty()
+        || matches!(&entry.action, Action::OpenEditorWorkspace(_, uri, _) if uri.starts_with("vscode-remote://"))
+    {
         return;
     }
     let (window, owner) = STATE.with(|state| {

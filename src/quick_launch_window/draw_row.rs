@@ -265,6 +265,7 @@ unsafe fn draw_entry_icon(
             | Action::LaunchApp
             | Action::OpenInTerminal
             | Action::OpenInEditor(_)
+            | Action::OpenEditorWorkspace(..)
             | Action::OpenClaudeCode(_)
             | Action::OpenCodex
             | Action::ResumeAgentSession(..) => {

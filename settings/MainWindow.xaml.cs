@@ -63,6 +63,7 @@ public partial class MainWindow : Window
         OpenWindows.IsChecked = Bool(quick, "includeOpenWindows", true);
         Bookmarks.IsChecked = Bool(quick, "includeBookmarks", true);
         BrowserHistory.IsChecked = Bool(quick, "includeBrowserHistory", true);
+        EditorWorkspaces.IsChecked = Bool(quick, "includeEditorWorkspaces", true);
         Apps.IsChecked = Bool(quick, "includeApps", true);
         Everything.IsChecked = Bool(quick, "includeEverything", true);
         SearchPaths.IsChecked = Bool(quick, "searchPaths");
@@ -327,6 +328,7 @@ public partial class MainWindow : Window
         quick["includeOpenWindows"] = OpenWindows.IsChecked == true;
         quick["includeBookmarks"] = Bookmarks.IsChecked == true;
         quick["includeBrowserHistory"] = BrowserHistory.IsChecked == true;
+        quick["includeEditorWorkspaces"] = EditorWorkspaces.IsChecked == true;
         quick["includeApps"] = Apps.IsChecked == true;
         quick["includeEverything"] = Everything.IsChecked == true;
         quick["searchPaths"] = SearchPaths.IsChecked == true;

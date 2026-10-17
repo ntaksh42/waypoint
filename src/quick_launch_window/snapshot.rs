@@ -63,3 +63,22 @@ pub(super) fn show_snapshot_results(
     };
     populate_list(list, &labels, &rows);
 }
+
+/// 背景で差し替わったワークスペースだけ検索キーを作り直す。
+pub(super) fn show_workspace_results(state: &RefCell<State>, text: &str) {
+    let latest = if state.borrow().workspaces_enabled {
+        crate::editor_workspaces::latest()
+    } else {
+        std::sync::Arc::default()
+    };
+    let cached = state
+        .borrow_mut()
+        .workspace_snapshot
+        .take()
+        .filter(|(seen, _)| std::sync::Arc::ptr_eq(seen, &latest));
+    let snapshot = cached
+        .map(|(_, snapshot)| snapshot)
+        .unwrap_or_else(|| Snapshot::new(crate::editor_workspaces::entries(&latest)));
+    show_snapshot_results(state, &snapshot, text, true);
+    state.borrow_mut().workspace_snapshot = Some((latest, snapshot));
+}
