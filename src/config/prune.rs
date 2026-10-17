@@ -80,9 +80,15 @@ const EXISTS_THREADS: usize = 4;
 /// ルートが見えない (ドライブ未接続・VPN 切断) 場合と相対パスは
 /// 一時的な不在と区別できないので判定しない。
 ///
+/// `exists` は `Path::try_exists` 相当で、確実に無い (`Ok(false)`) ものだけを
+/// 削除対象にする。アクセス拒否などの I/O エラーは不在と区別できないので残す。
+///
 /// ルートはパスごとではなく種類ごとに 1 回だけ確認する (到達できない共有に
 /// 属する項目が複数あっても、固まるのは 1 回で済む)。確認は並列で行う。
-pub fn find_missing(paths: &[String], exists: impl Fn(&Path) -> bool + Sync) -> Vec<String> {
+pub fn find_missing(
+    paths: &[String],
+    exists: impl Fn(&Path) -> std::io::Result<bool> + Sync,
+) -> Vec<String> {
     let roots: Vec<Option<PathBuf>> = paths
         .iter()
         .map(|path| root_of(Path::new(path.as_str())))
@@ -93,7 +99,7 @@ pub fn find_missing(paths: &[String], exists: impl Fn(&Path) -> bool + Sync) -> 
     let reachable: HashSet<&PathBuf> = unique
         .iter()
         .copied()
-        .zip(par_map(&unique, |root| exists(root)))
+        .zip(par_map(&unique, |root| matches!(exists(root), Ok(true))))
         .filter_map(|(root, alive)| alive.then_some(root))
         .collect();
 
@@ -105,7 +111,7 @@ pub fn find_missing(paths: &[String], exists: impl Fn(&Path) -> bool + Sync) -> 
         })
         .collect();
     let gone = par_map(&candidates, |&index| {
-        !exists(Path::new(paths[index].as_str()))
+        matches!(exists(Path::new(paths[index].as_str())), Ok(false))
     });
     candidates
         .into_iter()

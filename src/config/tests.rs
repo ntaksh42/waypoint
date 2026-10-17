@@ -146,7 +146,7 @@ fn find_missing_skips_paths_whose_root_is_unavailable() {
         r"relative\path".to_string(),
     ];
     let existing = [r"C:\", r"C:\here", r"\\server\share\"];
-    let exists = |p: &Path| existing.iter().any(|e| Path::new(e) == p);
+    let exists = |p: &Path| Ok(existing.iter().any(|e| Path::new(e) == p));
 
     let missing = crate::config::find_missing(&paths, exists);
 
@@ -203,13 +203,13 @@ fn find_missing_probes_each_root_once_and_checks_in_parallel() {
     let exists = |p: &Path| {
         if p == Path::new(r"\\slow\share\") {
             root_probes.fetch_add(1, Ordering::SeqCst);
-            return true;
+            return Ok(true);
         }
         let now = running.fetch_add(1, Ordering::SeqCst) + 1;
         peak.fetch_max(now, Ordering::SeqCst);
         std::thread::sleep(Duration::from_millis(30));
         running.fetch_sub(1, Ordering::SeqCst);
-        false
+        Ok(false)
     };
 
     let missing = crate::config::find_missing(&paths, exists);
@@ -221,4 +221,34 @@ fn find_missing_probes_each_root_once_and_checks_in_parallel() {
         "ルートは 1 回だけ確認"
     );
     assert!(peak.load(Ordering::SeqCst) > 1, "存在確認が並列に走る");
+}
+
+#[test]
+fn find_missing_keeps_paths_whose_check_failed() {
+    use std::io::{Error, ErrorKind};
+    use std::path::Path;
+    let paths = vec![r"C:\denied\item".to_string(), r"C:\gone".to_string()];
+    // ルートは見えるが、本体の確認がアクセス拒否で失敗する
+    let exists = |p: &Path| {
+        if p == Path::new(r"C:\") {
+            Ok(true)
+        } else if p.starts_with(r"C:\denied") {
+            Err(Error::from(ErrorKind::PermissionDenied))
+        } else {
+            Ok(false)
+        }
+    };
+
+    let missing = crate::config::find_missing(&paths, exists);
+
+    assert_eq!(missing, vec![r"C:\gone"], "I/O エラーは削除しない");
+}
+
+#[test]
+fn find_missing_skips_root_whose_check_failed() {
+    use std::io::{Error, ErrorKind};
+    let paths = vec![r"\\server\share\gone".to_string()];
+    let exists = |_: &std::path::Path| Err(Error::from(ErrorKind::PermissionDenied));
+
+    assert!(crate::config::find_missing(&paths, exists).is_empty());
 }

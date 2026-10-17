@@ -37,7 +37,7 @@ pub(crate) fn scan_async(hwnd: HWND) {
     }
     let notify = hwnd.0 as isize;
     std::thread::spawn(move || {
-        let missing = crate::config::find_missing(&paths, |p| p.exists());
+        let missing = crate::config::find_missing(&paths, |p| p.try_exists());
         let found = !missing.is_empty();
         *RESULT.lock().unwrap_or_else(|e| e.into_inner()) = missing;
         SCANNING.store(false, Ordering::Release);
