@@ -12,7 +12,7 @@ use std::time::SystemTime;
 
 use rusqlite::{Connection, OpenFlags};
 
-use crate::url_key::url_key;
+use crate::url_key::duplicate_key;
 
 const HISTORY_LIMIT_PER_BROWSER: usize = 1_000;
 
@@ -44,8 +44,8 @@ fn scan_profiles(profiles: impl IntoIterator<Item = Profile>) -> Vec<Visit> {
         for (last_visit, visit) in visits {
             // URL のパス・クエリは大小文字を区別するので、Windows パスと
             // 同じ小文字化でまとめると別ページの履歴が消えてしまう。
-            // 正規化規則は `url_key` を参照。
-            let key = url_key(&visit.url);
+            // 正規化規則は `duplicate_key` を参照。
+            let key = duplicate_key(&visit.url);
             if by_url
                 .get(&key)
                 .is_none_or(|(known, _)| *known < last_visit)

@@ -9,7 +9,7 @@
 /// - フラグメントは除去する。ただし SPA のルート (`#/` `#!`) は別ページなので保持する
 /// - `utm_*` / `fbclid` / `gclid` などのトラッキングクエリを除去する
 /// - パス・クエリの大小文字は区別する (別ページの履歴が消えるため)
-pub fn url_key(url: &str) -> String {
+pub fn duplicate_key(url: &str) -> String {
     let rest = match url.split_once("://").filter(|(scheme, _)| {
         scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
     }) {
@@ -69,53 +69,53 @@ mod tests {
     #[test]
     fn scheme_trailing_slash_fragment_and_tracking_are_ignored() {
         assert_eq!(
-            url_key("https://example.com/a"),
-            url_key("http://example.com/a/#top?utm_source=x")
+            duplicate_key("https://example.com/a"),
+            duplicate_key("http://example.com/a/#top?utm_source=x")
         );
         assert_eq!(
-            url_key("https://Example.com/a?id=1&fbclid=z"),
-            url_key("https://example.com/a/?id=1")
+            duplicate_key("https://Example.com/a?id=1&fbclid=z"),
+            duplicate_key("https://example.com/a/?id=1")
         );
         assert_eq!(
-            url_key("https://example.com/"),
-            url_key("http://example.com")
+            duplicate_key("https://example.com/"),
+            duplicate_key("http://example.com")
         );
     }
 
     #[test]
     fn path_and_query_case_stay_distinct() {
         assert_ne!(
-            url_key("https://example.com/Foo"),
-            url_key("https://example.com/foo")
+            duplicate_key("https://example.com/Foo"),
+            duplicate_key("https://example.com/foo")
         );
         assert_ne!(
-            url_key("https://example.com/?Key=A"),
-            url_key("https://example.com/?Key=a")
+            duplicate_key("https://example.com/?Key=A"),
+            duplicate_key("https://example.com/?Key=a")
         );
     }
 
     #[test]
     fn spa_routes_and_real_queries_are_kept() {
         assert_ne!(
-            url_key("https://example.com/#/one"),
-            url_key("https://example.com/#/two")
+            duplicate_key("https://example.com/#/one"),
+            duplicate_key("https://example.com/#/two")
         );
         assert_ne!(
-            url_key("https://example.com/?tabs=one"),
-            url_key("https://example.com/?tabs=two")
+            duplicate_key("https://example.com/?tabs=one"),
+            duplicate_key("https://example.com/?tabs=two")
         );
         assert_ne!(
-            url_key("https://example.com/?q=1"),
-            url_key("https://example.com/?q=2")
+            duplicate_key("https://example.com/?q=1"),
+            duplicate_key("https://example.com/?q=2")
         );
     }
 
     #[test]
     fn learn_tabs_and_anchors_are_ignored_and_other_schemes_untouched() {
         assert_eq!(
-            url_key("https://learn.microsoft.com/a/b?view=net-8.0&tabs=csharp#examples"),
-            url_key("https://learn.microsoft.com/a/b?tabs=vb&view=net-8.0")
+            duplicate_key("https://learn.microsoft.com/a/b?view=net-8.0&tabs=csharp#examples"),
+            duplicate_key("https://learn.microsoft.com/a/b?tabs=vb&view=net-8.0")
         );
-        assert_eq!(url_key("file:///C:/x/"), "file:///C:/x/");
+        assert_eq!(duplicate_key("file:///C:/x/"), "file:///C:/x/");
     }
 }

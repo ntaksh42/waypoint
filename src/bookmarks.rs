@@ -11,7 +11,7 @@ use std::time::SystemTime;
 
 use serde::Deserialize;
 
-use crate::url_key::url_key;
+use crate::url_key::duplicate_key;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bookmark {
@@ -84,13 +84,13 @@ pub fn scan() -> Vec<Bookmark> {
     dedup(bookmarks)
 }
 
-/// 同じ URL (`url_key` 基準) は 1 件に畳む。Chrome と Edge の両方にある場合など。
+/// 同じ URL (`duplicate_key` 基準) は 1 件に畳む。Chrome と Edge の両方にある場合など。
 /// 代表は最初のもの。名前が空なら、名前のある後続で置き換える。
 fn dedup(bookmarks: Vec<Bookmark>) -> Vec<Bookmark> {
     let mut index: HashMap<String, usize> = HashMap::new();
     let mut out: Vec<Bookmark> = Vec::with_capacity(bookmarks.len());
     for bookmark in bookmarks {
-        match index.entry(url_key(&bookmark.url)) {
+        match index.entry(duplicate_key(&bookmark.url)) {
             std::collections::hash_map::Entry::Occupied(slot) => {
                 let known = &mut out[*slot.get()];
                 if known.name.is_empty() && !bookmark.name.is_empty() {
