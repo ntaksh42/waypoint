@@ -73,6 +73,7 @@ pub(super) fn update_results(state: &RefCell<State>) {
     // リクエスト自体は中断できないため、到着時に捨てる。
     invalidate_azure_live_searches(&mut state.borrow_mut());
     update_badge(state, &query);
+    super::path_browse::sync(state, &query);
 
     if let Some(rest) = query.strip_prefix(crate::quick_launch::EVERYTHING_PREFIX) {
         start_everything_query(state, rest);
@@ -102,6 +103,8 @@ pub(super) fn update_results(state: &RefCell<State>) {
         show_azure_suggest_entry(state);
         return;
     }
+    let mut path_select = None;
+    let is_path = crate::quick_launch::normalize_path_input(&query).is_some();
     let (list, labels, rows, copy_feedback_cleared, window, dpi) = {
         let mut state = state.borrow_mut();
         // プレフィックスを外れたら、遅れて届く Everything の応答を無視させる
@@ -218,6 +221,10 @@ pub(super) fn update_results(state: &RefCell<State>) {
             if let Some(entry) = state.index.claude_code_entry(&query) {
                 state.results.push(entry);
             }
+            // パス直接入力 (FR-9.24)。閲覧中は列挙したサブフォルダに置き換わる (FR-9.25)
+            if let Some(entry) = crate::quick_launch::path_entry(&query) {
+                path_select = super::path_browse::apply_results(&mut state, entry);
+            }
             Vec::new()
         };
         if state.results.is_empty() && matches!(azure_command(&query), Some((AzureCommand::New, _)))
@@ -228,7 +235,8 @@ pub(super) fn update_results(state: &RefCell<State>) {
         if state.empty_message.is_none() {
             state.empty_message = azure_cache_notice(&query).map(str::to_string);
         }
-        state.previous_query = Some(query);
+        // パス候補を足した結果は絞り込みの母集団にしない
+        state.previous_query = (!is_path).then(|| query.clone());
         let (labels, rows) = build_rows(&state.results, &section_headers);
         let (labels, rows) =
             super::list::with_message(labels, rows, state.empty_message.as_deref());
@@ -251,6 +259,10 @@ pub(super) fn update_results(state: &RefCell<State>) {
         return;
     };
     populate_list(list, &labels, &rows);
+    if let Some(row) = path_select {
+        super::input::select_at(Some(list), row);
+    }
+    super::path_browse::ensure_list(state, &query);
 }
 
 fn azure_cache_notice(query: &str) -> Option<&'static str> {

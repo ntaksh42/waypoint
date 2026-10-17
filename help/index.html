@@ -124,6 +124,8 @@ const DATA = [
       { title: "Azure PR filters and repositories", prefix: "az pr ", keys: "", desc: "Put attributes before search text. Relationship filters use AND; the last status wins. Repository shortcuts restrict organization, project and repository exactly, including live results. Review requests mean unvoted PRs. Typing live alone does not call an API." },
       { title: "Azure creation pages", prefix: "az new ", keys: "Enter", desc: "Choose Bug, Task, User Story, PR or a synced custom type, then a project/repository. Open the creation page in your browser; waypoint does not call write APIs." },
       { title: "Save Azure search priorities", prefix: "az optimize", keys: "Enter", desc: "Save project priorities and iteration filters from the last 90 days of activity (suggest / rank do the same). Failed projects keep their settings. A tray notification reports the result." },
+      { title: "パス直接入力", prefix: "", keys: "", desc: "C:\\foo や \\\\server\\share を入力すると、そのパスを開く候補が先頭に出る。存在確認は入力中には行わない。" },
+      { title: "パス補完・階層ナビゲーション", prefix: "", keys: "Tab / Shift+Tab", desc: "パス入力中は Tab でディレクトリ名を補完・巡回、Shift+Tab で 1 階層上へ。フォルダ候補を選んで Tab を押すとその配下へ潜る (ps / ed / cc などのモードでは無効)。" },
       { title: "Web 検索", prefix: "??", keys: "", desc: "設定した検索エンジン (既定 Google) でその場の語句を検索する。既定オン。" },
     ],
   },

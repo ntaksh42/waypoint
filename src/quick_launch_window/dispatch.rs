@@ -22,7 +22,7 @@ use super::search::{handle_everything_results, update_results};
 use super::{
     BACKGROUND, BADGE_WIDTH, EDIT_HEIGHT, FOOTER_GAP, FOOTER_HEIGHT, HEADER_HEIGHT, PADDING,
     ROW_HEIGHT, RowKind, SEARCH_ICON_WIDTH, STATE, SURFACE, TEXT_PRIMARY,
-    WM_QUICK_LAUNCH_AZURE_RESULTS,
+    WM_QUICK_LAUNCH_AZURE_RESULTS, WM_QUICK_LAUNCH_PATH_LIST,
 };
 
 pub(super) fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -202,6 +202,10 @@ pub(super) fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM)
             handle_azure_work_item_results(wparam.0 as u32);
             handle_azure_pull_request_results(wparam.0 as u32);
             handle_azure_pipeline_results(wparam.0 as u32);
+            LRESULT(0)
+        }
+        WM_QUICK_LAUNCH_PATH_LIST => {
+            super::path_browse::handle_list_reply(wparam.0 as u32);
             LRESULT(0)
         }
         windows::Win32::UI::WindowsAndMessaging::WM_COPYDATA => {

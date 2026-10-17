@@ -15,6 +15,7 @@ mod azure_scope;
 mod azure_search;
 mod index;
 mod index_azure;
+mod path_entry;
 mod rank;
 mod scoring;
 mod search;
@@ -32,6 +33,10 @@ pub(crate) use azure_scope::{
     repository_matches_project, repository_matches_url, split_repository_query,
 };
 pub(crate) use index_azure::{AzureBuilt, build_azure};
+pub use path_entry::{
+    common_prefix, dir_entry, dirs_matching, normalize_path_input, parent_path, path_entry,
+    same_dir, split_dir_prefix,
+};
 pub(crate) use rank::search_entries;
 pub(crate) use scoring::highlight_ranges;
 pub(crate) use snapshot::Snapshot;
