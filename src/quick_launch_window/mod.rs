@@ -103,6 +103,7 @@ pub fn show(owner: HWND, origin: Option<HWND>) -> Result<()> {
         // `k ` の一覧は表示ごとに取り直す (State::process_snapshot)
         state.process_snapshot = None;
         state.session_snapshot = None;
+        state.tabs_resend_requested = false;
         // Tab で列挙したサブフォルダ一覧もウィンドウを開くたびに捨てる
         path_browse::reset(&mut state);
         (state.window, state.edit)

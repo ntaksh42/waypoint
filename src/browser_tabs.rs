@@ -13,8 +13,8 @@ use windows::Win32::System::Registry::{
     RegCreateKeyExW, RegSetValueExW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    ASFW_ANY, AllowSetForegroundWindow, FindWindowExW, SMTO_ABORTIFHUNG, SendMessageTimeoutW,
-    WM_COPYDATA,
+    ASFW_ANY, AllowSetForegroundWindow, FindWindowExW, PostMessageW, SMTO_ABORTIFHUNG,
+    SendMessageTimeoutW, WM_APP, WM_COPYDATA,
 };
 use windows::core::{PCWSTR, w};
 
@@ -22,6 +22,12 @@ use windows::core::{PCWSTR, w};
 pub const SNAPSHOT_COPYDATA: usize = 0x5750_5442;
 /// 常駐部から Native Messaging host へ送る、タブ前面化要求の `WM_COPYDATA::dwData`。
 pub const FOCUS_COPYDATA: usize = 0x5750_5446;
+/// 常駐部から Native Messaging host へ送る、直近のタブ一覧の再送要求。
+///
+/// 拡張はタブが変わったときしか一覧を送らないため、常駐部が再起動すると
+/// (MSI の更新を含む) 次にタブを触るまで `t ` が 0 件のままになる。
+/// 再起動後にこれを投げ、host が控えている最後の一覧を送り直させる。
+pub const RESEND_MESSAGE: u32 = WM_APP + 1;
 /// Native Messaging host が作る非表示ウィンドウのクラス名。
 pub const HOST_WINDOW_CLASS: PCWSTR = w!("WaypointTabHostWindow");
 /// Native Messaging と `WM_COPYDATA` の双方で受け入れる最大ペイロードサイズ。
@@ -252,6 +258,25 @@ pub fn request_focus(target: &TabTarget) -> bool {
         previous = Some(host);
     }
     sent
+}
+
+/// 起動中の全 Native Messaging host に、直近のタブ一覧の再送を頼む。
+///
+/// `PostMessage` なので待たない。一覧は host から `WM_COPYDATA` で非同期に届く。
+pub fn request_resend() {
+    let mut previous = None;
+    loop {
+        let Ok(host) = (unsafe { FindWindowExW(None, previous, HOST_WINDOW_CLASS, None) }) else {
+            break;
+        };
+        if host.0.is_null() {
+            break;
+        }
+        unsafe {
+            let _ = PostMessageW(Some(host), RESEND_MESSAGE, WPARAM(0), LPARAM(0));
+        }
+        previous = Some(host);
+    }
 }
 
 #[cfg(test)]

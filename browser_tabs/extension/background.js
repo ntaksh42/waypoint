@@ -51,6 +51,7 @@ function connect() {
   }
   port.onMessage.addListener((message) => {
     if (message.type === "focus") focusTab(message);
+    if (message.type === "resend") scheduleSnapshot();
     if (message.type === "ack" && !message.connected) setTimeout(sendSnapshot, 1000);
   });
   port.onDisconnect.addListener(() => {
