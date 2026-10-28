@@ -74,6 +74,7 @@ pub(super) fn update_results(state: &RefCell<State>) {
     invalidate_azure_live_searches(&mut state.borrow_mut());
     update_badge(state, &query);
     super::path_browse::sync(state, &query);
+    super::configure::request_tabs_if_empty(state, &query);
 
     if let Some(rest) = query.strip_prefix(crate::quick_launch::EVERYTHING_PREFIX) {
         start_everything_query(state, rest);

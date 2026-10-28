@@ -138,6 +138,8 @@ pub(in crate::quick_launch_window) struct State {
     /// `cs ` の候補。`agent_sessions::latest()` の `Arc` が同じ間は使い回し、
     /// 非同期スキャンで差し替わったら (ポインタが変わったら) 作り直す。
     /// ウィンドウを開くたびに捨てる (breadcrumb の経過時間を古くしないため)。
+    /// `t ` で 0 件だったときにタブ一覧の再送を頼んだか。ウィンドウを開くたびに下ろす。
+    pub(in crate::quick_launch_window) tabs_resend_requested: bool,
     pub(in crate::quick_launch_window) session_snapshot: Option<(
         std::sync::Arc<Vec<crate::agent_sessions::Session>>,
         crate::quick_launch::Snapshot,

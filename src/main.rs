@@ -118,6 +118,10 @@ fn main() {
     tray::start_prune_timer(hwnd);
     tray::prefetch_menu_icons();
 
+    // 再起動前から動いている host に、控えているタブ一覧を送り直させる
+    // (拡張はタブが変わるまで送らないため、これが無いと `t ` が 0 件のまま)
+    waypoint::browser_tabs::request_resend();
+
     run_message_loop();
 
     cleanup(hwnd);

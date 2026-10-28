@@ -18,11 +18,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::w;
 
 use waypoint::browser_tabs::{
-    FOCUS_COPYDATA, HOST_WINDOW_CLASS, MAX_SNAPSHOT_BYTES, SNAPSHOT_COPYDATA,
+    FOCUS_COPYDATA, HOST_WINDOW_CLASS, MAX_SNAPSHOT_BYTES, RESEND_MESSAGE, SNAPSHOT_COPYDATA,
 };
 use waypoint::tray::CLASS_NAME as TRAY_WINDOW_CLASS;
 
 static OUTPUT: OnceLock<Mutex<io::Stdout>> = OnceLock::new();
+/// 拡張から最後に届いたタブ一覧。常駐部が再起動したときに送り直す (`RESEND_MESSAGE`)。
+static LAST_SNAPSHOT: Mutex<Option<Vec<u8>>> = Mutex::new(None);
 
 fn main() {
     let Ok(window) = create_window() else {
@@ -73,6 +75,9 @@ fn forward_snapshots(window: HWND) {
     let mut input = io::stdin();
     while let Ok(Some(message)) = read_message(&mut input) {
         let forwarded = send_snapshot(&message);
+        if let Ok(mut last) = LAST_SNAPSHOT.lock() {
+            *last = Some(message);
+        }
         let _ = write_message(&serde_json::json!({
             "type": "ack",
             "connected": forwarded,
@@ -137,6 +142,21 @@ fn send_snapshot(message: &[u8]) -> bool {
     }
 }
 
+fn resend_last_snapshot() {
+    let last = LAST_SNAPSHOT.lock().ok().and_then(|last| last.clone());
+    let Some(snapshot) = last else {
+        // まだ一覧を受け取っていない。拡張に送り直してもらう
+        let _ = write_message(&serde_json::json!({ "type": "resend" }));
+        return;
+    };
+    for _ in 0..5 {
+        if send_snapshot(&snapshot) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
 extern "system" fn window_proc(
     hwnd: HWND,
     message: u32,
@@ -165,6 +185,12 @@ extern "system" fn window_proc(
             }
             DefWindowProcW(hwnd, message, WPARAM(0), lparam)
         },
+        RESEND_MESSAGE => {
+            // 常駐部のメッセージループが回り始める前に届くことがあるので、
+            // 別スレッドで間隔を空けて数回試す
+            std::thread::spawn(resend_last_snapshot);
+            LRESULT(0)
+        }
         WM_DESTROY => {
             unsafe { PostQuitMessage(0) };
             LRESULT(0)

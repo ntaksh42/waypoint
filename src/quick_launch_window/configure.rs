@@ -7,8 +7,10 @@ use crate::config::Config;
 use crate::dynamic::Menus;
 use crate::quick_launch::Index;
 
+use std::cell::RefCell;
+
 use super::search::update_results;
-use super::{MAX_LIST_RESULTS, STATE};
+use super::{MAX_LIST_RESULTS, STATE, State};
 
 /// 索引をその場で構築して反映する (同期版)。
 ///
@@ -196,4 +198,23 @@ pub fn replace_browser_tabs(
             update_results(state);
         }
     });
+}
+
+/// `t ` に入ったのにタブが 1 件も無ければ、host へ一覧の再送を頼む。
+///
+/// 常駐部の起動時にも頼んでいるが、host より先に常駐部が起動した・
+/// 拡張を入れ直したなどで取りこぼした場合の保険。`PostMessage` だけで待たず、
+/// ウィンドウを開いている間に 1 回までにする (打鍵ごとに窓を列挙しない)。
+pub(super) fn request_tabs_if_empty(state: &RefCell<State>, query: &str) {
+    if !query.starts_with(crate::quick_launch::TABS_PREFIX) {
+        return;
+    }
+    {
+        let mut state = state.borrow_mut();
+        if state.tabs_resend_requested || !state.browser_tabs.is_empty() {
+            return;
+        }
+        state.tabs_resend_requested = true;
+    }
+    crate::browser_tabs::request_resend();
 }
