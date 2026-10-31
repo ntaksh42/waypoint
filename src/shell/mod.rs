@@ -7,10 +7,11 @@ use windows::Win32::System::Com::{
     CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
 };
 use windows::Win32::System::Variant::VARIANT;
+use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
 use windows::Win32::UI::Shell::{IShellWindows, IWebBrowser2, ShellExecuteW, ShellWindows};
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 use windows::Win32::UI::WindowsAndMessaging::{
-    IsIconic, SW_RESTORE, SetForegroundWindow, ShowWindowAsync,
+    GetLastActivePopup, IsIconic, IsWindowVisible, SW_RESTORE, SetForegroundWindow, ShowWindowAsync,
 };
 use windows::core::{BSTR, HSTRING, Interface, w};
 
@@ -85,7 +86,17 @@ pub fn activate_window(hwnd: HWND) {
         if IsIconic(hwnd).as_bool() {
             let _ = ShowWindowAsync(hwnd, SW_RESTORE);
         }
-        let _ = SetForegroundWindow(hwnd);
+        // `w ` の列挙は所有されたダイアログを除く。モーダル表示中の
+        // メインウィンドウは無効なので、操作可能なポップアップへ渡す。
+        let mut target = hwnd;
+        while !IsWindowEnabled(target).as_bool() {
+            let popup = GetLastActivePopup(target);
+            if popup == target || !IsWindowVisible(popup).as_bool() {
+                break;
+            }
+            target = popup;
+        }
+        let _ = SetForegroundWindow(target);
     }
 }
 

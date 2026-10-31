@@ -5,3 +5,4 @@ mod layout_test;
 mod path_browse_test;
 mod row_detail_test;
 mod search_test;
+mod window_switch_test;

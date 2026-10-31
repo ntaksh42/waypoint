@@ -105,3 +105,44 @@ fn only_http_urls_are_treated_as_web_urls() {
     assert!(!is_web_url(r"\\attacker\share\x.lnk"));
     assert!(!is_web_url(""));
 }
+
+#[test]
+fn activating_window_with_modal_dialog_focuses_dialog() {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, GetActiveWindow};
+    use windows::Win32::UI::WindowsAndMessaging::{SW_SHOW, WS_OVERLAPPEDWINDOW};
+    unsafe {
+        let create = |title: &str, owner| {
+            CreateWindowExW(
+                Default::default(),
+                w!("STATIC"),
+                &windows::core::HSTRING::from(title),
+                WS_OVERLAPPEDWINDOW,
+                0,
+                0,
+                200,
+                100,
+                owner,
+                None,
+                None,
+                None,
+            )
+            .unwrap()
+        };
+        let main = create("Waypoint modal owner test", None);
+        let dialog = create("Waypoint modal dialog test", Some(main));
+        let launcher = create("Waypoint foreground test", None);
+        let _ = ShowWindow(main, SW_SHOW);
+        let _ = EnableWindow(main, false);
+        let _ = ShowWindow(dialog, SW_SHOW);
+        let _ = ShowWindow(launcher, SW_SHOW);
+        activate_window(main);
+        // CI は前面化権限を持たないため、同じスレッド内のアクティブ窓を確認する。
+        // 実際の最前面判定は window_switch_test の対話テストで行う。
+        let active = GetActiveWindow();
+        let _ = DestroyWindow(launcher);
+        let _ = DestroyWindow(dialog);
+        let _ = EnableWindow(main, true);
+        let _ = DestroyWindow(main);
+        assert_eq!(active, dialog, "modal dialog did not receive activation");
+    }
+}
