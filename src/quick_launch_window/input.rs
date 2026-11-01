@@ -171,7 +171,7 @@ pub(super) fn queue_selected() {
 
     enum Selected {
         Replace(HWND, String),
-        Execute(Option<HWND>, Option<HWND>),
+        Execute(Option<HWND>, Option<HWND>, Option<HWND>),
         LiveWorkItemSearch(String),
         LivePullRequestSearch(crate::quick_launch::PullRequestFilter, String),
         LivePipelineSearch(crate::quick_launch::PipelineFilter, String),
@@ -203,8 +203,12 @@ pub(super) fn queue_selected() {
                 *mode = OpenMode::Reuse;
             }
         }
+        let focus_target = match &entry.action {
+            Action::FocusWindow(hwnd) => Some(HWND(*hwnd as *mut _)),
+            _ => None,
+        };
         state.pending = Some(entry);
-        Some(Selected::Execute(state.window, state.owner))
+        Some(Selected::Execute(state.window, state.owner, focus_target))
     });
     match selected {
         Some(Selected::Replace(edit, query)) => unsafe {
@@ -218,7 +222,12 @@ pub(super) fn queue_selected() {
                 Some(LPARAM(cursor as isize)),
             );
         },
-        Some(Selected::Execute(window, owner)) => {
+        Some(Selected::Execute(window, owner, focus_target)) => {
+            // 隠すと元のアプリが再び前面になる。検索窓が前面化権限を
+            // 持つ間に対象へ渡し、通知待ちの間に権限を失わないようにする。
+            if let Some(target) = focus_target {
+                crate::shell::activate_window(target);
+            }
             hide_window(window, owner);
         }
         Some(Selected::LiveWorkItemSearch(query)) => {

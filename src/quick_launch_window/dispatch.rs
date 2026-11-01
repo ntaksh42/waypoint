@@ -184,8 +184,20 @@ pub(super) fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM)
             LRESULT(0)
         }
         WM_ACTIVATE if (wparam.0 & 0xffff) == 0 => {
-            let owner = STATE.with(|state| state.borrow().owner);
-            hide_window(Some(hwnd), owner);
+            let (owner, switching_window) = STATE.with(|state| {
+                let state = state.borrow();
+                (
+                    state.owner,
+                    state.pending.as_ref().is_some_and(|entry| {
+                        matches!(entry.action, crate::quick_launch::Action::FocusWindow(_))
+                    }),
+                )
+            });
+            // 前面化の途中で隠すと、Windows が元の窓を再アクティブ化する。
+            // この場合は queue_selected が切り替え要求の後に一度だけ隠す。
+            if !switching_window {
+                hide_window(Some(hwnd), owner);
+            }
             LRESULT(0)
         }
         WM_CLOSE => {

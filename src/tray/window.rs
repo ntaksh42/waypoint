@@ -71,9 +71,8 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                     quick_launch::Action::OpenFolder(mode) => {
                         let _ = shell::open(&entry.path, mode, origin);
                     }
-                    quick_launch::Action::FocusWindow(hwnd) => {
-                        shell::activate_window(HWND(hwnd as *mut _));
-                    }
+                    // 前面化は検索窓を隠す前に完了している (queue_selected)。
+                    quick_launch::Action::FocusWindow(_) => {}
                     quick_launch::Action::FocusBrowserTab(target) => {
                         if !crate::browser_tabs::request_focus(&target) && !target.url.is_empty() {
                             let _ = shell::open_url(&target.url);

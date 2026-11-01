@@ -8,6 +8,145 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::w;
 
+thread_local! {
+    static NEXT_ACTIVE: std::cell::Cell<Option<isize>> = const { std::cell::Cell::new(None) };
+}
+
+extern "system" fn switching_window_proc(
+    hwnd: windows::Win32::Foundation::HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> windows::Win32::Foundation::LRESULT {
+    if message == WM_ACTIVATE && wparam.0 & 0xffff == 0 {
+        NEXT_ACTIVE.with(|next| {
+            if next.get().is_none() {
+                next.set(Some(lparam.0));
+            }
+        });
+    }
+    window_proc(hwnd, message, wparam, lparam)
+}
+
+#[test]
+fn selecting_window_transfers_activation_directly_to_target() {
+    use crate::quick_launch::{Action, Entry};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetActiveWindow, SetActiveWindow};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        LB_ADDSTRING, LB_SETCURSEL, SW_SHOW, ShowWindow, WS_OVERLAPPEDWINDOW,
+    };
+    unsafe {
+        let instance = GetModuleHandleW(None).unwrap();
+        let class = WNDCLASSW {
+            lpfnWndProc: Some(switching_window_proc),
+            hInstance: instance.into(),
+            lpszClassName: w!("WaypointSwitchOrderTest"),
+            ..Default::default()
+        };
+        assert_ne!(RegisterClassW(&class), 0);
+        let target = CreateWindowExW(
+            Default::default(),
+            w!("STATIC"),
+            w!("Waypoint switch order target"),
+            WS_OVERLAPPEDWINDOW,
+            0,
+            0,
+            200,
+            100,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let origin = CreateWindowExW(
+            Default::default(),
+            w!("STATIC"),
+            w!("Waypoint switch order origin"),
+            WS_OVERLAPPEDWINDOW,
+            0,
+            0,
+            200,
+            100,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let launcher = CreateWindowExW(
+            Default::default(),
+            class.lpszClassName,
+            w!("Waypoint switch order launcher"),
+            WS_POPUP,
+            0,
+            0,
+            200,
+            100,
+            None,
+            None,
+            Some(instance.into()),
+            None,
+        )
+        .unwrap();
+        let list = CreateWindowExW(
+            Default::default(),
+            w!("LISTBOX"),
+            w!(""),
+            WS_CHILD,
+            0,
+            0,
+            100,
+            100,
+            Some(launcher),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        SendMessageW(
+            list,
+            LB_ADDSTRING,
+            None,
+            Some(LPARAM(w!("target").as_ptr() as isize)),
+        );
+        SendMessageW(list, LB_SETCURSEL, Some(WPARAM(0)), None);
+        STATE.with(|state| {
+            let mut state = state.borrow_mut();
+            state.window = Some(launcher);
+            state.list = Some(list);
+            state.results = vec![Entry {
+                name: "target".into(),
+                breadcrumb: String::new(),
+                path: String::new(),
+                action: Action::FocusWindow(target.0 as isize),
+                branch: None,
+                azure: None,
+            }];
+            state.rows = vec![super::super::RowKind::Item(0)];
+        });
+        let _ = ShowWindow(target, SW_SHOW);
+        let _ = ShowWindow(origin, SW_SHOW);
+        let _ = ShowWindow(launcher, SW_SHOW);
+        let _ = SetActiveWindow(launcher);
+        assert_eq!(GetActiveWindow(), launcher);
+        NEXT_ACTIVE.with(|next| next.set(None));
+        super::super::input::queue_selected();
+        let next = NEXT_ACTIVE.with(|next| next.get());
+        let active = GetActiveWindow();
+        let _ = DestroyWindow(launcher);
+        let _ = DestroyWindow(origin);
+        let _ = DestroyWindow(target);
+        STATE.with(|state| *state.borrow_mut() = State::default());
+        assert_eq!(
+            next,
+            Some(target.0 as isize),
+            "selection reactivated another window before the target"
+        );
+        assert_eq!(active, target, "hiding the launcher reactivated the origin");
+    }
+}
+
 #[test]
 fn delayed_activation_keeps_keyboard_input_in_search_box() {
     unsafe {
