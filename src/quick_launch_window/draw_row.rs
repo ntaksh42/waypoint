@@ -314,6 +314,7 @@ unsafe fn draw_entry_icon(
             | Action::AzureOptimize
             | Action::OpenSettings
             | Action::OpenHelp
+            | Action::OpenTabSetupGuide
             | Action::KillProcess(_) => draw_command_icon(draw.hDC, draw.rcItem, dpi, name_font),
         }
     }

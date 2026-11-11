@@ -301,6 +301,18 @@ fn tabs_prefix_searches_the_live_tab_cache_only() {
     assert!(index.search("example.test").is_empty());
 }
 
+/// FR-9.17.1: タブを 1 件も受け取っていなければ、検索語に関係なく導入案内だけを出す。
+#[test]
+fn tabs_prefix_offers_the_setup_guide_until_a_snapshot_arrives() {
+    let index = index();
+    for query in ["t ", "t example"] {
+        let found = index.search(query);
+        assert_eq!(found.len(), 1, "{query}");
+        assert_eq!(found[0].action, Action::OpenTabSetupGuide);
+        assert!(found[0].to_item().is_none());
+    }
+}
+
 /// FR-9.2: `a ` プレフィックスなしでもアプリは通常検索の対象。
 #[test]
 fn apps_are_searched_without_the_apps_prefix() {

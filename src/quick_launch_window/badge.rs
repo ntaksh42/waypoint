@@ -60,7 +60,8 @@ pub(super) fn action_tag(action: &Action, badge: Option<&str>, path: &str) -> &'
         Action::ReplaceQuery(_)
         | Action::AzureOptimize
         | Action::OpenSettings
-        | Action::OpenHelp => "Command",
+        | Action::OpenHelp
+        | Action::OpenTabSetupGuide => "Command",
         Action::AzureLiveWorkItemSearch(_)
         | Action::AzureLivePullRequestSearch { .. }
         | Action::AzureLivePipelineSearch { .. } => "Search",
@@ -98,7 +99,8 @@ pub(super) fn action_verb(action: &Action) -> &'static str {
         | Action::OpenInEditor(_)
         | Action::OpenEditorWorkspace(..)
         | Action::OpenSettings
-        | Action::OpenHelp => "Open \u{21B5}",
+        | Action::OpenHelp
+        | Action::OpenTabSetupGuide => "Open \u{21B5}",
     }
 }
 

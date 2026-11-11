@@ -285,6 +285,8 @@ pub enum Action {
     OpenSettings,
     /// waypoint の機能一覧ページ (`help\index.html`) を開く (FR-9.22)。
     OpenHelp,
+    /// タブ拡張の導入案内 (`browser-tabs\setup.html`) を開く (FR-9.17.1)。
+    OpenTabSetupGuide,
     /// 設定した検索エンジンの検索 URL を既定ブラウザで開く
     /// (`??` プレフィックス、FR-9.21)。URL は `path` に組み立て済み。
     WebSearch,
@@ -350,6 +352,7 @@ impl Entry {
             | Action::AzureOptimize
             | Action::OpenSettings
             | Action::OpenHelp
+            | Action::OpenTabSetupGuide
             // 検索語は毎回異なりうるので永続化しない (FR-9.21)
             | Action::WebSearch
             // プロセスは永続化する対象ではない (PID は再起動のたびに変わる)

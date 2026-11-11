@@ -8,6 +8,16 @@ use super::{
     EDITOR_PREFIX, Entry, HISTORY_PREFIX, Index, TABS_PREFIX, TERMINAL_PREFIX, WINDOW_PREFIX,
 };
 
+/// `t ` でタブを 1 件も受け取っていないときの候補 (FR-9.17.1)。
+static TAB_SETUP_GUIDE: std::sync::LazyLock<Entry> = std::sync::LazyLock::new(|| Entry {
+    azure: None,
+    name: "No browser tabs received".to_string(),
+    breadcrumb: "Set up the Waypoint Tab Bridge extension in Chrome / Edge".to_string(),
+    path: String::new(),
+    action: super::Action::OpenTabSetupGuide,
+    branch: None,
+});
+
 /// `Entry::name` / `breadcrumb` / `path` の小文字化済みキャッシュ。
 ///
 /// `Index::build` 時に候補 1 件につき 1 回だけ計算する。キー入力のたびに
@@ -174,6 +184,10 @@ impl Index {
             return search_entries_cached(&self.apps, &self.apps_lower, rest, false, &self.ranking);
         }
         if let Some(rest) = query.strip_prefix(TABS_PREFIX) {
+            // 拡張からまだ 1 件も届いていないなら、0 件の代わりに導入案内を出す
+            if self.tabs.is_empty() {
+                return vec![&TAB_SETUP_GUIDE];
+            }
             return search_entries_cached(&self.tabs, &self.tabs_lower, rest, true, &self.ranking);
         }
         if let Some(rest) = query.strip_prefix(CODEX_PREFIX) {
