@@ -151,12 +151,23 @@ minor/major を上げる場合は以下の手順を使う。
 3. `git tag vX.Y.Z && git push --tags`
    → `installer.yml` が Release に MSI を添付する
 
-インストーラの決定事項は `docs/spec.md` の「08-2. 配布形態」にある。
+インストーラの決定事項 (WiX 5、`installer/waypoint.wxs`):
+
+- **x64 のみ。** ARM64 機でもエミュレーションで動く。ビルドとリリースを 1 本に保つ
+- 同梱物は `waypoint.exe` / `waypoint-settings.exe` / `waypoint-tab-host.exe` /
+  `waypoint-bookmark-host.exe` / ブラウザ拡張 / `help\index.html`。スタートメニューに `waypoint` を置く
+- **自動起動は初回インストール時だけ有効にする。** アプリ本体を
+  `--enable-autostart-once` で一度だけ起動し、トレイの手動トグル (FR-8.4) と同じ
+  関数でレジストリを書く。MSI がレジストリ値を Component として持たないので、
+  後で OFF にしてもアップグレードで ON へ戻らない
+- 初回の対話的インストール完了後だけ、拡張の導入案内 (ローカル HTML) を開く。
+  サイレント導入・アップグレードでは開かない
+- 署名はしない
 
 - **`UpgradeCode` は変えない。** 変えると別製品扱いになり、古い版が残る
 - MSI は **perUser**。`ProgramFiles` は使えないので `LocalAppDataFolder` へ入れる
 - **`util:CloseApplication` を消さない。** 常駐中の exe を掴んだままだと
-  上書きに失敗し「使用中のファイル」ダイアログや再起動要求になる (R-10)
+  上書きに失敗し「使用中のファイル」ダイアログや再起動要求になる
 - 説明文に日本語を使うので `Codepage="65001"` が要る。既定の 1252 では
   `WIX0311` で通らない
 - ARP の登録先は perUser でも **`HKLM\...\Uninstall`** と
@@ -277,6 +288,14 @@ Windows 11 では Widgets が予約済みで `RegisterHotKey` が「既に登録
 `SHIL_LARGE` (32) / `SHIL_EXTRALARGE` (48) / `SHIL_JUMBO` (256) を寸法で選び分け、
 拡大ではなく縮小になるようにする (`image_list_for`) 。添字はリスト間で共通なので、
 `SHGetFileInfo` で得た `iIcon` をそのまま別のリストへ渡せる。
+
+### Azure の共有キャッシュは DevDeck のスキーマに依存する
+
+`%APPDATA%\AzDoSharedCache\cache.db` は DevDeck と共有している (FR-9.18.1)。
+クエリ失敗で接続を捨てて開き直すのは `shared_cache::with_cached_connection`。
+DevDeck 側のスキーマ変更で読み取りが恒常的に失敗するようになったら、共有キャッシュの
+参照 (`candidate_cache.rs::cached_candidate_groups` / `shared_cache`) を waypoint
+自身の非共有キャッシュ実装に戻して切り離す (FR-9.18.9)。
 
 ### その他
 - `TrackPopupMenuEx` の座標は**物理ピクセル**。Per-Monitor V2 を宣言済み (`main.rs`)、DPI 変換は 1 箇所に閉じ込める。
