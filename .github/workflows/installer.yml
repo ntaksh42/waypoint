@@ -9,7 +9,7 @@ on:
   pull_request:
     paths:
       - 'installer/**'
-      - 'settings/**'
+      - 'clients/settings/**'
       - 'Cargo.toml'
       - '.github/workflows/installer.yml'
   workflow_dispatch:

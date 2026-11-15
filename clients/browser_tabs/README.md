@@ -25,4 +25,4 @@ Chrome / Edge は、Windows アプリがローカル拡張を無確認でイン�
 
 - お気に入りの読み書きは `chrome.bookmarks` で行う。`Bookmarks` ファイルは触らないため、Edge の同期で巻き戻らない
 - 以前に拡張を読み込んでいた場合は、更新後に `edge://extensions` で拡張を再読み込みする (権限が増えるため)
-- 実際の Edge での結合試験は `bookmarks\smoke-test.ps1` (Edge をすべて閉じてから実行する。使い捨てのプロファイルを使う)
+- 実際の Edge での結合試験は `clients\bookmarks\smoke-test.ps1` (Edge をすべて閉じてから実行する。使い捨てのプロファイルを使う)

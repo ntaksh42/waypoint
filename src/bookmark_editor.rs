@@ -10,7 +10,7 @@ use windows::core::{PCWSTR, w};
 
 use crate::browser_tabs::{EXTENSION_ID, native_host_manifest_dir, set_native_host_registry};
 
-/// 拡張 (`browser_tabs/extension/bookmarks.js`) が接続する Native Messaging host の名前。
+/// 拡張 (`clients/browser_tabs/extension/bookmarks.js`) が接続する Native Messaging host の名前。
 pub const NATIVE_HOST_NAME: &str = "com.ntaksh42.waypoint.bookmarks";
 /// 編集画面が待ち受け、host が接続する名前付きパイプ。
 pub const PIPE_PATH: &str = r"\\.\pipe\waypoint-bookmarks";

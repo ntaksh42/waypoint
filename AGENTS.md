@@ -113,12 +113,12 @@ cargo run                                    # 起動(トレイ常駐)
 # 設定画面 (FR-6) は C# + WPF の別プロジェクト。build.rs が cargo ビルドに
 # 巻き込んで exe の隣へ置くので、通常は個別に叩かなくてよい。
 # 設定画面だけを速く回したいときや、cargo を通さず確認したいときに使う
-dotnet build settings\Waypoint.Settings.csproj -c Release
+dotnet build clients\settings\Waypoint.Settings.csproj -c Release
 
 # Edge のお気に入り編集画面 (FR-6.16、設定画面の `--bookmarks` モード) のテスト。
-# Edge を使わない単体テスト。実際の Edge での結合試験は bookmarks\smoke-test.ps1
+# Edge を使わない単体テスト。実際の Edge での結合試験は clients\bookmarks\smoke-test.ps1
 # (Edge をすべて閉じてから。使い捨てのプロファイルで動かす)
-dotnet test bookmarks\Waypoint.Bookmarks.Tests -c Release
+dotnet test clients\bookmarks\Waypoint.Bookmarks.Tests -c Release
 
 # GUI サブシステムのため stdout に出せない。自己診断は結果をファイルに書く
 cargo run -- --selftest
@@ -353,27 +353,27 @@ Recent/Frequent Folders・Open Windows (`w `) ・ブックマーク (`b `) ・�
 | バイナリ | エントリポイント | 役割 |
 |---|---|---|
 | `waypoint.exe` | `src/main.rs` | 常駐本体。トレイ・トリガー・メニュー表示・Quick Launch 検索・全 IPC の受け口 |
-| `waypoint-settings.exe` | `settings/Waypoint.Settings.csproj` | 設定エディター (FR-6)。C# + WPF (.NET 8)、保存後に `PostMessage` で常駐部へ通知。`--bookmarks` で Edge のお気に入り編集画面 (FR-6.16) を開く |
+| `waypoint-settings.exe` | `clients/settings/Waypoint.Settings.csproj` | 設定エディター (FR-6)。C# + WPF (.NET 8)、保存後に `PostMessage` で常駐部へ通知。`--bookmarks` で Edge のお気に入り編集画面 (FR-6.16) を開く |
 | tab host | `src/tab_host_main.rs` | Chrome / Edge Native Messaging host。stdin/stdout を常駐部の `WM_COPYDATA` へ中継するだけ |
 | bookmark host | `src/bookmark_host_main.rs` | Edge のお気に入り編集用 Native Messaging host (FR-6.17)。stdin/stdout を編集画面の名前付きパイプ (`\\.\pipe\waypoint-bookmarks`) へ中継するだけ。読みと書きを同時に流すため overlapped I/O で開く |
 
 ### お気に入り編集画面 (FR-6.16〜6.20) の構成
 
 設定画面と同じ exe の別モードにして、self-contained の .NET ランタイムを MSI に二重に入れない。
-モデルと Edge 連携は WPF に依存しないライブラリに分け、`bookmarks/` に置く。
+モデルと Edge 連携は WPF に依存しないライブラリに分け、`clients/bookmarks/` に置く。
 
 | 置き場所 | 内容 |
 |---|---|
-| `bookmarks/Waypoint.Bookmarks.Core` | お気に入りのモデル (`BookmarkNode` / `BookmarkTree`) と編集ロジック (`EditSession` が元に戻すための逆操作を記録、`BulkOperations` / `ReplaceSpec` / `DuplicateFinder`) |
-| `bookmarks/Waypoint.Bookmarks.Edge` | 拡張との通信 (`EdgeBridge`、パイプのサーバー)。Core の `IBookmarkConnection` を実装する |
-| `settings/Bookmarks` | 画面。`ViewModels` (WPF の型を使わない)、`Views`、`Services` (ログ・バックアップ・Edge 起動)。組み立ては `BookmarkEditorStartup` だけ |
-| `browser_tabs/extension/bookmarks.js` | `chrome.bookmarks` で読み書きする。Edge のときだけ host に接続する |
-| `bookmarks/Waypoint.Bookmarks.Tests` | Core・Edge・ViewModel の単体テスト。偽の Edge (`FakeBookmarkGateway` は `chrome.bookmarks.move` と同じ挿入位置の規則で動く) を使う |
-| `bookmarks/Waypoint.Bookmarks.SmokeTest` + `bookmarks/smoke-test.ps1` | 実際の Edge での結合試験 |
+| `clients/bookmarks/Waypoint.Bookmarks.Core` | お気に入りのモデル (`BookmarkNode` / `BookmarkTree`) と編集ロジック (`EditSession` が元に戻すための逆操作を記録、`BulkOperations` / `ReplaceSpec` / `DuplicateFinder`) |
+| `clients/bookmarks/Waypoint.Bookmarks.Edge` | 拡張との通信 (`EdgeBridge`、パイプのサーバー)。Core の `IBookmarkConnection` を実装する |
+| `clients/settings/Bookmarks` | 画面。`ViewModels` (WPF の型を使わない)、`Views`、`Services` (ログ・バックアップ・Edge 起動)。組み立ては `BookmarkEditorStartup` だけ |
+| `clients/browser_tabs/extension/bookmarks.js` | `chrome.bookmarks` で読み書きする。Edge のときだけ host に接続する |
+| `clients/bookmarks/Waypoint.Bookmarks.Tests` | Core・Edge・ViewModel の単体テスト。偽の Edge (`FakeBookmarkGateway` は `chrome.bookmarks.move` と同じ挿入位置の規則で動く) を使う |
+| `clients/bookmarks/Waypoint.Bookmarks.SmokeTest` + `clients/bookmarks/smoke-test.ps1` | 実際の Edge での結合試験 |
 
 - **`chrome.bookmarks.move` の `index` は「移動前の並びでの挿入位置」。** 同じフォルダ内で後ろへ動かすと 1 つ手前に入る。`EditSession` はこの規則で並びを模擬し、元に戻す位置も計算する
 - **結合試験は普段の Edge が起動していると、そちらの拡張につながって普段のお気に入りを書き換える。** スクリプトは Edge が起動中なら実行を拒否し、ツールもお気に入りが入ったプロファイルにつながったら中止する
-- `bookmarks/` の C# は `.editorconfig` の規約 (アクセス修飾子の明記、private フィールドは `_camelCase`) をビルドで検査する (`bookmarks/Directory.Build.props`)
+- `clients/bookmarks/` の C# は `.editorconfig` の規約 (アクセス修飾子の明記、private フィールドは `_camelCase`) をビルドで検査する (`clients/bookmarks/Directory.Build.props`)
 
 `src/lib.rs` が公開する主なモジュール (Win32 に触らない純ロジックはここに集約し、統合テストから叩けるようにしてある):
 
@@ -404,13 +404,13 @@ Recent/Frequent Folders・Open Windows (`w `) ・ブックマーク (`b `) ・�
 
 ### FR-6 管理画面の構成
 
-`waypoint-settings.exe` は **C# + WPF (.NET 8) の別プロジェクト** (`settings/`) で、
+`waypoint-settings.exe` は **C# + WPF (.NET 8) の別プロジェクト** (`clients/settings/`) で、
 Rust のワークスペースには含まれない。`AssemblyName` が `waypoint-settings` なので
 出力される exe 名は常駐部から見て変わらない (`tray/actions.rs::open_settings` は
 exe 名だけで解決する)。トレイメニューの "Settings..." と Quick Launch の
 `Settings` 候補 (FR-9.20) から必要時のみ起動し、保存後は常駐部のメッセージ
 ウィンドウ (`WaypointMessageWindow`) を `FindWindow` で捕まえて `PostMessage` で
-再読み込みを通知する (`settings/ConfigStore.cs`)。常駐部の起動時間・メモリ・
+再読み込みを通知する (`clients/settings/ConfigStore.cs`)。常駐部の起動時間・メモリ・
 メッセージループには GUI フレームワークを持ち込まない、という原則は変わらない。
 
 - **`build.rs` が cargo ビルドに巻き込んでビルドする。** 常駐部が exe の隣しか

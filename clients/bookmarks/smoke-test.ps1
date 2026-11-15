@@ -7,7 +7,7 @@
 # Edge が 1 つでも起動していたら実行しない。
 param([string]$Configuration = 'debug')
 
-$root = Split-Path $PSScriptRoot -Parent
+$root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 if (Get-Process msedge -ErrorAction SilentlyContinue) {
     Write-Error 'Edge is running. Close every Edge window so the test cannot touch your real bookmarks.'
     exit 2
@@ -42,7 +42,7 @@ if (-not $edge) { $edge = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\m
 try {
     $test = Start-Process dotnet -ArgumentList "run --project `"$PSScriptRoot\Waypoint.Bookmarks.SmokeTest`" -c Release" -PassThru -NoNewWindow
     Start-Sleep 5
-    Start-Process $edge -ArgumentList "--user-data-dir=`"$profileDir`"", "--load-extension=`"$root\browser_tabs\extension`"", '--no-first-run', 'about:blank'
+    Start-Process $edge -ArgumentList "--user-data-dir=`"$profileDir`"", "--load-extension=`"$root\clients\browser_tabs\extension`"", '--no-first-run', 'about:blank'
     $test.WaitForExit()
     $code = $test.ExitCode
 } finally {

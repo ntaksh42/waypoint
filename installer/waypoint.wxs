@@ -89,17 +89,17 @@
           <Directory Id="BrowserTabsFolder" Name="browser-tabs">
             <Directory Id="BrowserTabsExtensionFolder" Name="extension">
               <Component Id="TabBridgeManifestComponent" Guid="*">
-                <File Id="TabBridgeManifest" Source="browser_tabs\extension\manifest.json" KeyPath="yes" />
+                <File Id="TabBridgeManifest" Source="clients\browser_tabs\extension\manifest.json" KeyPath="yes" />
               </Component>
               <Component Id="TabBridgeBackgroundComponent" Guid="*">
-                <File Id="TabBridgeBackground" Source="browser_tabs\extension\background.js" />
+                <File Id="TabBridgeBackground" Source="clients\browser_tabs\extension\background.js" />
               </Component>
               <Component Id="TabBridgeBookmarksComponent" Guid="*">
-                <File Id="TabBridgeBookmarks" Source="browser_tabs\extension\bookmarks.js" />
+                <File Id="TabBridgeBookmarks" Source="clients\browser_tabs\extension\bookmarks.js" />
               </Component>
             </Directory>
             <Component Id="TabBridgeSetupGuide" Guid="*">
-              <File Id="TabBridgeSetupGuideHtml" Source="browser_tabs\setup.html" KeyPath="yes" />
+              <File Id="TabBridgeSetupGuideHtml" Source="clients\browser_tabs\setup.html" KeyPath="yes" />
             </Component>
           </Directory>
 

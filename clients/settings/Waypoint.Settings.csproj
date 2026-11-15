@@ -18,7 +18,7 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
   <ItemGroup>
-    <Resource Include="..\assets\waypoint.png" Link="Assets\waypoint.png" />
+    <Resource Include="..\..\assets\waypoint.png" Link="Assets\waypoint.png" />
   </ItemGroup>
   <ItemGroup>
     <!-- Edge のお気に入り編集画面 (FR-6.16) のモデルと Edge 連携 -->

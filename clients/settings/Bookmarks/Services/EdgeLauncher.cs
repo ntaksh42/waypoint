@@ -23,13 +23,13 @@ internal sealed class EdgeLauncher : IEdgeLauncher
 
     /// <summary>
     /// 同梱の拡張 (Waypoint Tab Bridge) のフォルダ。インストール先では exe の隣の
-    /// browser-tabs\extension、開発中はリポジトリの browser_tabs\extension を、実行ファイルから上へたどって探す。
+    /// browser-tabs\extension、開発中はリポジトリの clients\browser_tabs\extension を、実行ファイルから上へたどって探す。
     /// </summary>
     private static string? FindExtensionDirectory()
     {
         for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
         {
-            foreach (var folder in new[] { "browser-tabs", "browser_tabs" })
+            foreach (var folder in new[] { "browser-tabs", Path.Combine("clients", "browser_tabs") })
             {
                 var candidate = Path.Combine(dir.FullName, folder, "extension");
                 if (File.Exists(Path.Combine(candidate, "manifest.json"))) return candidate;
