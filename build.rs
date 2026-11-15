@@ -29,7 +29,7 @@ fn main() {
     build_settings_app();
 }
 
-/// 設定画面 (`settings/`、C# + WPF) をビルドして常駐部の隣へ置く。
+/// 設定画面 (`clients/settings/`、C# + WPF) をビルドして常駐部の隣へ置く。
 ///
 /// 常駐部は `waypoint-settings.exe` を **自分と同じディレクトリ** からしか
 /// 探さない (`tray/actions.rs::open_settings`)。cargo の出力先は
@@ -48,14 +48,15 @@ fn build_settings_app() {
 
     let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let project = manifest_dir
+        .join("clients")
         .join("settings")
         .join("Waypoint.Settings.csproj");
     if !project.exists() {
         return;
     }
-    println!("cargo:rerun-if-changed=settings");
+    println!("cargo:rerun-if-changed=clients/settings");
     // 設定画面が参照するお気に入り編集のライブラリ (FR-6.16)
-    println!("cargo:rerun-if-changed=bookmarks");
+    println!("cargo:rerun-if-changed=clients/bookmarks");
 
     // OUT_DIR は `<target>/<profile>/build/<pkg>-<hash>/out`。
     // 3 つ上がると exe が置かれるディレクトリになる。
@@ -106,7 +107,7 @@ fn build_settings_app() {
         ),
         Err(error) => println!(
             "cargo:warning=dotnet を実行できませんでした ({error})。\
-             設定画面は別途 `dotnet build settings\\Waypoint.Settings.csproj` が必要です"
+             設定画面は別途 `dotnet build clients\\settings\\Waypoint.Settings.csproj` が必要です"
         ),
     }
 }

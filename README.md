@@ -91,7 +91,7 @@ cargo run                                    # 起動
 cargo test                                   # テスト
 cargo clippy --all-targets -- -D warnings    # 静的検査
 cargo fmt --all                              # 整形
-dotnet test bookmarks\Waypoint.Bookmarks.Tests   # お気に入り編集のテスト
+dotnet test clients\bookmarks\Waypoint.Bookmarks.Tests   # お気に入り編集のテスト
 ```
 
 リビルド前に実行中の `waypoint` を終了すること（実行中の exe は出力をロックする）。

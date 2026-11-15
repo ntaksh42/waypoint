@@ -1,4 +1,4 @@
-// 実際の Edge に対する結合試験。使い捨てのプロファイルで Edge を起動した状態で実行する (bookmarks/smoke-test.ps1)。
+// 実際の Edge に対する結合試験。使い捨てのプロファイルで Edge を起動した状態で実行する (clients/bookmarks/smoke-test.ps1)。
 // お気に入りに「__smoke__」フォルダを作り、操作して、消す。普段のプロファイルでは実行しないこと。
 using Waypoint.Bookmarks.Core.Bookmarks;
 using Waypoint.Bookmarks.Core.Diagnostics;
