@@ -18,3 +18,11 @@ Chrome / Edge は、Windows アプリがローカル拡張を無確認でイン�
 拡張の ID は `fllmalpfkkdholloicheiplekihkkjeo` で固定している。表示が異なる場合は、拡張を一度削除して `extension` フォルダを再度読み込む。
 
 ブラウザまたは拡張が起動していない場合、`t ` は候補を返さない。
+
+## Edge のお気に入り編集
+
+同じ拡張に `bookmarks` 権限を持たせ、Quick Launch の `Edit Bookmarks` (`waypoint-settings.exe --bookmarks`) から Edge のお気に入りを編集できる (FR-6.16〜6.20)。拡張は Edge で動いているときだけ専用の Native Messaging host (`waypoint-bookmark-host.exe`) に接続し、host は編集画面の名前付きパイプへフレームを中継するだけ。Chrome は対象外。
+
+- お気に入りの読み書きは `chrome.bookmarks` で行う。`Bookmarks` ファイルは触らないため、Edge の同期で巻き戻らない
+- 以前に拡張を読み込んでいた場合は、更新後に `edge://extensions` で拡張を再読み込みする (権限が増えるため)
+- 実際の Edge での結合試験は `bookmarks\smoke-test.ps1` (Edge をすべて閉じてから実行する。使い捨てのプロファイルを使う)

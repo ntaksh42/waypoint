@@ -20,4 +20,10 @@
   <ItemGroup>
     <Resource Include="..\assets\waypoint.png" Link="Assets\waypoint.png" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Edge のお気に入り編集画面 (FR-6.16) のモデルと Edge 連携 -->
+    <ProjectReference Include="..\bookmarks\Waypoint.Bookmarks.Core\Waypoint.Bookmarks.Core.csproj" />
+    <ProjectReference Include="..\bookmarks\Waypoint.Bookmarks.Edge\Waypoint.Bookmarks.Edge.csproj" />
+    <InternalsVisibleTo Include="Waypoint.Bookmarks.Tests" />
+  </ItemGroup>
 </Project>

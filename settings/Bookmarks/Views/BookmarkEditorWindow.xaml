@@ -1,0 +1,132 @@
+<Window x:Class="Waypoint.Settings.Bookmarks.Views.BookmarkEditorWindow" x:ClassModifier="internal"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:Waypoint.Settings.Bookmarks.ViewModels"
+        Title="Edit Bookmarks - Waypoint" Icon="pack://application:,,,/Assets/waypoint.png"
+        Width="1250" Height="720" MinWidth="900" MinHeight="450">
+    <Window.InputBindings>
+        <KeyBinding Key="Z" Modifiers="Ctrl" Command="{Binding UndoCommand}" />
+    </Window.InputBindings>
+    <DockPanel>
+        <StatusBar DockPanel.Dock="Bottom">
+            <TextBlock Text="{Binding StatusText}" />
+        </StatusBar>
+
+        <ToolBarTray DockPanel.Dock="Top">
+            <ToolBar>
+                <TextBlock Text="{Binding ConnectionText}" Margin="4,0,12,0" VerticalAlignment="Center" FontWeight="Bold">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="Firebrick" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsConnected}" Value="True">
+                                    <Setter Property="Foreground" Value="SeaGreen" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <Button Content="Launch Edge" Command="{Binding LaunchEdgeCommand}"
+                        ToolTip="Start Edge with the Waypoint extension (close Edge first)" />
+                <Button Content="Refresh" Command="{Binding RefreshCommand}" />
+                <Separator />
+                <Button Content="{Binding UndoLabel}" Command="{Binding UndoCommand}" ToolTip="Ctrl+Z" />
+            </ToolBar>
+            <ToolBar>
+                <Button Content="New Folder" Command="{Binding NewFolderCommand}" />
+                <Button Content="Move..." Command="{Binding MoveRowsCommand}" ToolTip="Move the selected bookmarks to another folder" />
+                <Button Content="Replace..." Command="{Binding ReplaceCommand}" ToolTip="Applies to the selection, or to every shown bookmark" />
+                <Button Content="Delete" Command="{Binding DeleteRowsCommand}" ToolTip="Delete" />
+                <Separator />
+                <Button Content="&#x25B2; Up" Command="{Binding MoveUpCommand}" />
+                <Button Content="&#x25BC; Down" Command="{Binding MoveDownCommand}" />
+                <Button Content="Sort Folder" Command="{Binding SortFolderCommand}" ToolTip="Sort the selected folder by name, folders first" />
+                <Button Content="Remove Duplicates" Command="{Binding RemoveDuplicatesCommand}" />
+                <Separator />
+                <Button Content="Backups" Command="{Binding OpenBackupFolderCommand}" />
+            </ToolBar>
+        </ToolBarTray>
+
+        <DockPanel DockPanel.Dock="Top" Margin="6,4">
+            <TextBlock Text="Filter:" VerticalAlignment="Center" Margin="0,0,6,0" />
+            <Button DockPanel.Dock="Right" Content="Clear" Padding="8,0" Margin="6,0,0,0" Command="{Binding ClearFilterCommand}" />
+            <CheckBox DockPanel.Dock="Right" Content="Duplicates only" VerticalAlignment="Center" Margin="12,0,0,0"
+                      IsChecked="{Binding DuplicatesOnly}" />
+            <CheckBox DockPanel.Dock="Right" Content="Include subfolders" VerticalAlignment="Center" Margin="12,0,0,0"
+                      IsChecked="{Binding IncludeSubFolders}" />
+            <TextBox x:Name="SearchBox" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                     ToolTip="Words in the name, URL, or folder (space-separated, all must match). Ctrl+F" />
+        </DockPanel>
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="260" />
+                <ColumnDefinition Width="5" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <TreeView x:Name="FolderTree" Grid.Column="0" AllowDrop="True" ItemsSource="{Binding FolderRoots}"
+                      PreviewMouseLeftButtonDown="FolderTree_PreviewMouseLeftButtonDown"
+                      PreviewMouseMove="FolderTree_PreviewMouseMove"
+                      DragOver="FolderTree_DragOver" Drop="FolderTree_Drop">
+                <TreeView.Resources>
+                    <HierarchicalDataTemplate DataType="{x:Type vm:FolderViewModel}" ItemsSource="{Binding Children}">
+                        <TextBlock Text="{Binding DisplayText}" />
+                    </HierarchicalDataTemplate>
+                </TreeView.Resources>
+                <TreeView.ItemContainerStyle>
+                    <Style TargetType="TreeViewItem">
+                        <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                        <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
+                    </Style>
+                </TreeView.ItemContainerStyle>
+                <TreeView.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="New Folder" Command="{Binding PlacementTarget.DataContext.NewFolderCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                        <MenuItem Header="Rename" Command="{Binding PlacementTarget.DataContext.RenameFolderCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                        <MenuItem Header="Sort Folder" Command="{Binding PlacementTarget.DataContext.SortFolderCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                        <MenuItem Header="Delete Folder" Command="{Binding PlacementTarget.DataContext.DeleteFolderCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                    </ContextMenu>
+                </TreeView.ContextMenu>
+            </TreeView>
+
+            <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch" />
+
+            <!-- 選択状態を行の IsSelected に持たせるため、行の仮想化を止めている (全選択で未生成の行が漏れないように) -->
+            <DataGrid x:Name="RowList" Grid.Column="2" ItemsSource="{Binding Rows}" AutoGenerateColumns="False"
+                      SelectionMode="Extended" SelectionUnit="FullRow" CanUserAddRows="False" CanUserDeleteRows="False"
+                      HeadersVisibility="Column" GridLinesVisibility="Horizontal" RowHeaderWidth="0"
+                      AlternatingRowBackground="#F4F6F8" EnableRowVirtualization="False"
+                      IsReadOnly="{Binding IsReadOnly}"
+                      CellEditEnding="RowList_CellEditEnding"
+                      PreviewMouseLeftButtonDown="RowList_PreviewMouseLeftButtonDown"
+                      PreviewMouseLeftButtonUp="RowList_PreviewMouseLeftButtonUp"
+                      PreviewMouseMove="RowList_PreviewMouseMove">
+                <DataGrid.InputBindings>
+                    <KeyBinding Key="Delete" Command="{Binding DeleteRowsCommand}" />
+                </DataGrid.InputBindings>
+                <DataGrid.RowStyle>
+                    <Style TargetType="DataGridRow">
+                        <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
+                    </Style>
+                </DataGrid.RowStyle>
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Name" Binding="{Binding Title}" Width="2*" />
+                    <DataGridTextColumn Header="URL" Binding="{Binding Url}" Width="3*" />
+                    <DataGridTextColumn Header="Folder" Binding="{Binding FolderPath, Mode=OneWay}" Width="1.5*" IsReadOnly="True" />
+                    <DataGridTextColumn Header="Dup" Binding="{Binding DuplicateMark, Mode=OneWay}" Width="48" IsReadOnly="True" />
+                </DataGrid.Columns>
+                <DataGrid.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="Open" Command="{Binding PlacementTarget.DataContext.OpenUrlsCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                        <MenuItem Header="Move..." Command="{Binding PlacementTarget.DataContext.MoveRowsCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                        <MenuItem Header="Replace..." Command="{Binding PlacementTarget.DataContext.ReplaceCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                        <MenuItem Header="Move Up" Command="{Binding PlacementTarget.DataContext.MoveUpCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                        <MenuItem Header="Move Down" Command="{Binding PlacementTarget.DataContext.MoveDownCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                        <MenuItem Header="Delete" Command="{Binding PlacementTarget.DataContext.DeleteRowsCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                    </ContextMenu>
+                </DataGrid.ContextMenu>
+            </DataGrid>
+        </Grid>
+    </DockPanel>
+</Window>

@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- .editorconfig の規約 (アクセス修飾子の明記、private フィールドの _ 始まり) をビルドで検査する -->
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+  </PropertyGroup>
+</Project>

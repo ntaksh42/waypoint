@@ -115,6 +115,11 @@ cargo run                                    # 起動(トレイ常駐)
 # 設定画面だけを速く回したいときや、cargo を通さず確認したいときに使う
 dotnet build settings\Waypoint.Settings.csproj -c Release
 
+# Edge のお気に入り編集画面 (FR-6.16、設定画面の `--bookmarks` モード) のテスト。
+# Edge を使わない単体テスト。実際の Edge での結合試験は bookmarks\smoke-test.ps1
+# (Edge をすべて閉じてから。使い捨てのプロファイルで動かす)
+dotnet test bookmarks\Waypoint.Bookmarks.Tests -c Release
+
 # GUI サブシステムのため stdout に出せない。自己診断は結果をファイルに書く
 cargo run -- --selftest
 Get-Content "$env:TEMP\waypoint_selftest.txt"
@@ -150,7 +155,7 @@ minor/major を上げる場合は以下の手順を使う。
 
 - **x64 のみ。** ARM64 機でもエミュレーションで動く。ビルドとリリースを 1 本に保つ
 - 同梱物は `waypoint.exe` / `waypoint-settings.exe` / `waypoint-tab-host.exe` /
-  ブラウザ拡張 / `help\index.html`。スタートメニューに `waypoint` を置く
+  `waypoint-bookmark-host.exe` / ブラウザ拡張 / `help\index.html`。スタートメニューに `waypoint` を置く
 - **自動起動は初回インストール時だけ有効にする。** アプリ本体を
   `--enable-autostart-once` で一度だけ起動し、トレイの手動トグル (FR-8.4) と同じ
   関数でレジストリを書く。MSI がレジストリ値を Component として持たないので、
@@ -342,14 +347,33 @@ Recent/Frequent Folders・Open Windows (`w `) ・ブックマーク (`b `) ・�
 
 ## 主要モジュール
 
-コードベースは常駐部 (`main.rs`) を中心に 3 つの独立プロセスに分かれる。それぞれ別
+コードベースは常駐部 (`main.rs`) を中心に 4 つの独立プロセスに分かれる。それぞれ別
 バイナリで、必要になるまで起動しない (FR-9.10, 設定画面の項参照)。
 
 | バイナリ | エントリポイント | 役割 |
 |---|---|---|
 | `waypoint.exe` | `src/main.rs` | 常駐本体。トレイ・トリガー・メニュー表示・Quick Launch 検索・全 IPC の受け口 |
-| `waypoint-settings.exe` | `settings/Waypoint.Settings.csproj` | 設定エディター (FR-6)。C# + WPF (.NET 8)、保存後に `PostMessage` で常駐部へ通知 |
+| `waypoint-settings.exe` | `settings/Waypoint.Settings.csproj` | 設定エディター (FR-6)。C# + WPF (.NET 8)、保存後に `PostMessage` で常駐部へ通知。`--bookmarks` で Edge のお気に入り編集画面 (FR-6.16) を開く |
 | tab host | `src/tab_host_main.rs` | Chrome / Edge Native Messaging host。stdin/stdout を常駐部の `WM_COPYDATA` へ中継するだけ |
+| bookmark host | `src/bookmark_host_main.rs` | Edge のお気に入り編集用 Native Messaging host (FR-6.17)。stdin/stdout を編集画面の名前付きパイプ (`\\.\pipe\waypoint-bookmarks`) へ中継するだけ。読みと書きを同時に流すため overlapped I/O で開く |
+
+### お気に入り編集画面 (FR-6.16〜6.20) の構成
+
+設定画面と同じ exe の別モードにして、self-contained の .NET ランタイムを MSI に二重に入れない。
+モデルと Edge 連携は WPF に依存しないライブラリに分け、`bookmarks/` に置く。
+
+| 置き場所 | 内容 |
+|---|---|
+| `bookmarks/Waypoint.Bookmarks.Core` | お気に入りのモデル (`BookmarkNode` / `BookmarkTree`) と編集ロジック (`EditSession` が元に戻すための逆操作を記録、`BulkOperations` / `ReplaceSpec` / `DuplicateFinder`) |
+| `bookmarks/Waypoint.Bookmarks.Edge` | 拡張との通信 (`EdgeBridge`、パイプのサーバー)。Core の `IBookmarkConnection` を実装する |
+| `settings/Bookmarks` | 画面。`ViewModels` (WPF の型を使わない)、`Views`、`Services` (ログ・バックアップ・Edge 起動)。組み立ては `BookmarkEditorStartup` だけ |
+| `browser_tabs/extension/bookmarks.js` | `chrome.bookmarks` で読み書きする。Edge のときだけ host に接続する |
+| `bookmarks/Waypoint.Bookmarks.Tests` | Core・Edge・ViewModel の単体テスト。偽の Edge (`FakeBookmarkGateway` は `chrome.bookmarks.move` と同じ挿入位置の規則で動く) を使う |
+| `bookmarks/Waypoint.Bookmarks.SmokeTest` + `bookmarks/smoke-test.ps1` | 実際の Edge での結合試験 |
+
+- **`chrome.bookmarks.move` の `index` は「移動前の並びでの挿入位置」。** 同じフォルダ内で後ろへ動かすと 1 つ手前に入る。`EditSession` はこの規則で並びを模擬し、元に戻す位置も計算する
+- **結合試験は普段の Edge が起動していると、そちらの拡張につながって普段のお気に入りを書き換える。** スクリプトは Edge が起動中なら実行を拒否し、ツールもお気に入りが入ったプロファイルにつながったら中止する
+- `bookmarks/` の C# は `.editorconfig` の規約 (アクセス修飾子の明記、private フィールドは `_camelCase`) をビルドで検査する (`bookmarks/Directory.Build.props`)
 
 `src/lib.rs` が公開する主なモジュール (Win32 に触らない純ロジックはここに集約し、統合テストから叩けるようにしてある):
 
@@ -363,6 +387,7 @@ Recent/Frequent Folders・Open Windows (`w `) ・ブックマーク (`b `) ・�
 | `azure_devops/` | PR/Pipeline/Work Item の SQLite キャッシュ・同期・PAT (`api.rs` / `cache.rs` / `sync.rs` / `credential.rs`) |
 | `everything.rs` | Everything (voidtools) との `WM_COPYDATA` IPC (`f ` プレフィックス) |
 | `browser_history.rs` / `browser_tabs.rs` / `bookmarks.rs` / `favicons.rs` | Chrome/Edge の履歴・タブ・ブックマーク・favicon の読み取り |
+| `bookmark_editor.rs` | お気に入り編集 host の Edge への登録と、編集画面を開く引数 (FR-6.17, FR-9.28)。お気に入り自体は読まない |
 | `git.rs` | `.git/HEAD` を直接読んでブランチ名を取得 (`showBranch`)。`git` コマンドは起動しない |
 | `clipboard.rs` | Quick Launch の `Ctrl+C` (パスコピー) |
 | `folder_import.rs` | フォルダ構造の設定項目への一括取り込み |

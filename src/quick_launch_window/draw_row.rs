@@ -313,6 +313,7 @@ unsafe fn draw_entry_icon(
             | Action::AzureLivePipelineSearch { .. }
             | Action::AzureOptimize
             | Action::OpenSettings
+            | Action::OpenBookmarkEditor
             | Action::OpenHelp
             | Action::OpenTabSetupGuide
             | Action::KillProcess(_) => draw_command_icon(draw.hDC, draw.rcItem, dpi, name_font),

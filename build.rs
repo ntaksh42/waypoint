@@ -54,6 +54,8 @@ fn build_settings_app() {
         return;
     }
     println!("cargo:rerun-if-changed=settings");
+    // 設定画面が参照するお気に入り編集のライブラリ (FR-6.16)
+    println!("cargo:rerun-if-changed=bookmarks");
 
     // OUT_DIR は `<target>/<profile>/build/<pkg>-<hash>/out`。
     // 3 つ上がると exe が置かれるディレクトリになる。

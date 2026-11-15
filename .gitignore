@@ -2,6 +2,8 @@
 /target
 /settings/bin
 /settings/obj
+/bookmarks/*/bin
+/bookmarks/*/obj
 # インストーラの成果物 (MSI / wixpdb)
 /dist
 

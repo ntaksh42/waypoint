@@ -134,6 +134,7 @@ const DATA = [
     items: [
       { title: "Settings", prefix: "", keys: "", desc: "通常検索の固定候補として \"Settings\" が出る。選択すると waypoint-settings.exe (管理画面) を開く。" },
       { title: "Help", prefix: "", keys: "", desc: "通常検索の固定候補として \"Help\" が出る。選択するとこのページを開く。" },
+      { title: "Edit Bookmarks", prefix: "", keys: "", desc: "通常検索の固定候補として \"Edit Bookmarks\" が出る。選択すると Edge のお気に入り編集画面 (waypoint-settings.exe --bookmarks) を開く。" },
     ],
   },
   {
@@ -186,6 +187,18 @@ const DATA = [
       { title: "ユーザー変数の編集", prefix: "", keys: "", desc: "{NAME} で使うユーザー変数を専用タブで編集する。" },
       { title: "ホットキーの設定", prefix: "", keys: "", desc: "Quick Launch のホットキーを文字列入力または実際のキー入力から設定する。Esc で取り消せる。" },
       { title: "フォルダ構造の一括取り込み", prefix: "", keys: "", desc: "起点フォルダと探索深度 (0〜10) を指定してサブフォルダ構造を候補グループとして一括生成する。取り込みは確定時の一度だけで自動同期はしない。" },
+    ],
+  },
+  {
+    group: "Edge のお気に入り編集 (FR-6.16, waypoint-settings.exe --bookmarks)",
+    items: [
+      { title: "接続", prefix: "", keys: "", desc: "Waypoint Tab Bridge 拡張を読み込んだ Edge とつながる。書き込みは Edge の API で行うため、同期にも通常の編集として反映される。Chrome は対象外。" },
+      { title: "複数選択と一括操作", prefix: "", keys: "Ctrl+クリック / Shift+クリック / Ctrl+A", desc: "選んだお気に入りを Move... (ツリーへのドラッグも可)・Replace...・Delete・Up / Down でまとめて操作する。" },
+      { title: "Replace...", prefix: "", keys: "", desc: "名前・URL の文字列を置換する。正規表現と大文字小文字の区別を選べ、変わる内容をプレビューできる。" },
+      { title: "絞り込み", prefix: "", keys: "Ctrl+F", desc: "空白区切りの語を名前・URL・フォルダに部分一致させる (すべて一致)。Duplicates only と Include subfolders で範囲を変える。" },
+      { title: "Remove Duplicates / Sort Folder", prefix: "", keys: "", desc: "同じ URL の 2 件目以降を削除する。選択フォルダの直下をフォルダ → 名前順に並べる。" },
+      { title: "Undo", prefix: "", keys: "Ctrl+Z", desc: "直前の操作を 30 件まで戻す。削除したフォルダは中身ごと同じ位置へ作り直す。" },
+      { title: "バックアップ", prefix: "", keys: "", desc: "起動時と一括操作の前に、お気に入り全体を %LOCALAPPDATA%\\waypoint\\bookmark-backups へ JSON で保存する。" },
     ],
   },
   {

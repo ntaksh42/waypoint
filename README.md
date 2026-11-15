@@ -29,6 +29,8 @@ Quick Launch を中心にした Windows 向けランチャー。
 - 新規ウィンドウで開く / 開いているエクスプローラーのフォルダを変更する の切り替え
 - 環境変数とユーザー変数によるパス展開
 - 設定は単一の JSON。手編集もできる
+- Quick Launch の `Edit Bookmarks` で、Edge のお気に入りをまとめて編集できる（複数選択の移動・置換・重複削除・Undo）。
+  書き込みは拡張経由で Edge の API に任せるので、同期でも巻き戻らない
 
 ## 動作環境
 
@@ -89,6 +91,7 @@ cargo run                                    # 起動
 cargo test                                   # テスト
 cargo clippy --all-targets -- -D warnings    # 静的検査
 cargo fmt --all                              # 整形
+dotnet test bookmarks\Waypoint.Bookmarks.Tests   # お気に入り編集のテスト
 ```
 
 リビルド前に実行中の `waypoint` を終了すること（実行中の exe は出力をロックする）。

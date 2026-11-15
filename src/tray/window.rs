@@ -119,6 +119,9 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                     quick_launch::Action::OpenSettings => {
                         open_settings(None);
                     }
+                    quick_launch::Action::OpenBookmarkEditor => {
+                        open_settings(Some(crate::bookmark_editor::SETTINGS_ARGUMENT));
+                    }
                     quick_launch::Action::OpenHelp => {
                         let _ = crate::help::open();
                     }

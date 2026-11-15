@@ -34,7 +34,8 @@ pub const HOST_WINDOW_CLASS: PCWSTR = w!("WaypointTabHostWindow");
 pub const MAX_SNAPSHOT_BYTES: usize = 1_000_000;
 
 const NATIVE_HOST_NAME: &str = "com.ntaksh42.waypoint.tabs";
-const EXTENSION_ID: &str = "fllmalpfkkdholloicheiplekihkkjeo";
+/// 同梱の拡張 (Waypoint Tab Bridge) の ID。お気に入り編集の host も同じ拡張から接続される。
+pub(crate) const EXTENSION_ID: &str = "fllmalpfkkdholloicheiplekihkkjeo";
 const CHROME_NATIVE_HOST_KEY: PCWSTR =
     w!(r"Software\Google\Chrome\NativeMessagingHosts\com.ntaksh42.waypoint.tabs");
 const EDGE_NATIVE_HOST_KEY: PCWSTR =
@@ -153,13 +154,15 @@ pub fn open_setup_guide() -> std::io::Result<()> {
 }
 
 fn native_host_manifest_path() -> std::io::Result<PathBuf> {
+    Ok(native_host_manifest_dir()?.join(format!("{NATIVE_HOST_NAME}.json")))
+}
+
+/// Native Messaging host の manifest を置くディレクトリ (`%LOCALAPPDATA%\waypoint\browser-tabs`)。
+pub(crate) fn native_host_manifest_dir() -> std::io::Result<PathBuf> {
     let local_app_data = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "LOCALAPPDATA"))?;
-    Ok(local_app_data
-        .join("waypoint")
-        .join("browser-tabs")
-        .join(format!("{NATIVE_HOST_NAME}.json")))
+    Ok(local_app_data.join("waypoint").join("browser-tabs"))
 }
 
 fn setup_guide_path(waypoint_exe: &Path) -> PathBuf {
@@ -181,7 +184,10 @@ fn native_host_manifest(host_exe: &Path) -> Vec<u8> {
     .expect("native host manifest is serializable")
 }
 
-fn set_native_host_registry(key_path: PCWSTR, manifest_path: &Path) -> std::io::Result<()> {
+pub(crate) fn set_native_host_registry(
+    key_path: PCWSTR,
+    manifest_path: &Path,
+) -> std::io::Result<()> {
     let mut key = HKEY::default();
     unsafe {
         RegCreateKeyExW(
