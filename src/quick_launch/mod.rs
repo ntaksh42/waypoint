@@ -193,6 +193,15 @@ pub(crate) fn builtin_command_entries() -> (&'static [Entry], &'static [search::
                 action: Action::OpenHelp,
                 branch: None,
             },
+            // FR-9.28: Edge のお気に入り編集画面 (設定画面の別モード)
+            Entry {
+                azure: None,
+                name: "Edit Bookmarks".to_string(),
+                breadcrumb: "Edit Edge bookmarks".to_string(),
+                path: String::new(),
+                action: Action::OpenBookmarkEditor,
+                branch: None,
+            },
         ]
     });
     static LOWER: std::sync::LazyLock<Vec<search::LowerKeys>> =
@@ -283,6 +292,8 @@ pub enum Action {
     AzureOptimize,
     /// waypoint 自身の設定画面 (`waypoint-settings.exe`) を開く (FR-9.20)。
     OpenSettings,
+    /// Edge のお気に入り編集画面 (`waypoint-settings.exe --bookmarks`) を開く (FR-9.28)。
+    OpenBookmarkEditor,
     /// waypoint の機能一覧ページ (`help\index.html`) を開く (FR-9.22)。
     OpenHelp,
     /// タブ拡張の導入案内 (`browser-tabs\setup.html`) を開く (FR-9.17.1)。
@@ -351,6 +362,7 @@ impl Entry {
             | Action::AzureLivePipelineSearch { .. }
             | Action::AzureOptimize
             | Action::OpenSettings
+            | Action::OpenBookmarkEditor
             | Action::OpenHelp
             | Action::OpenTabSetupGuide
             // 検索語は毎回異なりうるので永続化しない (FR-9.21)

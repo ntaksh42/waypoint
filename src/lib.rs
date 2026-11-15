@@ -8,6 +8,7 @@ pub mod agent_sessions;
 pub mod apps;
 pub mod autostart;
 pub mod azure_devops;
+pub mod bookmark_editor;
 pub mod bookmarks;
 pub mod browser_history;
 pub mod browser_tabs;

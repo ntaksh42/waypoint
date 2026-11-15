@@ -81,6 +81,11 @@
             <File Id="WaypointTabHostExe" Source="waypoint-tab-host.exe" KeyPath="yes" />
           </Component>
 
+          <!-- Edge のお気に入り編集画面 (FR-6.17) と拡張の中継。登録は waypoint の起動時に行う。 -->
+          <Component Id="BookmarkHost" Guid="*">
+            <File Id="WaypointBookmarkHostExe" Source="waypoint-bookmark-host.exe" KeyPath="yes" />
+          </Component>
+
           <Directory Id="BrowserTabsFolder" Name="browser-tabs">
             <Directory Id="BrowserTabsExtensionFolder" Name="extension">
               <Component Id="TabBridgeManifestComponent" Guid="*">
@@ -88,6 +93,9 @@
               </Component>
               <Component Id="TabBridgeBackgroundComponent" Guid="*">
                 <File Id="TabBridgeBackground" Source="browser_tabs\extension\background.js" />
+              </Component>
+              <Component Id="TabBridgeBookmarksComponent" Guid="*">
+                <File Id="TabBridgeBookmarks" Source="browser_tabs\extension\bookmarks.js" />
               </Component>
             </Directory>
             <Component Id="TabBridgeSetupGuide" Guid="*">
@@ -161,8 +169,10 @@
       <ComponentRef Id="MainExe" />
       <ComponentRef Id="SettingsExe" />
       <ComponentRef Id="TabHost" />
+      <ComponentRef Id="BookmarkHost" />
       <ComponentRef Id="TabBridgeManifestComponent" />
       <ComponentRef Id="TabBridgeBackgroundComponent" />
+      <ComponentRef Id="TabBridgeBookmarksComponent" />
       <ComponentRef Id="TabBridgeSetupGuide" />
       <ComponentRef Id="HelpPage" />
       <ComponentRef Id="StartMenuShortcut" />

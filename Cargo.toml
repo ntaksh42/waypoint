@@ -18,6 +18,10 @@ path = "src/main.rs"
 name = "waypoint-tab-host"
 path = "src/tab_host_main.rs"
 
+[[bin]]
+name = "waypoint-bookmark-host"
+path = "src/bookmark_host_main.rs"
+
 [dependencies]
 # Win32 API バインディング。必要な feature のみ有効にする
 windows = { version = "0.62", features = [
@@ -41,6 +45,7 @@ windows = { version = "0.62", features = [
   "Win32_UI_Controls",               # IImageList (アイコン取得)
   "Win32_Storage_FileSystem",        # SHGetFileInfoW の引数型
   "Win32_System_DataExchange",       # WM_COPYDATA (Everything IPC)
+  "Win32_System_IO",                 # お気に入り編集 host の overlapped パイプ I/O
   "Win32_System_Memory",             # GlobalAlloc (クリップボードへのコピー)
   "Win32_System_SystemInformation",  # GetLocalTime (Quick Launch の時刻表示)
 ] }

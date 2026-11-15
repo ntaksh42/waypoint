@@ -31,6 +31,10 @@
   <p><code>Alt+Space</code> を押して <code>t </code> と入力します。タブ名または URL で検索し、Enter で対象タブを前面化します。</p>
   <p class="note">Native Messaging host の登録は Waypoint 起動時に自動で行われます。PowerShell は不要です。</p>
 
+  <h2>4. Edge のお気に入りを編集する (Edge のみ)</h2>
+  <p>同じ拡張で、Quick Launch の <code>Edit Bookmarks</code> から Edge のお気に入りをまとめて編集できます。書き込みは Edge の API で行うため、同期にも通常の編集として反映されます。</p>
+  <p class="note">以前に拡張を読み込んでいた場合は、Waypoint を更新した後に <code>edge://extensions</code> で拡張の「再読み込み」を押してください。お気に入りの権限が加わります。</p>
+
   <script>
     const current = decodeURIComponent(location.pathname).replace(/^\/([A-Za-z]:)/, "$1");
     const directory = current.replace(/[/\\]setup\.html$/, "").replaceAll("/", "\\");

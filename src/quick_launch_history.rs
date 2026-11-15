@@ -96,6 +96,7 @@ fn key_kind(action: &Action) -> Option<&'static str> {
         | Action::AzureLivePipelineSearch { .. }
         | Action::AzureOptimize
         | Action::OpenSettings
+        | Action::OpenBookmarkEditor
         | Action::OpenHelp
         | Action::OpenTabSetupGuide
         // 検索語は毎回異なりうるので記録しない (FR-9.21)

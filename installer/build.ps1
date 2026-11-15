@@ -58,7 +58,7 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { throw "Settings の .NET publish に失敗しました" }
 }
 
-foreach ($exe in @('waypoint.exe', 'waypoint-settings.exe', 'waypoint-tab-host.exe')) {
+foreach ($exe in @('waypoint.exe', 'waypoint-settings.exe', 'waypoint-tab-host.exe', 'waypoint-bookmark-host.exe')) {
     $p = Join-Path $relDir $exe
     if (-not (Test-Path $p)) { throw "$exe が見つかりません: $p" }
 }

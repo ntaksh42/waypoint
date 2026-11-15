@@ -1,6 +1,9 @@
 // `tabs` API はタイトル・URLを読み、指定タブを前面化するためだけに使う。
 // 取得した一覧は Native Messaging host 経由でローカルの waypoint だけへ送る。
 
+// Edge のお気に入り編集 (FR-6.17) は別ファイル。タブ連携とは独立した host に接続する。
+importScripts("bookmarks.js");
+
 const HOST_NAME = "com.ntaksh42.waypoint.tabs";
 const browser = navigator.userAgent.includes("Edg/") ? "edge" : "chrome";
 let port;

@@ -156,6 +156,26 @@ fn settings_command_does_not_leak_into_prefix_modes() {
 }
 
 #[test]
+fn bookmark_editor_command_is_searchable_without_prefix() {
+    // FR-9.28: お気に入り編集画面への導線は通常入力で出し、プレフィックスモードには出さない。
+    let index = index();
+    let found = index.search("edit bookmarks");
+    let editor = found
+        .iter()
+        .find(|item| item.action == Action::OpenBookmarkEditor)
+        .expect("Edit Bookmarks candidate missing");
+    assert_eq!(editor.name, "Edit Bookmarks");
+    assert_eq!(editor.breadcrumb, "Edit Edge bookmarks");
+    assert!(
+        !index
+            .search("b bookmarks")
+            .iter()
+            .any(|item| item.action == Action::OpenBookmarkEditor),
+        "b prefix should not return the Edit Bookmarks command"
+    );
+}
+
+#[test]
 fn help_command_is_searchable_without_prefix() {
     // FR-9.22: Help ページへの導線は通常入力で出す。
     let index = index();

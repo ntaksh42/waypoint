@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Waypoint.Bookmarks.Edge</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Waypoint.Bookmarks.Core\Waypoint.Bookmarks.Core.csproj" />
+    <InternalsVisibleTo Include="Waypoint.Bookmarks.Tests" />
+  </ItemGroup>
+</Project>

@@ -31,6 +31,10 @@ jobs:
       - name: Build Settings
         run: dotnet build settings\Waypoint.Settings.csproj -c Release
 
+      # お気に入り編集画面 (FR-6.16) のモデル・Edge 連携・ViewModel のテスト。Edge は使わない
+      - name: Test Bookmark Editor
+        run: dotnet test bookmarks\Waypoint.Bookmarks.Tests -c Release
+
       # build.rs が設定画面を巻き込んでビルドする (exe の隣に置くため)。
       # ここでは 1 つ上で単体ビルド済みなので、二重に走らせない。
       - name: Clippy (warnings as errors)

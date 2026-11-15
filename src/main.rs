@@ -59,7 +59,10 @@ fn main() {
     // Native Messaging host はブラウザが起動する。ここでは Chrome / Edge が
     // host を見つけられるよう登録だけを済ませ、手作業を発生させない。
     let native_host_started = startup_timing::enabled().then(std::time::Instant::now);
-    let native_host_result = waypoint::browser_tabs::register_native_host();
+    // お気に入り編集の host (FR-6.17) は Edge だけ。exe が無い開発環境では失敗するが、
+    // タブ検索の登録とは独立なので結果は区別しない
+    let native_host_result = waypoint::browser_tabs::register_native_host()
+        .and(waypoint::bookmark_editor::register_native_host().or(Ok(())));
     if let Some(started) = native_host_started {
         startup_timing::mark_elapsed(
             if native_host_result.is_ok() {

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Waypoint.Bookmarks.Tests</RootNamespace>
+    <!-- 設定画面 (self-contained の WinExe) の ViewModel を試すため。テスト自体は framework-dependent で動かす -->
+    <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Waypoint.Bookmarks.Core\Waypoint.Bookmarks.Core.csproj" />
+    <ProjectReference Include="..\Waypoint.Bookmarks.Edge\Waypoint.Bookmarks.Edge.csproj" />
+    <ProjectReference Include="..\..\settings\Waypoint.Settings.csproj" />
+  </ItemGroup>
+</Project>
