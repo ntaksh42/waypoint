@@ -18,6 +18,13 @@ pub(in crate::quick_launch_window) fn live_pull_request_search_entry(
     let term = crate::quick_launch::split_repository_query(query).1;
     // 番号指定は一覧の検索ではなく PR 単体の API を直接叩く
     // (`search_pull_requests_live_async`)。何が起きるかを文言で区別する
+    // 状態を省くと Live は active だけを引く (`for_live`)。キャッシュ側の既定 (all) と
+    // 違うので文言に出す
+    let live_breadcrumb = if filter.status_explicit {
+        "Not in cache — press Enter to search live (widens to 1 year)"
+    } else {
+        "Not in cache — press Enter to search active PRs live (widens to 1 year; add all for closed)"
+    };
     let (label, breadcrumb) = if crate::azure_devops::is_item_id_query(term) {
         (
             format!("Look up PR {} on Azure DevOps", term.trim()),
@@ -26,12 +33,12 @@ pub(in crate::quick_launch_window) fn live_pull_request_search_entry(
     } else if term.is_empty() {
         (
             "Search Azure DevOps for older pull requests".to_string(),
-            "Not in cache — press Enter to search live (widens to 1 year)",
+            live_breadcrumb,
         )
     } else {
         (
             format!("Search Azure DevOps for pull requests matching \"{term}\""),
-            "Not in cache — press Enter to search live (widens to 1 year)",
+            live_breadcrumb,
         )
     };
     Entry {

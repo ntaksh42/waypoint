@@ -18,11 +18,12 @@
 | `az pipeline` | `pipelines` `pipe` `build` `builds` | Pipeline |
 | `az project` | `projects` | プロジェクト |
 | `az new` | | 作成ページを開く (9.18.8) |
-| `az optimize` | `suggest` `rank` | 最近の活動からプロジェクトの優先度を決め直す (9.18.2.1) |
+| `az optimize` | | 最近の活動から、全プロジェクトの優先度と Work Item の Iteration Path を設定し直す (9.18.2.1) |
 
 - Enter で選んだ項目の Web ページを開く
 - `Ctrl+Enter` で Live 検索する。`az <語>` では PR → Work Item → Pipeline の順に並べる
 - 4 文字以上の英数字の語は 1 文字のタイプミスも一致とみなす
+- `az "<語>"` のように `"` で始めると、コマンド名と同じ語 (`build` や `new` など) も `az <語>` と同じ横断検索の検索語になる。前後の `"` は検索語に含めない
 
 ### 属性
 
@@ -30,10 +31,12 @@
 
 | コマンド | 属性 |
 |---|---|
-| `az pr` | 状態: `active` / `completed` / `abandoned` / `all` (省略時 all、Live では active) |
+| `az pr` | 状態: `active` / `completed` / `abandoned` / `all` (省略時 all、Live では active。省略して Live 検索したときは、結果の先頭に active だけを検索したことと `all` で広げられることを表示する) |
 | | 関係: `mine` (作成者かレビュアー)・`author`・`reviewer` |
 | | その他: `needs-review`・`waiting`・`draft`・`ready`・`stale`・`repo:<org>/<project>/<repo>` |
 | `az pipeline` | `failed`・`definition`・`all` |
+
+`repo:` も属性の 1 つで、ほかの属性の前後どちらに置いてもよい (`az pr repo:o/p/r mine foo` と `az pr mine repo:o/p/r foo` は同じ)。
 
 ### 番号指定
 
@@ -107,7 +110,7 @@ PR の候補では `Ctrl+C` で URL、`Ctrl+Shift+C` でソースブランチ名
 
 ### 9.18.2.1 `az optimize`
 
-選ぶと、自分の直近 90 日の Work Item を集計し、次を自動で設定する。
+候補行の説明に、全プロジェクトの優先度と Iteration Path を上書きすることを書く。選ぶと、自分の直近 90 日の Work Item を集計し、次を自動で設定する。
 
 - 各プロジェクトで最も多い Iteration Path を、Work Item の取得範囲にする
 - 活動の多い順にプロジェクトの優先度を振り直す

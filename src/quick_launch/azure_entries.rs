@@ -122,7 +122,7 @@ pub(crate) fn azure_suggest_entry() -> Entry {
     Entry {
         azure: None,
         name: "az optimize".to_string(),
-        breadcrumb: "Save project priorities and replace iteration filters from recent activity"
+        breadcrumb: "Overwrite every project's priority and iteration path from the last 90 days of activity"
             .to_string(),
         path: String::new(),
         action: Action::AzureOptimize,
