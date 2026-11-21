@@ -174,7 +174,7 @@ impl CombinedLiveSearch {
     }
 }
 
-/// `az suggest` に入った。検索対象を持たないコマンドなので、確定候補を
+/// `az optimize` に入った。検索対象を持たないコマンドなので、確定候補を
 /// 1 件だけ表示する (Enter または選択で `AzureOptimize` が走る)。
 pub(super) fn show_azure_suggest_entry(state: &RefCell<State>) {
     let (list, labels, rows) = {

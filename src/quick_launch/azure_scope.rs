@@ -12,16 +12,27 @@ pub(crate) fn repository_token(project: &AzureDevOpsProject, repository: &str) -
     )
 }
 
+/// `repo:<org>/<project>/<repo>` の形のトークンなら範囲 (`repo:` の後ろ) を返す。
+pub(super) fn repository_scope(token: &str) -> Option<&str> {
+    let scope = token.strip_prefix("repo:")?;
+    let parts: Vec<_> = scope.split('/').collect();
+    (parts.len() == 3 && parts.iter().all(|part| !part.is_empty())).then_some(scope)
+}
+
+/// 先頭の `repo:` トークンを範囲として取り出し、残りを検索語として返す。
+/// `repo:` の後ろに続く `az pr` の属性 (`mine` 等) は解析時に反映済みなので
+/// 検索語に含めない (`parse_pull_request_command` 参照)。
 pub(crate) fn split_repository_query(text: &str) -> (Option<&str>, &str) {
     let text = text.trim_start();
     let (token, rest) = text.split_once(char::is_whitespace).unwrap_or((text, ""));
-    if let Some(scope) = token.strip_prefix("repo:") {
-        let parts: Vec<_> = scope.split('/').collect();
-        if parts.len() == 3 && parts.iter().all(|part| !part.is_empty()) {
-            return (Some(scope), rest.trim_start());
-        }
-    }
-    (None, text)
+    let Some(scope) = repository_scope(token) else {
+        return (None, text);
+    };
+    let mut ignored = super::PullRequestFilter::default();
+    let rest = super::azure::strip_attribute_tokens(rest.trim_start(), |token| {
+        super::azure::apply_pull_request_attribute(&mut ignored, token)
+    });
+    (Some(scope), rest)
 }
 
 pub(crate) fn repository_matches_project(scope: &str, project: &AzureDevOpsProject) -> bool {

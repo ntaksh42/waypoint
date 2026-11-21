@@ -210,8 +210,15 @@ pub fn search_pull_requests_live_async(
         let range = if item_id.is_some() {
             "Live PR: by number (status ignored).".to_string()
         } else {
+            // 状態を省いた Live 検索は active だけを引く (`for_live`)。キャッシュ側の
+            // 既定 (all) と違うので、広げ方を併記して完了済みが消えた理由を示す
+            let widen = if filter.status_explicit {
+                ""
+            } else {
+                " Add `all` to include completed and abandoned."
+            };
             format!(
-                "Live PR: {}, titles only; history up to 1 year / 2,000 per state.",
+                "Live PR: {}, titles only; history up to 1 year / 2,000 per state.{widen}",
                 statuses.join("/")
             )
         };

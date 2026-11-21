@@ -32,7 +32,7 @@ pub enum AzureCommand {
     WorkItems {
         live: bool,
     },
-    /// `az optimize`（`suggest` / `rank` でも入れる）— 直近の活動から
+    /// `az optimize` — 直近の活動から
     /// Project の優先度と Iteration を自動保存する。
     /// 検索対象を持たず確定候補を 1 件だけ返す。
     Suggest,
@@ -103,6 +103,14 @@ pub enum AzureLiveRequest {
 /// 未知のトークンに当たった時点でそこから先を検索語とみなす。
 pub fn azure_command(query: &str) -> Option<(AzureCommand, &str)> {
     let rest = query.strip_prefix(AZURE_DEVOPS_PREFIX)?;
+    // `az "build fix"`: `"` で始めたらサブコマンド判定をせず横断検索の検索語にする。
+    // コマンド名と同じ語 (build / new / project 等) を検索する逃げ道
+    if let Some(quoted) = rest.strip_prefix('"') {
+        return Some((
+            AzureCommand::All,
+            quoted.strip_suffix('"').unwrap_or(quoted),
+        ));
+    }
     let (first, remaining) = rest
         .split_once(char::is_whitespace)
         .map_or((rest, ""), |(first, remaining)| {
@@ -116,7 +124,7 @@ pub fn azure_command(query: &str) -> Option<(AzureCommand, &str)> {
         "new" => Some((AzureCommand::New, remaining)),
         "project" | "projects" => Some((AzureCommand::Projects, remaining)),
         "wit" | "wi" | "workitem" | "workitems" => Some(parse_work_item_command(remaining)),
-        "optimize" | "suggest" | "rank" => Some((AzureCommand::Suggest, remaining)),
+        "optimize" => Some((AzureCommand::Suggest, remaining)),
         _ => Some((AzureCommand::All, rest)),
     }
 }
@@ -124,7 +132,7 @@ pub fn azure_command(query: &str) -> Option<(AzureCommand, &str)> {
 /// 空白区切りの先頭トークンを、既知の属性トークンである間だけ剥がしていく。
 /// `apply` が `true` を返したトークンだけ消費し、未知のトークンに当たったら
 /// そこで止めて残り (検索語) を返す。
-fn strip_attribute_tokens(text: &str, mut apply: impl FnMut(&str) -> bool) -> &str {
+pub(super) fn strip_attribute_tokens(text: &str, mut apply: impl FnMut(&str) -> bool) -> &str {
     let mut rest = text;
     loop {
         let (token, remaining) = rest
@@ -140,66 +148,67 @@ fn strip_attribute_tokens(text: &str, mut apply: impl FnMut(&str) -> bool) -> &s
     rest
 }
 
-/// `pr` に続く属性トークン (`active` / `completed` / `abandoned` / `mine` /
-/// `live`) を剥がしていき、未知のトークンからを検索語として返す。
+/// `az pr` の属性トークン 1 個を `filter` へ反映する。属性でなければ `false`。
+/// `token` は小文字化済み。`repo:` の後ろの属性を読み飛ばす
+/// (`split_repository_query`) ときにも同じ判定を使う。
+pub(super) fn apply_pull_request_attribute(filter: &mut PullRequestFilter, token: &str) -> bool {
+    use crate::azure_devops::PullRequestStatus;
+    let status = match token {
+        "active" => Some(PullRequestStatus::Active),
+        "completed" | "complete" => Some(PullRequestStatus::Completed),
+        "abandoned" | "abandon" => Some(PullRequestStatus::Abandoned),
+        "all" => Some(PullRequestStatus::All),
+        _ => None,
+    };
+    if let Some(status) = status {
+        filter.status = status;
+        filter.status_explicit = true;
+        return true;
+    }
+    match token {
+        "mine" | "me" => filter.mine = true,
+        "author" | "authored" => filter.author = true,
+        "reviewer" | "review" => filter.reviewer = true,
+        "needs-review" | "needsreview" => filter.needs_review = true,
+        "waiting" | "waiting-for-others" => filter.waiting = true,
+        "draft" | "drafts" => filter.draft = true,
+        "ready" | "ready-to-complete" => filter.ready = true,
+        "stale" => filter.stale = true,
+        "live" => filter.live = true,
+        _ => return false,
+    }
+    true
+}
+
+/// `pr` に続く属性トークンを剥がしていき、未知のトークンからを検索語として返す。
+///
+/// `repo:<org>/<project>/<repo>` も属性と同じく順不同で置ける。ただし範囲は
+/// 返す文字列の先頭に残す必要がある (呼び出し側が `split_repository_query` で
+/// 取り出す) ので、`repo:` があれば戻り値はそこから始め、その後ろに並ぶ属性は
+/// `split_repository_query` が読み飛ばす。
 fn parse_pull_request_command(text: &str) -> (AzureCommand, &str) {
-    let mut status = crate::azure_devops::PullRequestStatus::All;
-    let mut status_explicit = false;
-    let mut mine = false;
-    let mut author = false;
-    let mut reviewer = false;
-    let mut needs_review = false;
-    let mut waiting = false;
-    let mut draft = false;
-    let mut ready = false;
-    let mut stale = false;
-    let mut live = false;
-    let rest = strip_attribute_tokens(text, |token| {
-        match token {
-            "active" => {
-                status = crate::azure_devops::PullRequestStatus::Active;
-                status_explicit = true;
-            }
-            "completed" | "complete" => {
-                status = crate::azure_devops::PullRequestStatus::Completed;
-                status_explicit = true;
-            }
-            "abandoned" | "abandon" => {
-                status = crate::azure_devops::PullRequestStatus::Abandoned;
-                status_explicit = true;
-            }
-            "all" => {
-                status = crate::azure_devops::PullRequestStatus::All;
-                status_explicit = true;
-            }
-            "mine" | "me" => mine = true,
-            "author" | "authored" => author = true,
-            "reviewer" | "review" => reviewer = true,
-            "needs-review" | "needsreview" => needs_review = true,
-            "waiting" | "waiting-for-others" => waiting = true,
-            "draft" | "drafts" => draft = true,
-            "ready" | "ready-to-complete" => ready = true,
-            "stale" => stale = true,
-            "live" => live = true,
-            _ => return false,
+    let mut filter = PullRequestFilter::default();
+    let mut rest = text;
+    let mut repository: Option<&str> = None;
+    loop {
+        let (token, remaining) = rest
+            .split_once(char::is_whitespace)
+            .map_or((rest, ""), |(token, remaining)| {
+                (token, remaining.trim_start())
+            });
+        if token.is_empty() {
+            break;
         }
-        true
-    });
+        if repository.is_none() && super::azure_scope::repository_scope(token).is_some() {
+            repository = Some(rest);
+        } else if !apply_pull_request_attribute(&mut filter, &token.to_ascii_lowercase()) {
+            break;
+        }
+        rest = remaining;
+    }
     (
-        AzureCommand::PullRequests(PullRequestFilter {
-            status,
-            status_explicit,
-            mine,
-            author,
-            reviewer,
-            needs_review,
-            waiting,
-            draft,
-            ready,
-            stale,
-            live,
-        }),
-        rest,
+        AzureCommand::PullRequests(filter),
+        repository.unwrap_or(rest),
     )
 }
 
@@ -255,7 +264,7 @@ pub fn azure_live_request(query: &str) -> Option<AzureLiveRequest> {
 /// Azure 横断検索を維持する。
 pub(crate) fn incomplete_azure_command(query: &str) -> Option<&str> {
     let text = query.strip_prefix(AZURE_DEVOPS_PREFIX)?;
-    if text.is_empty() || text.contains(char::is_whitespace) {
+    if text.is_empty() || text.starts_with('"') || text.contains(char::is_whitespace) {
         return None;
     }
     let (command, _) = azure_command(query)?;
@@ -359,21 +368,78 @@ mod tests {
     }
 
     #[test]
-    fn optimize_subcommand_and_its_aliases_have_no_search_term() {
+    fn optimize_subcommand_has_no_search_term_and_no_aliases() {
         assert_eq!(
             azure_command("az optimize"),
             Some((AzureCommand::Suggest, ""))
         );
+        // 別名 `suggest` / `rank` は一般語なので廃止した。横断検索の検索語になる
         assert_eq!(
             azure_command("az suggest"),
-            Some((AzureCommand::Suggest, ""))
+            Some((AzureCommand::All, "suggest"))
         );
-        assert_eq!(azure_command("az rank"), Some((AzureCommand::Suggest, "")));
+        assert_eq!(azure_command("az rank"), Some((AzureCommand::All, "rank")));
         // 属性トークンや検索語を持たないコマンドなので、余分な文字列が
         // 付いても後続はそのまま無視されずに残る (呼び出し側が捨てる)。
         assert_eq!(
             azure_command("az optimize ignored"),
             Some((AzureCommand::Suggest, "ignored"))
         );
+    }
+    #[test]
+    fn repository_scope_can_be_placed_before_or_after_attributes() {
+        for query in [
+            "az pr repo:o/p/r mine active foo bar",
+            "az pr mine repo:o/p/r active foo bar",
+            "az pr mine active repo:o/p/r foo bar",
+        ] {
+            let Some((AzureCommand::PullRequests(filter), rest)) = azure_command(query) else {
+                panic!("expected pull request command: {query}");
+            };
+            assert!(filter.mine, "{query}");
+            assert_eq!(
+                filter.status,
+                crate::azure_devops::PullRequestStatus::Active,
+                "{query}"
+            );
+            assert_eq!(
+                crate::quick_launch::split_repository_query(rest),
+                (Some("o/p/r"), "foo bar"),
+                "{query}"
+            );
+        }
+    }
+
+    #[test]
+    fn second_repository_token_and_words_after_the_term_stay_in_the_term() {
+        let Some((AzureCommand::PullRequests(filter), rest)) =
+            azure_command("az pr repo:o/p/r fix mine")
+        else {
+            panic!("expected pull request command");
+        };
+        assert!(!filter.mine);
+        assert_eq!(
+            crate::quick_launch::split_repository_query(rest),
+            (Some("o/p/r"), "fix mine")
+        );
+    }
+
+    #[test]
+    fn leading_quote_searches_command_names_as_plain_words() {
+        assert_eq!(
+            azure_command("az \"build fix\""),
+            Some((AzureCommand::All, "build fix"))
+        );
+        assert_eq!(
+            azure_command("az \"new feature"),
+            Some((AzureCommand::All, "new feature"))
+        );
+        assert_eq!(
+            azure_live_request("az \"build\""),
+            Some(AzureLiveRequest::AllKinds {
+                query: "build".to_string(),
+            })
+        );
+        assert_eq!(incomplete_azure_command("az \"pip"), None);
     }
 }
