@@ -48,6 +48,7 @@ pub(super) fn action_tag(action: &Action, badge: Option<&str>, path: &str) -> &'
         Action::OpenUrl(_) => "Link",
         Action::OpenWithDefaultHandler => "File",
         Action::LaunchApp => "App",
+        Action::OpenWindowsSetting => "Setting",
         Action::OpenInTerminal => "Terminal",
         Action::OpenInEditor(_) => "Editor",
         Action::OpenEditorWorkspace(_, uri, _) if uri.starts_with("vscode-remote://") => "Remote",
@@ -102,7 +103,8 @@ pub(super) fn action_verb(action: &Action) -> &'static str {
         | Action::OpenSettings
         | Action::OpenBookmarkEditor
         | Action::OpenHelp
-        | Action::OpenTabSetupGuide => "Open \u{21B5}",
+        | Action::OpenTabSetupGuide
+        | Action::OpenWindowsSetting => "Open \u{21B5}",
     }
 }
 

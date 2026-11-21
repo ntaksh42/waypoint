@@ -125,6 +125,9 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                     quick_launch::Action::OpenHelp => {
                         let _ = crate::help::open();
                     }
+                    quick_launch::Action::OpenWindowsSetting => {
+                        let _ = shell::open_windows_setting(&entry.path);
+                    }
                     quick_launch::Action::OpenTabSetupGuide => {
                         let _ = crate::browser_tabs::open_setup_guide();
                     }

@@ -13,6 +13,7 @@ mod azure_meta;
 mod azure_new;
 mod azure_scope;
 mod azure_search;
+mod builtin;
 mod index;
 mod index_azure;
 mod path_entry;
@@ -22,6 +23,7 @@ mod search;
 mod snapshot;
 #[cfg(test)]
 mod tests;
+mod windows_settings;
 
 pub use azure::{
     AzureCommand, AzureLiveRequest, PipelineFilter, PullRequestFilter, azure_command,
@@ -32,6 +34,7 @@ pub use azure_meta::AzureMeta;
 pub(crate) use azure_scope::{
     repository_matches_project, repository_matches_url, split_repository_query,
 };
+pub(crate) use builtin::builtin_command_entries;
 pub(crate) use index_azure::{AzureBuilt, build_azure};
 pub use path_entry::{
     common_prefix, dir_entry, dirs_matching, normalize_path_input, parent_path, path_entry,
@@ -40,6 +43,8 @@ pub use path_entry::{
 pub(crate) use rank::search_entries;
 pub(crate) use scoring::highlight_ranges;
 pub(crate) use snapshot::Snapshot;
+pub use windows_settings::WINDOWS_SETTINGS_PREFIX;
+pub(crate) use windows_settings::windows_setting_entries;
 
 use azure::AzureIndexed;
 
@@ -121,6 +126,8 @@ pub fn prefix_badge(query: &str) -> Option<&'static str> {
         Some("KILL")
     } else if query.starts_with(WEB_SEARCH_PREFIX) {
         Some("WEB")
+    } else if query.starts_with(WINDOWS_SETTINGS_PREFIX) {
+        Some("SETTINGS")
     } else {
         None
     }
@@ -144,6 +151,7 @@ pub fn effective_search_term(query: &str) -> &str {
         CODEX_PREFIX,
         AGENT_SESSIONS_PREFIX,
         KILL_PROCESS_PREFIX,
+        WINDOWS_SETTINGS_PREFIX,
     ] {
         if let Some(rest) = query.strip_prefix(prefix) {
             return rest;
@@ -167,46 +175,6 @@ pub fn effective_search_term(query: &str) -> &str {
 /// `#<番号>` の `#` は候補名に無く、そのままではハイライトが当たらない。
 pub fn azure_highlight_term(rest: &str) -> &str {
     crate::azure_devops::exact_id_query(rest).unwrap_or(rest)
-}
-
-/// waypoint 自身の操作を通常検索へ載せる固定候補 (FR-9.20)。
-///
-/// config や外部データに依存しない静的な一覧なので、`Index` の
-/// 構築・更新経路には乗せず `azure_command_entries` と同じ形で
-/// 静的に持つ。`LowerKeys` も一度だけ作って使い回す。
-pub(crate) fn builtin_command_entries() -> (&'static [Entry], &'static [search::LowerKeys]) {
-    static ENTRIES: std::sync::LazyLock<Vec<Entry>> = std::sync::LazyLock::new(|| {
-        vec![
-            Entry {
-                azure: None,
-                name: "Settings".to_string(),
-                breadcrumb: "Open waypoint settings".to_string(),
-                path: String::new(),
-                action: Action::OpenSettings,
-                branch: None,
-            },
-            Entry {
-                azure: None,
-                name: "Help".to_string(),
-                breadcrumb: "Open waypoint help".to_string(),
-                path: String::new(),
-                action: Action::OpenHelp,
-                branch: None,
-            },
-            // FR-9.28: Edge のお気に入り編集画面 (設定画面の別モード)
-            Entry {
-                azure: None,
-                name: "Edit Bookmarks".to_string(),
-                breadcrumb: "Edit Edge bookmarks".to_string(),
-                path: String::new(),
-                action: Action::OpenBookmarkEditor,
-                branch: None,
-            },
-        ]
-    });
-    static LOWER: std::sync::LazyLock<Vec<search::LowerKeys>> =
-        std::sync::LazyLock::new(|| search::LowerKeys::build_for_names(&ENTRIES));
-    (&ENTRIES, &LOWER)
 }
 
 /// `cc <folder> [sessionname]` を Claude Code 起動候補へ変換する。
@@ -301,6 +269,9 @@ pub enum Action {
     /// 設定した検索エンジンの検索 URL を既定ブラウザで開く
     /// (`??` プレフィックス、FR-9.21)。URL は `path` に組み立て済み。
     WebSearch,
+    /// Windows の設定ページ・旧コントロールパネルを開く (`ws `、FR-9.29)。
+    /// 開く対象は `path` (`ms-settings:` URI か `<実行ファイル> <引数>`)。
+    OpenWindowsSetting,
     /// 選択したプロセスを確認なしで即時終了する (`k ` プレフィックス、FR-9.15.2)。
     KillProcess(u32),
 }
@@ -365,6 +336,7 @@ impl Entry {
             | Action::OpenBookmarkEditor
             | Action::OpenHelp
             | Action::OpenTabSetupGuide
+            | Action::OpenWindowsSetting
             // 検索語は毎回異なりうるので永続化しない (FR-9.21)
             | Action::WebSearch
             // プロセスは永続化する対象ではない (PID は再起動のたびに変わる)
@@ -417,6 +389,8 @@ pub struct Index {
     /// 候補は入力から組み立てる 1 件だけなので、索引は持たない
     /// (生成は `quick_launch_window::search`)。
     pub(crate) web_search: Option<crate::web_search::Engine>,
+    /// Windows 設定の固定候補 (`ws `、FR-9.29) を検索対象にするか。
+    pub(crate) windows_settings: bool,
     pub(crate) ranking: Ranking,
 }
 

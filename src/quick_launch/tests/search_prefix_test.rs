@@ -209,3 +209,59 @@ fn settings_command_is_not_persistable() {
     let (entries, _) = builtin_command_entries();
     assert!(entries.iter().all(|entry| entry.to_item().is_none()));
 }
+
+#[test]
+fn windows_settings_prefix_matches_japanese_keywords() {
+    // FR-9.29: `ws ` では検索語 (日本語の画面名) でも一致する。
+    let index = Index {
+        windows_settings: true,
+        ..Index::default()
+    };
+    let found = index.search("ws 環境変数");
+    assert_eq!(found[0].name, "Environment Variables");
+    assert_eq!(found[0].action, Action::OpenWindowsSetting);
+    assert!(
+        index
+            .search("ws display")
+            .iter()
+            .any(|e| e.path == "ms-settings:display")
+    );
+}
+
+#[test]
+fn windows_settings_match_names_only_without_prefix() {
+    // FR-9.29: 通常入力では名前だけで照合し、別名では出さない。
+    let index = Index {
+        windows_settings: true,
+        ..Index::default()
+    };
+    assert!(index.search("display").iter().any(|e| e.name == "Display"));
+    assert!(
+        !index
+            .search("解像度")
+            .iter()
+            .any(|e| e.action == Action::OpenWindowsSetting)
+    );
+}
+
+#[test]
+fn windows_settings_disabled_hides_candidates() {
+    let index = Index::default();
+    assert!(index.search("ws display").is_empty());
+    assert!(
+        !index
+            .search("display")
+            .iter()
+            .any(|e| e.action == Action::OpenWindowsSetting)
+    );
+}
+
+#[test]
+fn windows_settings_entries_are_not_persistable() {
+    let (entries, _, _) = crate::quick_launch::windows_setting_entries();
+    assert!(entries.iter().all(|entry| entry.to_item().is_none()));
+    assert_eq!(
+        crate::quick_launch::prefix_badge("ws sound"),
+        Some("SETTINGS")
+    );
+}

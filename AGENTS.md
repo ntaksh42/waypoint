@@ -4,7 +4,7 @@ Guidance for AI coding agents working in this repository (read by Claude Code vi
 
 ## What this is
 
-waypoint is a Windows tray-resident popup launcher (Rust). A hotkey or the middle mouse button opens a hierarchical popup menu; selecting an entry jumps to a folder, focuses a window, opens a bookmark, or launches an app. It started as a re-implementation of Quick Access Popup's core narrowed to folder navigation, and has since grown into a general launcher — Quick Launch's search box covers folders, Recent/Frequent Folders, open windows (`w ` prefix), browser bookmarks (`b ` prefix), browser history (`h ` prefix), open browser tabs (`t ` prefix), installed apps (`a ` prefix), Everything file search (`f ` prefix), and Azure DevOps PRs / pipelines / work items (`az ` prefix). See `docs/spec.md` FR-9 for the full behavior of each search mode.
+waypoint is a Windows tray-resident popup launcher (Rust). A hotkey or the middle mouse button opens a hierarchical popup menu; selecting an entry jumps to a folder, focuses a window, opens a bookmark, or launches an app. It started as a re-implementation of Quick Access Popup's core narrowed to folder navigation, and has since grown into a general launcher — Quick Launch's search box covers folders, Recent/Frequent Folders, open windows (`w ` prefix), browser bookmarks (`b ` prefix), browser history (`h ` prefix), open browser tabs (`t ` prefix), installed apps (`a ` prefix), Everything file search (`f ` prefix), Windows settings pages (`ws ` prefix), and Azure DevOps PRs / pipelines / work items (`az ` prefix). See `docs/spec.md` FR-9 for the full behavior of each search mode.
 
 Single developer, not distributed. No installer, no auto-update, no localization.
 

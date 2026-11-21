@@ -13,6 +13,7 @@ pub(super) fn config_without_live_scans() -> Config {
     quick_launch.include_bookmarks = false;
     quick_launch.include_browser_history = false;
     quick_launch.include_apps = false;
+    quick_launch.include_windows_settings = false;
     config
 }
 

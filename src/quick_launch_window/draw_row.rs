@@ -316,6 +316,7 @@ unsafe fn draw_entry_icon(
             | Action::OpenBookmarkEditor
             | Action::OpenHelp
             | Action::OpenTabSetupGuide
+            | Action::OpenWindowsSetting
             | Action::KillProcess(_) => draw_command_icon(draw.hDC, draw.rcItem, dpi, name_font),
         }
     }

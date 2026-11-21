@@ -62,6 +62,9 @@ pub struct QuickLaunchSettings {
     /// ネットワークにも触れないため、既定はオン
     #[serde(default = "default_true")]
     pub include_web_search: bool,
+    /// Windows 設定の固定候補 (`ws `、FR-9.29)。静的な表だけで I/O を伴わない
+    #[serde(default = "default_true")]
+    pub include_windows_settings: bool,
     #[serde(default)]
     pub web_search_engine: crate::web_search::Engine,
     /// `ed ` プレフィックスでフォルダを開くエディターの実行ファイル。
@@ -90,6 +93,7 @@ impl Default for QuickLaunchSettings {
             include_everything: true,
             search_paths: false,
             include_web_search: true,
+            include_windows_settings: true,
             web_search_engine: crate::web_search::Engine::default(),
             editor_command: default_editor_command(),
             visible_results: default_visible_results(),
