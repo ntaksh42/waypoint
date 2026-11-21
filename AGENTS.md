@@ -386,6 +386,7 @@ Recent/Frequent Folders・Open Windows (`w `) ・ブックマーク (`b `) ・�
 | `everything.rs` | Everything (voidtools) との `WM_COPYDATA` IPC (`f ` プレフィックス) |
 | `browser_history.rs` / `browser_tabs.rs` / `bookmarks.rs` / `favicons.rs` | Chrome/Edge の履歴・タブ・ブックマーク・favicon の読み取り |
 | `bookmark_editor.rs` | お気に入り編集 host の Edge への登録と、編集画面を開く引数 (FR-6.17, FR-9.28)。お気に入り自体は読まない |
+| `office_recent.rs` | Office (Excel / PowerPoint / Word) の MRU をレジストリから読む (`h ` に混ぜる、FR-9.17) |
 | `git.rs` | `.git/HEAD` を直接読んでブランチ名を取得 (`showBranch`)。`git` コマンドは起動しない |
 | `clipboard.rs` | Quick Launch の `Ctrl+C` (パスコピー) |
 | `folder_import.rs` | フォルダ構造の設定項目への一括取り込み |

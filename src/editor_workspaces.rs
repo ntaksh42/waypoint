@@ -250,7 +250,7 @@ fn local_path(uri: &str) -> Option<String> {
     ))
 }
 
-fn decode(value: &str) -> Option<String> {
+pub(crate) fn decode(value: &str) -> Option<String> {
     let mut result = Vec::new();
     let mut bytes = value.bytes();
     while let Some(byte) = bytes.next() {

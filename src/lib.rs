@@ -24,6 +24,7 @@ pub mod help;
 pub mod hotkey_capture;
 pub mod icon;
 pub mod known_folder;
+pub mod office_recent;
 pub mod panic_log;
 pub mod process;
 pub mod quick_launch;

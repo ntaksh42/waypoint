@@ -134,7 +134,7 @@ Azure DevOps 検索 (`az `) は [spec-azure.md](spec-azure.md) にある。
 | 入力 | 対象 | Enter | 無効化の設定 | 番号 |
 |---|---|---|---|---|
 | `b ` | Chrome / Edge のブックマーク | ブラウザで開く | `includeBookmarks` | 9.13 |
-| `h ` | Chrome / Edge の閲覧履歴 | ブラウザで開く | `includeBrowserHistory` | 9.17 |
+| `h ` | Chrome / Edge の閲覧履歴と、Office で最近使ったファイル | ブラウザ / Office アプリで開く | `includeBrowserHistory` | 9.17 |
 | `t ` | Chrome / Edge の開いているタブ | タブへ切り替え | — | 9.17.1 |
 | `a ` | スタートメニューのアプリ | 起動 | `includeApps` | 9.14 |
 | `w ` | 開いているウィンドウ | 切り替え | `includeOpenWindows` | 9.15 |
@@ -155,6 +155,7 @@ Azure DevOps 検索 (`az `) は [spec-azure.md](spec-azure.md) にある。
 ### 各プレフィックスの補足
 
 - `b ` `h `: 同じ URL は 1 件にまとめる (http/https、末尾の `/`、トラッキング用クエリの差を無視)。`http` / `https` 以外の URL は開かない
+- `h ` の Office: Excel / PowerPoint / Word の MRU (`HKCU\Software\Microsoft\Office\16.0\<App>\File MRU` と `User MRU\<アカウント>\File MRU`) をインデックス更新時にだけ読む (`src/office_recent.rs`)。テンプレートの MRU は読まない。閲覧履歴と合わせて最終利用の新しい順に並べ、同じファイルは 1 件に畳む。ローカルパスは既定ハンドラーで、SharePoint / OneDrive の URL は `ms-excel:ofe|u|<URL>` などの URI スキームでデスクトップアプリに開かせる。存在確認はしない。有効・無効は `includeBrowserHistory` に従う
 - `t `: ブラウザ拡張 (Waypoint Tab Bridge) が要る。未導入なら導入案内を開く候補を 1 件出す。タブの情報は保存しない
 - `w `: タイトルとプロセス名で探す (`w chrome`)
 - `k `: waypoint 自身は出さない。終了に失敗してもエラーは出さない

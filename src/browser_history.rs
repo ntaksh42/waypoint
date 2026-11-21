@@ -21,6 +21,8 @@ pub struct Visit {
     pub title: String,
     pub url: String,
     pub browser: String,
+    /// Chromium の `last_visit_time` (1601 年からのマイクロ秒)。
+    pub last_visit: i64,
 }
 
 struct Profile {
@@ -145,6 +147,7 @@ pub fn read_connection(
                 },
                 url,
                 browser: browser.to_string(),
+                last_visit,
             },
         ))
     })?;

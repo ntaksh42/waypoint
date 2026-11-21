@@ -16,6 +16,7 @@ mod azure_search;
 mod builtin;
 mod index;
 mod index_azure;
+mod index_history;
 mod path_entry;
 mod rank;
 mod scoring;

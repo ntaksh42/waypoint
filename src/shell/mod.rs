@@ -196,9 +196,19 @@ pub fn is_web_url(url: &str) -> bool {
     url.starts_with("http://") || url.starts_with("https://")
 }
 
-/// 外部から届いた URL を既定ブラウザで開く。http / https 以外は開かない。
+/// Office の URI スキームで Web の URL を開かせる形 (`ms-excel:ofe|u|https://...`) か。
+/// `h ` の Office で最近使ったファイル (FR-9.17) が使う。
+fn is_office_url(url: &str) -> bool {
+    ["ms-excel:", "ms-powerpoint:", "ms-word:"]
+        .iter()
+        .filter_map(|scheme| url.strip_prefix(scheme)?.strip_prefix("ofe|u|"))
+        .any(is_web_url)
+}
+
+/// 外部から届いた URL を既定ブラウザで開く。http / https と、それを包んだ
+/// Office の URI スキーム以外は開かない。
 pub fn open_url(url: &str) -> std::io::Result<()> {
-    if !is_web_url(url) {
+    if !is_web_url(url) && !is_office_url(url) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "only http(s) URLs can be opened",

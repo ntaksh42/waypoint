@@ -38,17 +38,7 @@ impl Index {
         };
 
         let history = if settings.include_browser_history {
-            crate::browser_history::scan()
-                .into_iter()
-                .map(|visit| Entry {
-                    azure: None,
-                    name: visit.title,
-                    breadcrumb: format!("{} History", visit.browser),
-                    path: visit.url.clone(),
-                    action: Action::OpenUrl(visit.url),
-                    branch: None,
-                })
-                .collect()
+            super::index_history::history_entries()
         } else {
             Vec::new()
         };
