@@ -2,6 +2,8 @@
 /target
 /clients/settings/bin
 /clients/settings/obj
+/settings/bin
+/settings/obj
 /clients/bookmarks/*/bin
 /clients/bookmarks/*/obj
 # インストーラの成果物 (MSI / wixpdb)
