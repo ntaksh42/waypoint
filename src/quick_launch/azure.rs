@@ -29,9 +29,7 @@ pub enum AzureCommand {
     Pipelines(PipelineFilter),
     Projects,
     New,
-    WorkItems {
-        live: bool,
-    },
+    WorkItems(WorkItemFilter),
     /// `az optimize` — 直近の活動から
     /// Project の優先度と Iteration を自動保存する。
     /// 検索対象を持たず確定候補を 1 件だけ返す。
@@ -55,9 +53,6 @@ pub struct PullRequestFilter {
     pub(crate) draft: bool,
     pub(crate) ready: bool,
     pub(crate) stale: bool,
-    /// `live` トークンの解析互換性を保つ。API 呼び出しは入力変更ではなく
-    /// `Ctrl+Enter` の明示操作でのみ開始する。
-    pub(crate) live: bool,
 }
 
 impl PullRequestFilter {
@@ -69,6 +64,7 @@ impl PullRequestFilter {
     }
 }
 
+pub use super::azure_work_item_filter::{WorkItemFilter, WorkItemState};
 /// Pipeline は永続キャッシュを持たずライブ検索専用になったため、絞り込み
 /// 分類は `azure_devops` 側 (`search_pipelines_live_async` が直接使う) に
 /// 定義してここから再エクスポートする。
@@ -79,10 +75,9 @@ pub use crate::azure_devops::PipelineFilter;
 pub enum AzureLiveRequest {
     /// `az <query>` (サブコマンド無し) — PR / Work Item / Pipeline を
     /// まとめて Live 検索する。キャッシュ側の Project は取得対象外。
-    AllKinds {
-        query: String,
-    },
+    AllKinds { query: String },
     WorkItems {
+        filter: WorkItemFilter,
         query: String,
     },
     PullRequests {
@@ -174,7 +169,6 @@ pub(super) fn apply_pull_request_attribute(filter: &mut PullRequestFilter, token
         "draft" | "drafts" => filter.draft = true,
         "ready" | "ready-to-complete" => filter.ready = true,
         "stale" => filter.stale = true,
-        "live" => filter.live = true,
         _ => return false,
     }
     true
@@ -212,18 +206,12 @@ fn parse_pull_request_command(text: &str) -> (AzureCommand, &str) {
     )
 }
 
-/// `wit` に続く属性トークン (`live`) を剥がしていき、未知のトークンから
-/// を検索語として返す。
+/// `wit` に続く属性トークン (`mine` / `bug` / `open` 等) を剥がしていき、
+/// 未知のトークンからを検索語として返す。
 fn parse_work_item_command(text: &str) -> (AzureCommand, &str) {
-    let mut live = false;
-    let rest = strip_attribute_tokens(text, |token| {
-        match token {
-            "live" => live = true,
-            _ => return false,
-        }
-        true
-    });
-    (AzureCommand::WorkItems { live }, rest)
+    let mut filter = WorkItemFilter::default();
+    let rest = strip_attribute_tokens(text, |token| filter.apply(token));
+    (AzureCommand::WorkItems(filter), rest)
 }
 
 /// `pipeline` に続く属性トークン (`failed` / `definition`) を剥がしていき、
@@ -248,7 +236,7 @@ pub fn azure_live_request(query: &str) -> Option<AzureLiveRequest> {
     let (command, rest) = azure_command(query)?;
     let query = rest.trim().to_string();
     match command {
-        AzureCommand::WorkItems { .. } => Some(AzureLiveRequest::WorkItems { query }),
+        AzureCommand::WorkItems(filter) => Some(AzureLiveRequest::WorkItems { filter, query }),
         AzureCommand::PullRequests(filter) => {
             let filter = filter.for_live();
             Some(AzureLiveRequest::PullRequests { filter, query })
@@ -279,6 +267,7 @@ mod tests {
         assert_eq!(
             azure_live_request("az wit"),
             Some(AzureLiveRequest::WorkItems {
+                filter: WorkItemFilter::default(),
                 query: String::new(),
             })
         );
@@ -300,7 +289,6 @@ mod tests {
                     draft: false,
                     ready: false,
                     stale: false,
-                    live: false,
                 },
                 query: "waypoint".to_string(),
             })
@@ -341,30 +329,42 @@ mod tests {
     }
 
     #[test]
-    fn live_token_is_parsed_without_becoming_part_of_the_search_term() {
+    fn live_token_is_no_longer_an_attribute() {
         assert_eq!(
             azure_command("az wit live foo"),
-            Some((AzureCommand::WorkItems { live: true }, "foo"))
-        );
-        assert_eq!(
-            azure_command("az pr live mine foo"),
             Some((
-                AzureCommand::PullRequests(PullRequestFilter {
-                    status: crate::azure_devops::PullRequestStatus::All,
-                    status_explicit: false,
-                    mine: true,
-                    author: false,
-                    reviewer: false,
-                    needs_review: false,
-                    waiting: false,
-                    draft: false,
-                    ready: false,
-                    stale: false,
-                    live: true,
-                }),
-                "foo"
+                AzureCommand::WorkItems(WorkItemFilter::default()),
+                "live foo"
             ))
         );
+        let Some((AzureCommand::PullRequests(filter), rest)) = azure_command("az pr mine live foo")
+        else {
+            panic!("expected pull request command");
+        };
+        assert!(filter.mine);
+        assert_eq!(rest, "live foo");
+    }
+
+    #[test]
+    fn work_item_attributes_are_stripped_in_any_order() {
+        let Some((AzureCommand::WorkItems(filter), rest)) =
+            azure_command("az wit bug mine open crash dump")
+        else {
+            panic!("expected work item command");
+        };
+        assert!(filter.mine);
+        assert_eq!(filter.state, WorkItemState::Open);
+        assert!(filter.is_filtered());
+        assert_eq!(rest, "crash dump");
+        let Some(AzureLiveRequest::WorkItems {
+            filter: live,
+            query,
+        }) = azure_live_request("az wit bug mine open crash dump")
+        else {
+            panic!("expected work item live search");
+        };
+        assert_eq!(live, filter);
+        assert_eq!(query, "crash dump");
     }
 
     #[test]

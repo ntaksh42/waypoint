@@ -71,7 +71,7 @@ fn editing_a_query_invalidates_all_pending_live_replies() {
         }
 
         invalidate_azure_live_searches(&mut state.borrow_mut());
-        start_azure_work_item_query(state, "new query");
+        start_azure_work_item_query(state, Default::default(), "new query");
 
         let state = state.borrow();
         assert!(!accepts_azure_work_item_reply(
@@ -108,7 +108,7 @@ fn returning_to_the_cached_work_item_query_drops_the_combined_buffer() {
         state.borrow_mut().azure_live_combined =
             Some(super::super::azure_live::CombinedLiveSearch::new(3));
 
-        start_azure_work_item_query(state, "anything");
+        start_azure_work_item_query(state, Default::default(), "anything");
 
         assert!(state.borrow().azure_live_combined.is_none());
     });

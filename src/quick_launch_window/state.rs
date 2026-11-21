@@ -97,6 +97,8 @@ pub(in crate::quick_launch_window) struct State {
     pub(in crate::quick_launch_window) azure_work_items_active: bool,
     pub(in crate::quick_launch_window) azure_work_item_reply_id: u32,
     pub(in crate::quick_launch_window) azure_work_item_query: String,
+    /// 実行中の `az wit` Live 検索の属性。届いた結果をこれで絞る。
+    pub(in crate::quick_launch_window) azure_work_item_filter: crate::quick_launch::WorkItemFilter,
     /// PR のライブ検索 (`AzureLivePullRequestSearch`) 中だけ立てる。
     /// `azure_work_item_*` と同じ役割だが、Work Item のライブ検索と
     /// reply_id の名前空間を分けるために独立させている。

@@ -13,6 +13,7 @@ mod azure_meta;
 mod azure_new;
 mod azure_scope;
 mod azure_search;
+mod azure_work_item_filter;
 mod builtin;
 mod index;
 mod index_azure;
@@ -27,8 +28,8 @@ mod tests;
 mod windows_settings;
 
 pub use azure::{
-    AzureCommand, AzureLiveRequest, PipelineFilter, PullRequestFilter, azure_command,
-    azure_live_request,
+    AzureCommand, AzureLiveRequest, PipelineFilter, PullRequestFilter, WorkItemFilter,
+    WorkItemState, azure_command, azure_live_request,
 };
 pub(crate) use azure_entries::{azure_shortcut_entries, azure_suggest_entry};
 pub use azure_meta::AzureMeta;
@@ -240,7 +241,11 @@ pub enum Action {
     ReplaceQuery(String),
     /// `az wit` のローカルキャッシュ検索で見つからなかったとき、明示的な
     /// 選択をトリガーに Azure DevOps へライブ全文検索を投げる。
-    AzureLiveWorkItemSearch(String),
+    /// 属性 (`mine` / `bug` 等) は `filter` に持ち、取得した結果を絞る。
+    AzureLiveWorkItemSearch {
+        filter: WorkItemFilter,
+        query: String,
+    },
     /// `az pr` 等のローカルキャッシュ検索で見つからなかったとき、明示的な
     /// 選択をトリガーに、打ち切り期間を広げて PR を再取得する
     /// (Azure DevOps の PR API に全文検索は無いため、広く取ってから
@@ -329,7 +334,7 @@ impl Entry {
             | Action::OpenCodex
             | Action::ResumeAgentSession(..)
             | Action::ReplaceQuery(_)
-            | Action::AzureLiveWorkItemSearch(_)
+            | Action::AzureLiveWorkItemSearch { .. }
             | Action::AzureLivePullRequestSearch { .. }
             | Action::AzureLivePipelineSearch { .. }
             | Action::AzureOptimize

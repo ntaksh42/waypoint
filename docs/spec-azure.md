@@ -27,27 +27,38 @@
 
 ### 属性
 
-コマンドの直後に置き、検索対象を絞る。順不同で組み合わせられる。属性でない最初の語から後ろが検索語になる。
+コマンドの直後に置き、検索対象を絞る。順不同で組み合わせられる。属性でない最初の語から後ろが検索語になる。括弧内は同じ意味の別名。
 
 | コマンド | 属性 |
 |---|---|
-| `az pr` | 状態: `active` / `completed` / `abandoned` / `all` (省略時 all、Live では active。省略して Live 検索したときは、結果の先頭に active だけを検索したことと `all` で広げられることを表示する) |
-| | 関係: `mine` (作成者かレビュアー)・`author`・`reviewer` |
-| | その他: `needs-review`・`waiting`・`draft`・`ready`・`stale`・`repo:<org>/<project>/<repo>` |
-| `az pipeline` | `failed`・`definition`・`all` |
+| `az pr` | 状態: `active` / `completed` (`complete`) / `abandoned` (`abandon`) / `all` (省略時 all、Live では active。省略して Live 検索したときは、結果の先頭に active だけを検索したことと `all` で広げられることを表示する) |
+| | 関係: `mine` (`me`、作成者かレビュアー)・`author` (`authored`)・`reviewer` (`review`) |
+| | その他: `needs-review` (`needsreview`)・`waiting` (`waiting-for-others`)・`draft` (`drafts`)・`ready` (`ready-to-complete`)・`stale`・`repo:<org>/<project>/<repo>` |
+| `az wit` | 担当: `mine` (`me`、自分が担当者) |
+| | 種別: `bug`・`task`・`story` (User Story / Product Backlog Item / Requirement)・`feature`・`epic` (複数書くといずれかに一致するもの。複数形も可) |
+| | 状態: `open` (完了していないもの)・`closed` (Closed / Done / Removed) |
+| `az pipeline` | `failed` (`fail`)・`definition` (`definitions` `def`)・`all` |
 
-`repo:` も属性の 1 つで、ほかの属性の前後どちらに置いてもよい (`az pr repo:o/p/r mine foo` と `az pr mine repo:o/p/r foo` は同じ)。
+- `repo:` も属性の 1 つで、ほかの属性の前後どちらに置いてもよい (`az pr repo:o/p/r mine foo` と `az pr mine repo:o/p/r foo` は同じ)
+- `az wit` の属性は Live 検索にも同じ条件で効く。Live 検索では取得した結果 (9.18.10 の上限まで) を絞るので、上限で切れた分は出ない
+- `az wit mine` の「自分」は、同期した Work Item の担当者のうち、自分の ID と一致した人の uniqueName で判定する。一度も同期していない組織では `mine` に一致する項目は無い
 
 ### 番号指定
 
-- `az pr 123` / `az 123`: キャッシュに無ければ「Look up PR 123」候補を出し、Enter でサーバーから取り寄せる
+- `az pr 123`: キャッシュに無ければ「Look up PR 123」候補を出し、Enter でサーバーから取り寄せる
+- `az 123`: その番号の PR と Work Item がキャッシュに無ければ、「Look up PR 123」と「Look up Work Item 123」の候補を出す
 - `az #123` / `az pr #123` / `az wit #123`: ID が完全に一致するものだけを出す
+
+## 9.18.4 自分に関わる項目を上に出す
+
+- タイトルの一致度が同じなら、自分が関わる Active PR → その他の未完了 → 完了済みの順に並べる
+- プロジェクトごとに Area Path を設定すると、その Work Item だけを対象にする
 
 ## 9.18.5 `az ` 直後の候補
 
 検索語なしの `az ` では、次の順に出す。
 
-1. Recent (9.18.7): 最近選んだ PR と Work Item を各 3 件。`includeAzureRecent` で消せる
+1. Recent (9.18.7)
 2. My review requests: 自分がレビュアーで未投票の PR
 3. My active PRs: 自分が作った PR
 4. Waiting for others: 自分が作った PR で、必須レビュアーの承認待ちが残るもの
@@ -57,10 +68,9 @@
 
 PR の候補では `Ctrl+C` で URL、`Ctrl+Shift+C` でソースブランチ名をコピーする。
 
-## 9.18.4 自分に関わる項目を上に出す
+### 9.18.7 Recent
 
-- タイトルの一致度が同じなら、自分が関わる Active PR → その他の未完了 → 完了済みの順に並べる
-- プロジェクトごとに Area Path を設定すると、その Work Item だけを対象にする
+最近選んだ PR と Work Item を、種別ごとに使用頻度の高い順で 3 件ずつ出す。`includeAzureRecent` で消せる。
 
 ## 9.18.8 `az new`
 
@@ -87,7 +97,8 @@ PR の候補では `Ctrl+C` で URL、`Ctrl+Shift+C` でソースブランチ名
 
 ## キャッシュ
 
-- 9.18.1: Active な PR と Work Item は DevDeck と共有するキャッシュ (`%APPDATA%\AzDoSharedCache\cache.db`) を使う。開けなければ 0 件として表示を続ける (9.18.9)
+- 9.18.1: Active な PR と Work Item は DevDeck と共有するキャッシュ (`%APPDATA%\AzDoSharedCache\cache.db`) を使う
+- 9.18.9: 共有キャッシュを開けなければ 0 件として表示を続ける
 - 完了・破棄した PR (過去 90 日) は `%APPDATA%\waypoint\azure_devops.db` に持ち、起動時と 12 時間ごとに更新する
 - 9.18.3: 最後に同期した時刻を設定画面とトレイに出す。手動で更新できる。失敗しても前回のキャッシュを残す
 - Pipeline はキャッシュしない。Live 検索だけ

@@ -8,8 +8,8 @@ use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
 
 use super::azure_live::{
     invalidate_azure_live_searches, live_pipeline_search_entry, live_pull_request_search_entry,
-    missing_azure_item_id, missing_azure_pull_request_id, show_azure_suggest_entry,
-    start_azure_work_item_query,
+    missing_azure_item_id, missing_azure_pull_request_id, missing_azure_work_item_id,
+    show_azure_suggest_entry, start_azure_work_item_query, work_item_lookup_entry,
 };
 pub(super) use super::list::{build_rows, populate_empty_message, populate_list};
 use super::{
@@ -92,10 +92,10 @@ pub(super) fn update_results(state: &RefCell<State>) {
         super::snapshot::show_session_results(state, rest);
         return;
     }
-    if let Some((crate::quick_launch::AzureCommand::WorkItems { .. }, rest)) =
+    if let Some((crate::quick_launch::AzureCommand::WorkItems(filter), rest)) =
         crate::quick_launch::azure_command(&query)
     {
-        start_azure_work_item_query(state, rest);
+        start_azure_work_item_query(state, filter, rest);
         return;
     }
     if let Some((crate::quick_launch::AzureCommand::Suggest, _)) =
@@ -199,6 +199,14 @@ pub(super) fn update_results(state: &RefCell<State>) {
                 state
                     .results
                     .push(live_pull_request_search_entry(filter, rest));
+            }
+            // `az <番号>` は Work Item の番号でもあり得る。その番号の Work Item が
+            // 一覧に無ければ、ID で直接引く入口も並べる
+            if let Some((crate::quick_launch::AzureCommand::All, rest)) =
+                crate::quick_launch::azure_command(&query)
+                && missing_azure_work_item_id(&state.results, rest)
+            {
+                state.results.push(work_item_lookup_entry(rest));
             }
             // Pipeline は永続キャッシュを持たないので、`Index::search` は
             // 常に 0 件を返す (`quick_launch/search.rs` 参照)。ここで毎回

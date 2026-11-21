@@ -27,10 +27,13 @@ mod tests {
                 "system.id": "42",
                 "system.title": "Fix launcher",
                 "system.state": "Active",
-                "system.workitemtype": "Bug"
+                "system.workitemtype": "Bug",
+                "system.assignedto": "Me <me@example.com>"
             }}]}),
+            Some("ME@example.com"),
         );
         assert_eq!(results[0].name, "42: Fix launcher");
+        assert!(results[0].is_mine);
         assert_eq!(
             results[0].url,
             "https://dev.azure.com/org/Project%20Name/_workitems/edit/42"
@@ -56,7 +59,9 @@ mod tests {
             &json!({ "results": [{ "fields": {
                 "system.id": "73", "system.title": "Fix WIT search"
             }}]}),
+            Some("me@example.com"),
         );
+        assert!(!results[0].is_mine);
         assert_eq!(results[0].name, "73: Fix WIT search");
     }
 
@@ -79,10 +84,14 @@ mod tests {
             &json!({ "value": [{ "id": 91, "fields": {
                 "System.Title": "Recent bug",
                 "System.State": "Active",
-                "System.WorkItemType": "Bug"
+                "System.WorkItemType": "Bug",
+                "System.AssignedTo": { "displayName": "Me", "uniqueName": "me@example.com" }
             }}]}),
+            None,
         );
         assert_eq!(results[0].name, "91: Recent bug");
+        // 自分の uniqueName を知らなければ担当でも mine にしない
+        assert!(!results[0].is_mine);
         assert_eq!(results[0].status, "Active");
     }
 
