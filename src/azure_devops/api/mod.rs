@@ -63,7 +63,7 @@ pub(crate) fn refresh_project(
         pull_requests::sync_active_prs_to_shared_cache(client, project, pat)?;
     }
     if project.include_work_items {
-        work_items::sync_work_items_to_shared_cache(client, project, pat)?;
+        work_items::sync_work_items_to_shared_cache(client, project, pat, current_user.as_deref())?;
         // 色・アイコンは飾りなので、取れなくても同期全体は失敗させない。
         if let Err(error) = super::work_item_types::sync_work_item_types(client, project, pat) {
             crate::panic_log::record(&format!(

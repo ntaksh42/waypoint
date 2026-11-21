@@ -113,7 +113,7 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                     // AzureLivePipelineSearch はウィンドウを閉じずに Quick Launch
                     // 側で完結する (queue_selected 参照)。ここへは実行対象として来ない
                     quick_launch::Action::ReplaceQuery(_)
-                    | quick_launch::Action::AzureLiveWorkItemSearch(_)
+                    | quick_launch::Action::AzureLiveWorkItemSearch { .. }
                     | quick_launch::Action::AzureLivePullRequestSearch { .. }
                     | quick_launch::Action::AzureLivePipelineSearch { .. } => {}
                     quick_launch::Action::OpenSettings => {

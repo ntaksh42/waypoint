@@ -1,3 +1,4 @@
+mod azure_work_item_test;
 mod badge_test;
 mod focus_test;
 mod input_test;

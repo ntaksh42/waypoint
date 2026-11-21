@@ -63,7 +63,7 @@ pub(super) fn action_tag(action: &Action, badge: Option<&str>, path: &str) -> &'
         | Action::OpenBookmarkEditor
         | Action::OpenHelp
         | Action::OpenTabSetupGuide => "Command",
-        Action::AzureLiveWorkItemSearch(_)
+        Action::AzureLiveWorkItemSearch { .. }
         | Action::AzureLivePullRequestSearch { .. }
         | Action::AzureLivePipelineSearch { .. } => "Search",
         Action::WebSearch => "Web",
@@ -85,7 +85,7 @@ pub(super) fn action_verb(action: &Action) -> &'static str {
     match action {
         Action::FocusWindow(_) | Action::FocusBrowserTab(_) => "Switch \u{21B5}",
         Action::ReplaceQuery(_) => "Complete \u{21B5}",
-        Action::AzureLiveWorkItemSearch(_)
+        Action::AzureLiveWorkItemSearch { .. }
         | Action::AzureLivePullRequestSearch { .. }
         | Action::AzureLivePipelineSearch { .. }
         | Action::WebSearch => "Search \u{21B5}",
@@ -209,12 +209,12 @@ pub(super) fn azure_tile(badge: Option<&str>, entry: &Entry) -> Option<AzureTile
         Action::ReplaceQuery(query) if entry.path.is_empty() => {
             crate::quick_launch::azure_command(query).map(|(command, _)| match command {
                 crate::quick_launch::AzureCommand::PullRequests(_) => AzureIconKind::PullRequest,
-                crate::quick_launch::AzureCommand::WorkItems { .. } => AzureIconKind::WorkItem,
+                crate::quick_launch::AzureCommand::WorkItems(_) => AzureIconKind::WorkItem,
                 crate::quick_launch::AzureCommand::Pipelines(_) => AzureIconKind::Pipeline,
                 _ => AzureIconKind::Project,
             })
         }
-        Action::AzureLiveWorkItemSearch(_) => Some(AzureIconKind::WorkItem),
+        Action::AzureLiveWorkItemSearch { .. } => Some(AzureIconKind::WorkItem),
         Action::AzureLivePullRequestSearch { .. } => Some(AzureIconKind::PullRequest),
         Action::AzureLivePipelineSearch { .. } => Some(AzureIconKind::Pipeline),
         _ => None,

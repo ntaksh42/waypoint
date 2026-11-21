@@ -307,9 +307,9 @@ impl Index {
                 // Work Item のライブ検索と同じく同期検索では何も返さない。
                 // 実際の検索は `quick_launch_window::search` が
                 // `search_pipelines_live_async` を叩いて行う。
-                AzureCommand::Pipelines(_)
-                | AzureCommand::WorkItems { .. }
-                | AzureCommand::Suggest => Vec::new(),
+                AzureCommand::Pipelines(_) | AzureCommand::WorkItems(_) | AzureCommand::Suggest => {
+                    Vec::new()
+                }
             };
         }
         let (builtins, builtins_lower) = super::builtin_command_entries();
@@ -355,11 +355,16 @@ impl Index {
     /// `entries_lower` 等と同じく事前計算済みの `LowerKeys` を使う
     /// (毎キー入力で `to_lowercase` をやり直すと、事前キャッシュ化で
     /// 母集団が数百件規模に増えたときに体感できるカクつきになる。実測)。
-    pub fn search_cached_work_items(&self, query: &str) -> Vec<&Entry> {
+    pub fn search_cached_work_items(
+        &self,
+        filter: super::WorkItemFilter,
+        query: &str,
+    ) -> Vec<&Entry> {
         super::azure_search::search(
             self.azure_work_items
                 .iter()
-                .zip(&self.azure_work_items_lower),
+                .zip(&self.azure_work_items_lower)
+                .filter(|(entry, _)| filter.matches(entry.azure.as_ref())),
             query,
             true,
             &self.ranking,

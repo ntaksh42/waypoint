@@ -119,6 +119,8 @@ fn init_schema(connection: &Connection) -> Result<(), String> {
         "ALTER TABLE project_state ADD COLUMN work_items_delta_synced_at INTEGER",
         [],
     );
+    // `az wit mine` 用に、同期で覚えた自分の uniqueName (`assignee.rs`)
+    let _ = connection.execute("ALTER TABLE identity ADD COLUMN unique_name TEXT", []);
     Ok(())
 }
 

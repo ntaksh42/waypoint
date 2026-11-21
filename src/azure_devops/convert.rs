@@ -266,24 +266,29 @@ pub(crate) fn pipeline_row(
     }
 }
 
-pub(crate) fn work_item_candidates(project: &AzureDevOpsProject, value: &Value) -> Vec<Candidate> {
+pub(crate) fn work_item_candidates(
+    project: &AzureDevOpsProject,
+    value: &Value,
+    me: Option<&str>,
+) -> Vec<Candidate> {
     value["results"]
         .as_array()
         .into_iter()
         .flatten()
-        .filter_map(|item| work_item_candidate(project, &item["fields"], &item["id"]))
+        .filter_map(|item| work_item_candidate(project, &item["fields"], &item["id"], me))
         .collect()
 }
 
 pub(crate) fn work_item_batch_candidates(
     project: &AzureDevOpsProject,
     value: &Value,
+    me: Option<&str>,
 ) -> Vec<Candidate> {
     value["value"]
         .as_array()
         .into_iter()
         .flatten()
-        .filter_map(|item| work_item_candidate(project, &item["fields"], &item["id"]))
+        .filter_map(|item| work_item_candidate(project, &item["fields"], &item["id"], me))
         .collect()
 }
 
@@ -350,6 +355,7 @@ pub(crate) fn work_item_candidate(
     project: &AzureDevOpsProject,
     fields: &Value,
     item_id: &Value,
+    me: Option<&str>,
 ) -> Option<Candidate> {
     // Search API は小文字、Work Item Tracking API は PascalCase の reference
     // name を返す。どちらの取得経路でも同じ候補へ変換する。
@@ -383,7 +389,7 @@ pub(crate) fn work_item_candidate(
         project: project.project.trim().to_string(),
         aliases: project.aliases.clone(),
         priority: project.priority,
-        is_mine: false,
+        is_mine: super::assignee::is_me(super::assignee::assigned_unique_name(fields), me),
         is_author: false,
         is_reviewer: false,
         needs_my_review: false,

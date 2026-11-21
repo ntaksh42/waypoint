@@ -91,7 +91,7 @@ fn key_kind(action: &Action) -> Option<&'static str> {
         Action::FocusWindow(_)
         | Action::FocusBrowserTab(_)
         | Action::ReplaceQuery(_)
-        | Action::AzureLiveWorkItemSearch(_)
+        | Action::AzureLiveWorkItemSearch { .. }
         | Action::AzureLivePullRequestSearch { .. }
         | Action::AzureLivePipelineSearch { .. }
         | Action::AzureOptimize

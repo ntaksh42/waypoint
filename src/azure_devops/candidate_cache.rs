@@ -331,6 +331,7 @@ fn read_candidate_groups(
         if project.include_work_items {
             match shared_cache::read_work_items(connection, organization, project_name) {
                 Ok(rows) => {
+                    let me = super::assignee::read_unique_name(organization);
                     for row in rows {
                         let Some(url) = row.web_url else { continue };
                         let kind = row.work_item_type.as_deref().unwrap_or("Work Item");
@@ -349,7 +350,10 @@ fn read_candidate_groups(
                             project: project_name.to_string(),
                             aliases: project.aliases.clone(),
                             priority: project.priority,
-                            is_mine: false,
+                            is_mine: super::assignee::is_me(
+                                row.assigned_to_unique_name.as_deref(),
+                                me.as_deref(),
+                            ),
                             is_author: false,
                             is_reviewer: false,
                             needs_my_review: false,

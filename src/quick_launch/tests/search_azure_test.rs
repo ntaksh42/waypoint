@@ -145,10 +145,14 @@ fn cached_work_items_are_searchable_without_live_api() {
     index.azure_work_items_lower =
         crate::quick_launch::search::LowerKeys::build_for(&index.azure_work_items);
 
-    let found = index.search_cached_work_items("cache");
+    let found = index.search_cached_work_items(Default::default(), "cache");
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].name, "91: Cache WIT results");
-    assert!(index.search_cached_work_items("missing").is_empty());
+    assert!(
+        index
+            .search_cached_work_items(Default::default(), "missing")
+            .is_empty()
+    );
 
     let all_azure = index.search("az cache");
     assert_eq!(all_azure.len(), 1);
@@ -171,14 +175,13 @@ fn azure_command_recognizes_all_supported_subcommands() {
                 draft: false,
                 ready: false,
                 stale: false,
-                live: false,
             }),
             "done"
         ))
     );
     assert_eq!(
-        azure_command("az wit bug"),
-        Some((AzureCommand::WorkItems { live: false }, "bug"))
+        azure_command("az wit crash"),
+        Some((AzureCommand::WorkItems(Default::default()), "crash"))
     );
     assert_eq!(
         azure_command("az pipelines release"),
@@ -202,7 +205,6 @@ fn azure_command_recognizes_all_supported_subcommands() {
                 draft: false,
                 ready: false,
                 stale: false,
-                live: false,
             }),
             "launcher"
         ))
@@ -222,7 +224,6 @@ fn azure_command_recognizes_all_supported_subcommands() {
                 draft: false,
                 ready: false,
                 stale: false,
-                live: false,
             }),
             "launcher"
         ))
@@ -242,14 +243,13 @@ fn azure_command_recognizes_all_supported_subcommands() {
                 draft: false,
                 ready: false,
                 stale: false,
-                live: false,
             }),
             ""
         ))
     );
     assert_eq!(
         azure_command("az workitems defect"),
-        Some((AzureCommand::WorkItems { live: false }, "defect"))
+        Some((AzureCommand::WorkItems(Default::default()), "defect"))
     );
     assert_eq!(
         azure_command("az platform"),
@@ -274,9 +274,10 @@ fn azure_live_request_covers_bare_query() {
         })
     );
     assert_eq!(
-        azure_live_request("az wit bug"),
+        azure_live_request("az wit crash"),
         Some(AzureLiveRequest::WorkItems {
-            query: "bug".to_string()
+            filter: Default::default(),
+            query: "crash".to_string()
         })
     );
     // 検索対象を持たないコマンドは従来どおり Live 検索の対象外

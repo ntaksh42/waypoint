@@ -39,6 +39,7 @@ pub(crate) fn sync_work_items_to_shared_cache(
     client: &reqwest::blocking::Client,
     project: &AzureDevOpsProject,
     pat: &str,
+    current_user: Option<&str>,
 ) -> Result<(), String> {
     let organization = project.organization.trim().to_string();
     let project_name = project.project.trim().to_string();
@@ -54,7 +55,7 @@ pub(crate) fn sync_work_items_to_shared_cache(
         return Ok(());
     }
 
-    let rows = fetch_work_items_for_shared_cache(client, project, pat)?;
+    let rows = fetch_work_items_for_shared_cache(client, project, pat, current_user)?;
     let mut conn = shared_cache::open()?;
     shared_cache::write_work_items(&mut conn, &organization, &project_name, &rows)?;
     shared_cache::mark_synced(
@@ -74,6 +75,7 @@ fn fetch_work_items_for_shared_cache(
     client: &reqwest::blocking::Client,
     project: &AzureDevOpsProject,
     pat: &str,
+    current_user: Option<&str>,
 ) -> Result<Vec<SharedWorkItem>, String> {
     let base = format!(
         "https://dev.azure.com/{}/{}",
@@ -110,6 +112,7 @@ fn fetch_work_items_for_shared_cache(
             "System.Tags",
         ],
     )?;
+    super::super::assignee::learn_unique_name(&project.organization, current_user, &values);
     Ok(values
         .iter()
         .filter_map(|item| {
@@ -188,7 +191,8 @@ pub(crate) fn fetch_work_items(
     // `interest_repositories` を無視するのと同じ理由)。
     let body = json!({ "searchText": query, "$skip": 0, "$top": WORK_ITEM_RESULT_LIMIT, "includeFacets": false });
     let value = post_json(client, &url, pat, &body)?;
-    Ok(work_item_candidates(project, &value))
+    let me = super::super::assignee::read_unique_name(&project.organization);
+    Ok(work_item_candidates(project, &value, me.as_deref()))
 }
 
 /// Area / Iteration の関心パスが設定されていれば `UNDER` 条件で WIQL を絞り込む。
@@ -281,11 +285,14 @@ fn fetch_work_items_by_wiql(
             "System.Title",
             "System.State",
             "System.WorkItemType",
+            "System.AssignedTo",
         ],
     )?;
+    let me = super::super::assignee::read_unique_name(&project.organization);
     Ok(work_item_batch_candidates(
         project,
         &json!({ "value": values }),
+        me.as_deref(),
     ))
 }
 

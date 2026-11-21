@@ -190,7 +190,12 @@ fn refresh_azure_keeps_apps_bookmarks_history_and_folders() {
     assert_eq!(index.search("b github").len(), 1);
     assert_eq!(index.search("h rust").len(), 1);
     assert_eq!(index.search("az faster refresh").len(), 1);
-    assert_eq!(index.search_cached_work_items("remove ui").len(), 1);
+    assert_eq!(
+        index
+            .search_cached_work_items(Default::default(), "remove ui")
+            .len(),
+        1
+    );
 }
 
 /// `Index::refresh_config_items` は config 由来の候補を組み直しつつ、

@@ -308,7 +308,7 @@ unsafe fn draw_entry_icon(
                 FaviconFallback::Web,
             ),
             Action::ReplaceQuery(_)
-            | Action::AzureLiveWorkItemSearch(_)
+            | Action::AzureLiveWorkItemSearch { .. }
             | Action::AzureLivePullRequestSearch { .. }
             | Action::AzureLivePipelineSearch { .. }
             | Action::AzureOptimize

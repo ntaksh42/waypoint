@@ -172,7 +172,7 @@ pub(super) fn queue_selected() {
     enum Selected {
         Replace(HWND, String),
         Execute(Option<HWND>, Option<HWND>, Option<HWND>),
-        LiveWorkItemSearch(String),
+        LiveWorkItemSearch(crate::quick_launch::WorkItemFilter, String),
         LivePullRequestSearch(crate::quick_launch::PullRequestFilter, String),
         LivePipelineSearch(crate::quick_launch::PipelineFilter, String),
     }
@@ -185,8 +185,8 @@ pub(super) fn queue_selected() {
                 .edit
                 .map(|edit| Selected::Replace(edit, query.clone()));
         }
-        if let Action::AzureLiveWorkItemSearch(query) = &entry.action {
-            return Some(Selected::LiveWorkItemSearch(query.clone()));
+        if let Action::AzureLiveWorkItemSearch { filter, query } = &entry.action {
+            return Some(Selected::LiveWorkItemSearch(*filter, query.clone()));
         }
         if let Action::AzureLivePullRequestSearch { filter, query } = &entry.action {
             return Some(Selected::LivePullRequestSearch(*filter, query.clone()));
@@ -230,8 +230,10 @@ pub(super) fn queue_selected() {
             }
             hide_window(window, owner);
         }
-        Some(Selected::LiveWorkItemSearch(query)) => {
-            STATE.with(|state| super::azure_live::start_azure_work_item_live_search(state, &query));
+        Some(Selected::LiveWorkItemSearch(filter, query)) => {
+            STATE.with(|state| {
+                super::azure_live::start_azure_work_item_live_search(state, filter, &query)
+            });
         }
         Some(Selected::LivePullRequestSearch(filter, query)) => {
             STATE.with(|state| {

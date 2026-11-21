@@ -31,12 +31,13 @@ pub(super) use pull_request::{
     missing_azure_pull_request_id, start_azure_pull_request_live_search,
 };
 pub(super) use work_item::{
-    handle_azure_work_item_results, start_azure_work_item_live_search, start_azure_work_item_query,
+    handle_azure_work_item_results, missing_azure_work_item_id, start_azure_work_item_live_search,
+    start_azure_work_item_query, work_item_lookup_entry,
 };
 // 応答 ID の照合はハンドラ内で完結するので通常ビルドでは再エクスポートしない。
 // テストだけが直接叩く (stale な応答を捨てる条件の確認)。
 #[cfg(test)]
-pub(super) use work_item::accepts_azure_work_item_reply;
+pub(super) use work_item::{accepts_azure_work_item_reply, filtered_live_message};
 
 const LIVE_SEARCH_COOLDOWN: Duration = Duration::from_secs(2);
 
@@ -246,8 +247,8 @@ pub(super) fn start_azure_live_search_for_query(
         crate::quick_launch::AzureLiveRequest::AllKinds { query } => {
             start_azure_combined_live_search(state, &query)
         }
-        crate::quick_launch::AzureLiveRequest::WorkItems { query } => {
-            start_azure_work_item_live_search(state, &query)
+        crate::quick_launch::AzureLiveRequest::WorkItems { filter, query } => {
+            start_azure_work_item_live_search(state, filter, &query)
         }
         crate::quick_launch::AzureLiveRequest::PullRequests { filter, query } => {
             start_azure_pull_request_live_search(state, filter, &query)
@@ -291,11 +292,10 @@ pub(super) fn start_azure_combined_live_search(state: &RefCell<State>, query: &s
                 draft: false,
                 ready: false,
                 stale: false,
-                live: true,
             },
             query,
         ),
-        start_azure_work_item_live_search(state, query),
+        start_azure_work_item_live_search(state, Default::default(), query),
         start_azure_pipeline_live_search(state, crate::quick_launch::PipelineFilter::All, query),
     ];
     let launched = started.iter().filter(|started| **started).count();

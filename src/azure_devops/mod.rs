@@ -13,6 +13,7 @@
 //! Credential Manager (`keyring`) から必要時だけ読む。
 
 mod api;
+mod assignee;
 mod auth_cache;
 mod azure_cli;
 mod cache;
