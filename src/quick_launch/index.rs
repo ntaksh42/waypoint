@@ -117,6 +117,7 @@ impl Index {
             web_search: settings
                 .include_web_search
                 .then_some(settings.web_search_engine),
+            windows_settings: settings.include_windows_settings,
             ranking: Ranking::load(),
         }
     }
@@ -185,6 +186,7 @@ impl Index {
         self.web_search = settings
             .include_web_search
             .then_some(settings.web_search_engine);
+        self.windows_settings = settings.include_windows_settings;
         self.refresh_dynamic(config, dynamic);
     }
 

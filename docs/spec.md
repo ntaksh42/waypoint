@@ -145,6 +145,7 @@ Azure DevOps 検索 (`az `) は [spec-azure.md](spec-azure.md) にある。
 | `cx ` | フォルダ | Codex CLI を起動 | — | 9.15.5 |
 | `cs ` | Claude Code / Codex の過去セッション | 再開 | — | 9.15.6 |
 | `vs ` | VS Code / Cursor の最近のワークスペース | そのエディターで開く | `includeEditorWorkspaces` | 9.23 |
+| `ws ` | Windows の設定ページと旧コントロールパネル | 開く | `includeWindowsSettings` | 9.29 |
 | `f ` | Everything の検索結果 | 開く | `includeEverything` | 9.16 |
 | `??` | Web 検索 | 検索結果を開く | `includeWebSearch` | 9.21 |
 | `az ` | Azure DevOps | Web ページを開く | `azureDevOps.enabled` | 9.18 |
@@ -164,6 +165,7 @@ Azure DevOps 検索 (`az `) は [spec-azure.md](spec-azure.md) にある。
 - `cs `: 新しい順に並べる。Claude Code は `claude --resume <id>`、Codex は `codex resume <id>` で再開する。タイトルの無いセッションは出さない
 - `vs `: リモートは `Remote` タグで区別する。Insiders・VSCodium・Windsurf は対象外
 - `f `: `Alt+C` (大文字小文字) / `Alt+W` (単語単位) / `Alt+R` (正規表現) を切り替えられる。Everything が無ければ 0 件
+- `ws `: 約 90 件の静的な表 (`ms-settings:` のページと、環境変数・ネットワーク接続・デバイスマネージャーなど `ms-settings:` で開けない画面) から探す。日本語の画面名でも一致する。プレフィックスなしでは英語の名前だけで照合する。存在確認はしない。お気に入り登録と管理者実行の対象外。設定値のオン/オフ切り替えは扱わない
 - `??`: `?? rust` で検索する。空なら検索エンジンのトップを開く。エンジンは Google (既定) / Bing / DuckDuckGo / Brave
 
 ### パス入力

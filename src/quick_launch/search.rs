@@ -73,6 +73,16 @@ impl LowerKeys {
         entries.iter().map(Self::new).collect()
     }
 
+    /// 名前と、breadcrumb の代わりに照合する検索語から作るキー
+    /// (Windows 設定の別名、FR-9.29)。表示用の breadcrumb は照合しない。
+    pub(crate) fn from_name_and_keywords(name: &str, keywords: &str) -> Self {
+        Self {
+            name: name.to_lowercase(),
+            breadcrumb: keywords.to_lowercase(),
+            path: String::new(),
+        }
+    }
+
     /// 名前だけをマッチ対象にする検索キー。固定のコマンド候補 (FR-9.20)
     /// 向け。breadcrumb は説明文なので、そのまま検索対象にすると
     /// "Open waypoint settings" が `waypoint` や `open` のような普通の
@@ -182,6 +192,13 @@ impl Index {
         }
         if let Some(rest) = query.strip_prefix(APPS_PREFIX) {
             return search_entries_cached(&self.apps, &self.apps_lower, rest, false, &self.ranking);
+        }
+        if let Some(rest) = query.strip_prefix(super::WINDOWS_SETTINGS_PREFIX) {
+            if !self.windows_settings {
+                return Vec::new();
+            }
+            let (settings, keys, _) = super::windows_setting_entries();
+            return search_entries_cached(settings, keys, rest, false, &self.ranking);
         }
         if let Some(rest) = query.strip_prefix(TABS_PREFIX) {
             // 拡張からまだ 1 件も届いていないなら、0 件の代わりに導入案内を出す
@@ -313,6 +330,12 @@ impl Index {
             };
         }
         let (builtins, builtins_lower) = super::builtin_command_entries();
+        // Windows 設定は名前だけで照合する (FR-9.29)。無効時は空で渡す
+        let (settings, _, settings_names) = if self.windows_settings {
+            super::windows_setting_entries()
+        } else {
+            (&[][..], &[][..], &[][..])
+        };
         search_entries_cached_multi(
             &[
                 (&self.entries, &self.entries_lower),
@@ -320,6 +343,7 @@ impl Index {
                 (&self.bookmarks, &self.bookmarks_lower),
                 (&self.apps, &self.apps_lower),
                 (builtins, builtins_lower),
+                (settings, settings_names),
             ],
             query,
             self.search_paths,

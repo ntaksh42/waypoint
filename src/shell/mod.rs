@@ -168,6 +168,27 @@ pub fn open_shell_item(target: &str) -> std::io::Result<()> {
     }
 }
 
+/// Windows の設定ページ・旧コントロールパネルを開く (`ws `、FR-9.29)。
+/// `target` は組み込みの表 (`quick_launch::windows_settings`) の値だけで、
+/// `ms-settings:` URI か `<実行ファイル> <引数>` (最初の半角スペースで分ける)。
+pub fn open_windows_setting(target: &str) -> std::io::Result<()> {
+    let (file, params) = match target.split_once(' ') {
+        Some((file, params)) if !target.starts_with("ms-settings:") => (file, params),
+        _ => (target, ""),
+    };
+    let file = HSTRING::from(file);
+    let params = HSTRING::from(params);
+    let result = unsafe { ShellExecuteW(None, None, &file, &params, None, SW_SHOWNORMAL) };
+    let code = result.0 as isize;
+    if code > 32 {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(format!(
+            "ShellExecuteW failed with code {code}"
+        )))
+    }
+}
+
 /// Web の URL か。ブックマーク・タブ・Azure DevOps の URL は外部から届く値なので、
 /// `file:` や `ms-msdt:` のような `ShellExecuteW` が実行してしまう scheme を弾く。
 pub fn is_web_url(url: &str) -> bool {

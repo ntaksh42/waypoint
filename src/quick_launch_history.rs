@@ -84,6 +84,7 @@ fn key_kind(action: &Action) -> Option<&'static str> {
         Action::OpenUrl(_) => Some("url"),
         Action::OpenWithDefaultHandler => Some("default"),
         Action::LaunchApp => Some("app"),
+        Action::OpenWindowsSetting => Some("setting"),
         Action::OpenInTerminal => Some("terminal"),
         Action::OpenInEditor(_) => Some("editor"),
         Action::OpenEditorWorkspace(..) => None,
