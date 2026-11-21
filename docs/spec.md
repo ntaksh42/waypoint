@@ -157,6 +157,8 @@ Azure DevOps 検索 (`az `) は [spec-azure.md](spec-azure.md) にある。
 - `b ` `h `: 同じ URL は 1 件にまとめる (http/https、末尾の `/`、トラッキング用クエリの差を無視)。`http` / `https` 以外の URL は開かない
 - `h ` の Office: Excel / PowerPoint / Word の MRU (`HKCU\Software\Microsoft\Office\16.0\<App>\File MRU` と `User MRU\<アカウント>\File MRU`) をインデックス更新時にだけ読む (`src/office_recent.rs`)。テンプレートの MRU は読まない。閲覧履歴と合わせて最終利用の新しい順に並べ、同じファイルは 1 件に畳む。ローカルパスは既定ハンドラーで、SharePoint / OneDrive の URL は `ms-excel:ofe|u|<URL>` などの URI スキームでデスクトップアプリに開かせる。存在確認はしない。有効・無効は `includeBrowserHistory` に従う
 - `t `: ブラウザ拡張 (Waypoint Tab Bridge) が要る。未導入なら導入案内を開く候補を 1 件出す。タブの情報は保存しない
+  - 拡張はタブの作成・削除・URL とタイトルの変更・読み込み完了・切り替え・移動・ウィンドウ間の移動・ID の差し替え (`onReplaced`) のたびに、全タブの一覧を常駐部へ送る
+  - 常駐部は Quick Launch を開くたびに、拡張へ一覧の取り直しを頼む。依頼は別スレッドから投げ、表示を待たせない。届いた一覧が前と違えば候補を差し替え、`t ` の表示中なら結果も更新する。送信の失敗やイベントの取りこぼしで一覧が古くなっても、次に開いたときに直る
 - `w `: タイトルとプロセス名で探す (`w chrome`)
 - `k `: waypoint 自身は出さない。終了に失敗してもエラーは出さない
 - `ps `: `wt.exe -d <folder> pwsh`。無ければ Windows PowerShell

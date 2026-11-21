@@ -73,6 +73,9 @@ chrome.tabs.onUpdated.addListener((_tabId, changeInfo) => {
     scheduleSnapshot();
   }
 });
+// アドレスバーで確定したページを先読み済みのものに差し替えると、タブ ID が
+// 変わるのに onCreated / onUpdated は来ない
+chrome.tabs.onReplaced.addListener(scheduleSnapshot);
 chrome.tabs.onMoved.addListener(scheduleSnapshot);
 chrome.tabs.onAttached.addListener(scheduleSnapshot);
 chrome.tabs.onDetached.addListener(scheduleSnapshot);
