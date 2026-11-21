@@ -28,6 +28,12 @@ pub const FOCUS_COPYDATA: usize = 0x5750_5446;
 /// (MSI の更新を含む) 次にタブを触るまで `t ` が 0 件のままになる。
 /// 再起動後にこれを投げ、host が控えている最後の一覧を送り直させる。
 pub const RESEND_MESSAGE: u32 = WM_APP + 1;
+/// 常駐部から Native Messaging host へ送る、タブ一覧の取り直し要求。
+///
+/// `RESEND_MESSAGE` は host が控えている前回の一覧を送るだけなので、拡張が
+/// 送り損ねた変化は直らない。こちらは host から拡張へ `chrome.tabs.query` を
+/// やり直させる。Quick Launch を開くたびに投げる。
+pub const REFRESH_MESSAGE: u32 = WM_APP + 2;
 /// Native Messaging host が作る非表示ウィンドウのクラス名。
 pub const HOST_WINDOW_CLASS: PCWSTR = w!("WaypointTabHostWindow");
 /// Native Messaging と `WM_COPYDATA` の双方で受け入れる最大ペイロードサイズ。
@@ -270,6 +276,18 @@ pub fn request_focus(target: &TabTarget) -> bool {
 ///
 /// `PostMessage` なので待たない。一覧は host から `WM_COPYDATA` で非同期に届く。
 pub fn request_resend() {
+    post_to_hosts(RESEND_MESSAGE);
+}
+
+/// 起動中の全 Native Messaging host に、拡張からタブ一覧を取り直すよう頼む。
+///
+/// 窓の列挙を UI スレッドに載せないよう、Quick Launch の表示時は別スレッドから呼ぶ。
+/// 一覧は拡張 → host → 常駐部の順に `WM_COPYDATA` で非同期に届く。
+pub fn request_refresh() {
+    post_to_hosts(REFRESH_MESSAGE);
+}
+
+fn post_to_hosts(message: u32) {
     let mut previous = None;
     loop {
         let Ok(host) = (unsafe { FindWindowExW(None, previous, HOST_WINDOW_CLASS, None) }) else {
@@ -279,7 +297,7 @@ pub fn request_resend() {
             break;
         }
         unsafe {
-            let _ = PostMessageW(Some(host), RESEND_MESSAGE, WPARAM(0), LPARAM(0));
+            let _ = PostMessageW(Some(host), message, WPARAM(0), LPARAM(0));
         }
         previous = Some(host);
     }

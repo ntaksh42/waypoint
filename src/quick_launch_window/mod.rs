@@ -80,6 +80,9 @@ pub fn show(owner: HWND, origin: Option<HWND>) -> Result<()> {
     }
     // `cs ` (FR-9.15.6) 用。読み取りは専用スレッドで、表示を待たせない
     crate::agent_sessions::refresh_async();
+    // `t ` 用。送り込みで取りこぼした変化を、開くたびに拡張から取り直して直す。
+    // host の窓の列挙も含めて別スレッドで行い、表示を待たせない
+    std::thread::spawn(crate::browser_tabs::request_refresh);
     STATE.with(|state| {
         let state = state.borrow();
         if state.workspaces_enabled

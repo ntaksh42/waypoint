@@ -18,7 +18,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::w;
 
 use waypoint::browser_tabs::{
-    FOCUS_COPYDATA, HOST_WINDOW_CLASS, MAX_SNAPSHOT_BYTES, RESEND_MESSAGE, SNAPSHOT_COPYDATA,
+    FOCUS_COPYDATA, HOST_WINDOW_CLASS, MAX_SNAPSHOT_BYTES, REFRESH_MESSAGE, RESEND_MESSAGE,
+    SNAPSHOT_COPYDATA,
 };
 use waypoint::tray::CLASS_NAME as TRAY_WINDOW_CLASS;
 
@@ -189,6 +190,14 @@ extern "system" fn window_proc(
             // 常駐部のメッセージループが回り始める前に届くことがあるので、
             // 別スレッドで間隔を空けて数回試す
             std::thread::spawn(resend_last_snapshot);
+            LRESULT(0)
+        }
+        REFRESH_MESSAGE => {
+            // 拡張に `chrome.tabs.query` からやり直させる。stdout への書き込みは
+            // ブラウザ側が詰まると待つことがあるので、ウィンドウプロシージャでは行わない
+            std::thread::spawn(|| {
+                let _ = write_message(&serde_json::json!({ "type": "resend" }));
+            });
             LRESULT(0)
         }
         WM_DESTROY => {
