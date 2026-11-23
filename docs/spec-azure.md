@@ -40,6 +40,9 @@
 | `az pipeline` | `failed` (`fail`)・`definition` (`definitions` `def`)・`all` |
 
 - `repo:` も属性の 1 つで、ほかの属性の前後どちらに置いてもよい (`az pr repo:o/p/r mine foo` と `az pr mine repo:o/p/r foo` は同じ)
+- 解釈した属性は、結果の先頭の説明行に `Filters: [draft] [mine]` の形で出す。属性も検索語も無いときは、そのコマンドで使える属性の一覧を出す
+- 検索語全体を `"` で囲むと、属性名と同じ語も検索語になる (`az pr "draft fix"` は draft fix を検索する)。前後の `"` は検索語に含めない
+- 属性を置ける位置で語を途中まで打つと (`az pr dr`)、その語で前方一致する属性を候補の先頭に出す。選ぶと入力欄をその属性まで補う。指定済みの属性は出さない
 - `az wit` の属性は Live 検索にも同じ条件で効く。Live 検索では取得した結果 (9.18.10 の上限まで) を絞るので、上限で切れた分は出ない
 - `az wit mine` の「自分」は、同期した Work Item の担当者のうち、自分の ID と一致した人の uniqueName で判定する。一度も同期していない組織では `mine` に一致する項目は無い
 

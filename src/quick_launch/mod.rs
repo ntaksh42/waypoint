@@ -8,6 +8,7 @@ use crate::config::{Item, OpenMode};
 use crate::quick_launch_history::Ranking;
 
 mod azure;
+mod azure_attributes;
 mod azure_entries;
 mod azure_meta;
 mod azure_new;
@@ -31,6 +32,7 @@ pub use azure::{
     AzureCommand, AzureLiveRequest, PipelineFilter, PullRequestFilter, WorkItemFilter,
     WorkItemState, azure_command, azure_live_request,
 };
+pub(crate) use azure_attributes::{azure_attribute_completions, azure_attribute_notice};
 pub(crate) use azure_entries::{azure_shortcut_entries, azure_suggest_entry};
 pub use azure_meta::AzureMeta;
 pub(crate) use azure_scope::{
