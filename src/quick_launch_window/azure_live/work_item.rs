@@ -19,6 +19,7 @@ use crate::quick_launch::Entry;
 /// トリガー、入力のたびに Azure DevOps を叫ばない)。
 pub(in crate::quick_launch_window) fn start_azure_work_item_query(
     state: &RefCell<State>,
+    query: &str,
     filter: crate::quick_launch::WorkItemFilter,
     text: &str,
 ) {
@@ -43,11 +44,14 @@ pub(in crate::quick_launch_window) fn start_azure_work_item_query(
                 .results
                 .push(live_work_item_search_entry(filter, trimmed));
         }
-        state.empty_message = if state.results.is_empty() {
+        // 途中まで打った属性の補完を先頭に置く (FR-9.18 属性)
+        let attributes = crate::quick_launch::azure_attribute_completions(query);
+        state.results.splice(0..0, attributes);
+        let detail = if state.results.is_empty() {
             Some(if trimmed.is_empty() {
-                "No recently updated work items.".to_string()
+                "No recently updated work items."
             } else {
-                "No matching work items.".to_string()
+                "No matching work items."
             })
         } else {
             Some(if trimmed.is_empty() {
@@ -56,8 +60,9 @@ pub(in crate::quick_launch_window) fn start_azure_work_item_query(
                 "Cached work items by ID. Ctrl+Enter: fetch that ID in watched projects."
             } else {
                 "Cached work items. Ctrl+Enter: full-project text search (up to 300 per project)."
-            }.into())
+            })
         };
+        state.empty_message = super::super::search::azure_notice(query, detail);
         (state.list, !state.results.is_empty())
     };
     let Some(list) = list else {

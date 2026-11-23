@@ -95,7 +95,7 @@ pub(super) fn update_results(state: &RefCell<State>) {
     if let Some((crate::quick_launch::AzureCommand::WorkItems(filter), rest)) =
         crate::quick_launch::azure_command(&query)
     {
-        start_azure_work_item_query(state, filter, rest);
+        start_azure_work_item_query(state, &query, filter, rest);
         return;
     }
     if let Some((crate::quick_launch::AzureCommand::Suggest, _)) =
@@ -218,6 +218,10 @@ pub(super) fn update_results(state: &RefCell<State>) {
             {
                 state.results.push(live_pipeline_search_entry(filter, rest));
             }
+            // 途中まで打った属性の補完を先頭に置く (FR-9.18 属性)。
+            // ライブ検索の入口は「キャッシュで 0 件か」で決めるので、その判定の後で足す
+            let attributes = crate::quick_launch::azure_attribute_completions(&query);
+            state.results.splice(0..0, attributes);
             // `??` は索引を持たないため、`Index::search` は常に 0 件を返す。
             // 入力から確定候補 1 件をここで組み立てる (FR-9.21)。
             if let Some(engine) = state.index.web_search
@@ -242,7 +246,7 @@ pub(super) fn update_results(state: &RefCell<State>) {
                 Some("No matching creation command. Try az new bug, task, story, or pr.".into());
         }
         if state.empty_message.is_none() {
-            state.empty_message = azure_cache_notice(&query).map(str::to_string);
+            state.empty_message = azure_notice(&query, azure_cache_notice(&query));
         }
         // パス候補を足した結果は絞り込みの母集団にしない
         state.previous_query = (!is_path).then(|| query.clone());
@@ -272,6 +276,15 @@ pub(super) fn update_results(state: &RefCell<State>) {
         super::input::select_at(Some(list), row);
     }
     super::path_browse::ensure_list(state, &query);
+}
+
+/// `az pr` / `az wit` / `az pipeline` の説明行。解釈した属性の札
+/// (`azure_attribute_notice`) を、取得範囲の説明 (`detail`) の前に置く。
+pub(super) fn azure_notice(query: &str, detail: Option<&str>) -> Option<String> {
+    match (crate::quick_launch::azure_attribute_notice(query), detail) {
+        (Some(filters), Some(detail)) => Some(format!("{filters}  ·  {detail}")),
+        (filters, detail) => filters.or_else(|| detail.map(str::to_string)),
+    }
 }
 
 fn azure_cache_notice(query: &str) -> Option<&'static str> {

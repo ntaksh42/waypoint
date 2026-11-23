@@ -100,11 +100,8 @@ pub fn azure_command(query: &str) -> Option<(AzureCommand, &str)> {
     let rest = query.strip_prefix(AZURE_DEVOPS_PREFIX)?;
     // `az "build fix"`: `"` で始めたらサブコマンド判定をせず横断検索の検索語にする。
     // コマンド名と同じ語 (build / new / project 等) を検索する逃げ道
-    if let Some(quoted) = rest.strip_prefix('"') {
-        return Some((
-            AzureCommand::All,
-            quoted.strip_suffix('"').unwrap_or(quoted),
-        ));
+    if rest.starts_with('"') {
+        return Some((AzureCommand::All, unquote(rest)));
     }
     let (first, remaining) = rest
         .split_once(char::is_whitespace)
@@ -124,9 +121,17 @@ pub fn azure_command(query: &str) -> Option<(AzureCommand, &str)> {
     }
 }
 
+/// `"` で始まる検索語から前後の `"` を外す。`az "build"` / `az pr "draft fix"` の
+/// ように、属性名やコマンド名と同じ語を検索語として渡すための逃げ道。
+fn unquote(text: &str) -> &str {
+    let text = text.strip_prefix('"').unwrap_or(text);
+    text.strip_suffix('"').unwrap_or(text)
+}
+
 /// 空白区切りの先頭トークンを、既知の属性トークンである間だけ剥がしていく。
 /// `apply` が `true` を返したトークンだけ消費し、未知のトークンに当たったら
-/// そこで止めて残り (検索語) を返す。
+/// そこで止めて残り (検索語) を返す。`"` で始まるトークンに当たったら、
+/// そこから後ろを前後の `"` を外した検索語として返す。
 pub(super) fn strip_attribute_tokens(text: &str, mut apply: impl FnMut(&str) -> bool) -> &str {
     let mut rest = text;
     loop {
@@ -135,6 +140,9 @@ pub(super) fn strip_attribute_tokens(text: &str, mut apply: impl FnMut(&str) -> 
             .map_or((rest, ""), |(token, remaining)| {
                 (token, remaining.trim_start())
             });
+        if token.starts_with('"') {
+            return unquote(rest);
+        }
         if token.is_empty() || !apply(&token.to_ascii_lowercase()) {
             break;
         }
@@ -191,6 +199,10 @@ fn parse_pull_request_command(text: &str) -> (AzureCommand, &str) {
                 (token, remaining.trim_start())
             });
         if token.is_empty() {
+            break;
+        }
+        if token.starts_with('"') {
+            rest = unquote(rest);
             break;
         }
         if repository.is_none() && super::azure_scope::repository_scope(token).is_some() {
