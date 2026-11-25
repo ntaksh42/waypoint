@@ -54,7 +54,11 @@ pub(super) fn paint_window(window: HWND) {
                 .collect();
             let rank = selected_row.and_then(|row| item_rows.iter().position(|&i| i == row));
             (
-                super::draw_footer::footer_hints(entry.as_ref()),
+                if state.alias_edit.is_some() {
+                    super::draw_footer::alias_edit_hints()
+                } else {
+                    super::draw_footer::footer_hints(entry.as_ref())
+                },
                 super::draw_footer::footer_position(rank, item_rows.len()),
                 state.dpi,
                 state.background_brush,

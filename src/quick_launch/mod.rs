@@ -7,6 +7,7 @@ use fuzzy_matcher::skim::SkimMatcherV2;
 use crate::config::{Item, OpenMode};
 use crate::quick_launch_history::Ranking;
 
+mod aliases;
 mod azure;
 mod azure_attributes;
 mod azure_entries;
@@ -400,6 +401,8 @@ pub struct Index {
     /// Windows 設定の固定候補 (`ws `、FR-9.29) を検索対象にするか。
     pub(crate) windows_settings: bool,
     pub(crate) ranking: Ranking,
+    /// 候補の別名 (FR-9.30)。`ranking` と同じく構築時に読む。
+    pub(crate) aliases: crate::quick_launch_aliases::Aliases,
 }
 
 /// 実行中プロセスのスナップショットから `k ` の検索候補を作る (FR-9.15.2)。

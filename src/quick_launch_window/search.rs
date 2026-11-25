@@ -69,6 +69,9 @@ pub(super) fn update_results(state: &RefCell<State>) {
     // read_text も Win32 呼び出しなので借用の外で済ませる
     let edit = state.borrow().edit;
     let query = edit.map(super::input::read_text).unwrap_or_default();
+    if super::alias_edit::render(state) {
+        return;
+    }
     // 入力が変わった時点で、先行する Live 検索の応答は現在の候補ではない。
     // リクエスト自体は中断できないため、到着時に捨てる。
     invalidate_azure_live_searches(&mut state.borrow_mut());
@@ -171,6 +174,9 @@ pub(super) fn update_results(state: &RefCell<State>) {
                     .cloned()
                     .collect()
             };
+            // 別名 (FR-9.30) の一致を先頭・前方一致の段へ差し込む
+            let results = std::mem::take(&mut state.results);
+            state.results = state.index.apply_aliases(&query, results, MAX_LIST_RESULTS);
             // PR 検索がキャッシュで 0 件だったとき、末尾に明示的なライブ
             // 検索の入口を足す。API 全文検索が無いため、打ち切り期間を
             // 一時的に広げて再取得する以外に取りこぼしを拾う手段が無い。

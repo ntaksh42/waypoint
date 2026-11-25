@@ -64,7 +64,8 @@ fn footer_hints_follow_the_selected_candidate() {
             "Shift+\u{21B5}",
             "Ctrl+E",
             "Ctrl+C",
-            "Ctrl+Shift+\u{21B5}"
+            "Ctrl+Shift+\u{21B5}",
+            "F2"
         ]
     );
     assert!(footer_hints(None).is_empty());
