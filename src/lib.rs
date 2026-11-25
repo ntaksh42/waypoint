@@ -28,6 +28,7 @@ pub mod office_recent;
 pub mod panic_log;
 pub mod process;
 pub mod quick_launch;
+pub mod quick_launch_aliases;
 pub mod quick_launch_history;
 pub mod quick_launch_window;
 pub mod romaji;

@@ -78,7 +78,7 @@ fn prune(history: &mut History, now: u64) {
 
 /// 履歴に記録する対象の action か判定し、キーの種別プレフィックスを返す。
 /// `FocusWindow` は hwnd がプロセスをまたいで安定しないため対象外。
-fn key_kind(action: &Action) -> Option<&'static str> {
+pub(crate) fn key_kind(action: &Action) -> Option<&'static str> {
     match action {
         Action::OpenFolder(_) => Some("folder"),
         Action::OpenUrl(_) => Some("url"),
@@ -114,7 +114,7 @@ fn key_kind(action: &Action) -> Option<&'static str> {
 /// ある (`quick_launch::dedup_by_path` が索引側で行っている正規化と
 /// 同じ理由)。小文字化しないと同一対象の使用回数が分裂し、頻度ランキング
 /// が正しく積算されない。URL のパス・クエリは大小文字を区別するため元の綴りを使う。
-fn key_for(entry: &Entry) -> Option<String> {
+pub(crate) fn key_for(entry: &Entry) -> Option<String> {
     let kind = key_kind(&entry.action)?;
     let path = if kind == "url" {
         entry.path.clone()

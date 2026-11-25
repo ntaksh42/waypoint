@@ -5,6 +5,7 @@ mod bench_scoring;
 mod bench_search;
 mod fixture;
 
+mod aliases_test;
 mod convert_test;
 mod fuzzy_test;
 mod index_test;

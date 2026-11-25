@@ -109,6 +109,7 @@ impl Index {
                 .then_some(settings.web_search_engine),
             windows_settings: settings.include_windows_settings,
             ranking: Ranking::load(),
+            aliases: crate::quick_launch_aliases::Aliases::load(),
         }
     }
 

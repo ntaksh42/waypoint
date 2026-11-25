@@ -157,4 +157,6 @@ pub(in crate::quick_launch_window) struct State {
     pub(in crate::quick_launch_window) path_cycle: Option<path_browse::PathCycle>,
     /// 列挙待ちで保留している Tab を押したときの入力 (到着後に補完を続ける)。
     pub(in crate::quick_launch_window) path_tab_pending: Option<String>,
+    /// `F2` の別名入力中 (FR-9.30)。立っている間は検索欄が別名の入力欄になる。
+    pub(in crate::quick_launch_window) alias_edit: Option<super::alias_edit::AliasEdit>,
 }

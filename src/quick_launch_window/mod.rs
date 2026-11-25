@@ -1,5 +1,6 @@
 //! 標準 Win32 コントロールだけで構成する Quick Launch 画面。
 
+mod alias_edit;
 mod azure_detail;
 mod azure_live;
 mod azure_marker;
@@ -109,6 +110,8 @@ pub fn show(owner: HWND, origin: Option<HWND>) -> Result<()> {
         state.tabs_resend_requested = false;
         // Tab で列挙したサブフォルダ一覧もウィンドウを開くたびに捨てる
         path_browse::reset(&mut state);
+        // 前回閉じたときの別名入力は持ち越さない (FR-9.30)
+        state.alias_edit = None;
         (state.window, state.edit)
     });
     let (Some(window), Some(edit)) = (window, edit) else {
@@ -206,7 +209,26 @@ pub fn handle_message(message: &windows::Win32::UI::WindowsAndMessaging::MSG) ->
     if message.message != WM_KEYDOWN {
         return false;
     }
+    // 別名入力中 (FR-9.30) は Enter / Esc だけを奪い、他の候補操作を止める
+    if alias_edit::is_active() {
+        match message.wParam.0 as u32 {
+            0x0d => alias_edit::commit(),
+            0x1b => alias_edit::cancel(),
+            // 一覧は対象の 1 行だけなので、選択移動・Tab・F2 の再押下は捨てる
+            0x26 | 0x28 | 0x21 | 0x22 | 0x09 | 0x71 => {}
+            0x08 if unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0 => {
+                if let Some(edit) = STATE.with(|state| state.borrow().edit) {
+                    delete_word_before_cursor(edit);
+                }
+            }
+            // Ctrl+C / Ctrl+E / Ctrl+W などは候補操作へ回さず入力欄に任せる
+            _ => return false,
+        }
+        return true;
+    }
     match message.wParam.0 as u32 {
+        // F2: 選択中の候補に別名を付ける (FR-9.30)
+        0x71 => alias_edit::begin(),
         // Esc
         0x1b => {
             let (window, owner) = STATE.with(|state| {

@@ -63,6 +63,10 @@ pub fn install_index(mut index: Index, config: &Config, dynamic: &Menus) {
             index.refresh_config_items(config, dynamic);
             let tabs = state.browser_tabs.clone();
             index.set_browser_tabs(&tabs);
+            // 構築中に F2 で別名を保存していたら、構築時に読んだ古い別名で上書きしない
+            if state.index.aliases.is_newer_than(&index.aliases) {
+                index.aliases = std::mem::take(&mut state.index.aliases);
+            }
             state.index = index;
             state.previous_query = None;
             state.window.is_some()

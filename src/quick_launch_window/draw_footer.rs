@@ -81,7 +81,15 @@ pub(super) fn footer_hints(entry: Option<&Entry>) -> Vec<(&'static str, &'static
         }
         _ => {}
     }
+    if crate::quick_launch_aliases::Aliases::supports(entry) {
+        hints.push(("F2", "Alias"));
+    }
     hints
+}
+
+/// 別名の入力中 (FR-9.30) に出すキー操作。
+pub(super) fn alias_edit_hints() -> Vec<(&'static str, &'static str)> {
+    vec![(ENTER, "Save aliases"), ("Esc", "Cancel")]
 }
 
 /// 右端に出す位置表示 ("3 / 24")。`selected` は項目行の中での 0 始まりの順位。
