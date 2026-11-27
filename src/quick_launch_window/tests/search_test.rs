@@ -432,6 +432,7 @@ fn browser_tab(id: i32, title: &str) -> crate::browser_tabs::Tab {
         window_id: 1,
         title: title.to_string(),
         url: format!("https://example.com/{id}"),
+        source: None,
     }
 }
 
@@ -442,22 +443,23 @@ fn replacing_browser_tabs_with_the_same_list_does_not_rebuild_the_index() {
     STATE.with(|state| *state.borrow_mut() = State::default());
     let tabs = || vec![browser_tab(1, "one"), browser_tab(2, "two")];
 
-    super::super::replace_browser_tabs(Browser::Chrome, tabs());
+    super::super::replace_browser_tabs(Browser::Chrome, None, tabs());
     assert_eq!(STATE.with(|s| s.borrow().index.tabs.len()), 2);
 
     // 再構築されたかは、索引側のタブを空にして見分ける
     STATE.with(|s| s.borrow_mut().index.tabs.clear());
-    super::super::replace_browser_tabs(Browser::Chrome, tabs());
+    super::super::replace_browser_tabs(Browser::Chrome, None, tabs());
     assert!(STATE.with(|s| s.borrow().index.tabs.is_empty()));
 
     super::super::replace_browser_tabs(
         Browser::Chrome,
+        None,
         vec![browser_tab(1, "one"), browser_tab(2, "renamed")],
     );
     assert_eq!(STATE.with(|s| s.borrow().index.tabs.len()), 2);
 
     // 別ブラウザの一覧は互いに影響しない
-    super::super::replace_browser_tabs(Browser::Edge, vec![browser_tab(9, "edge")]);
+    super::super::replace_browser_tabs(Browser::Edge, None, vec![browser_tab(9, "edge")]);
     assert_eq!(STATE.with(|s| s.borrow().index.tabs.len()), 3);
 }
 

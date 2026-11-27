@@ -35,8 +35,9 @@ async function focusTab(message) {
   if (message.browser !== browser) return;
   try {
     const tab = await chrome.tabs.get(message.tabId);
-    if (tab.windowId !== message.windowId) return;
-    await chrome.windows.update(message.windowId, { focused: true });
+    // 接続を指定した別名はタブ ID で特定し、移動直後も今のウィンドウを使う。
+    if (message.focusOnly !== true && tab.windowId !== message.windowId) return;
+    await chrome.windows.update(tab.windowId, { focused: true });
     await chrome.tabs.update(message.tabId, { active: true });
   } catch {
     // タブが閉じた直後の要求は無視し、最新スナップショットで常駐側を追随させる。

@@ -31,6 +31,7 @@ fn main() {
     let Ok(window) = create_window() else {
         return;
     };
+    let _marker = waypoint::window_instance::WindowMarker::attach(window).ok();
     // HWND は raw pointer を持つため Send ではない。値だけを整数として渡し、
     // reader スレッド側で戻す (PostMessageW にしか使わない)。
     let reader_window = window.0 as isize;
@@ -75,7 +76,7 @@ fn create_window() -> windows::core::Result<HWND> {
 fn forward_snapshots(window: HWND) {
     let mut input = io::stdin();
     while let Ok(Some(message)) = read_message(&mut input) {
-        let forwarded = send_snapshot(&message);
+        let forwarded = send_snapshot(window, &message);
         if let Ok(mut last) = LAST_SNAPSHOT.lock() {
             *last = Some(message);
         }
@@ -120,7 +121,7 @@ fn write_message(value: &serde_json::Value) -> io::Result<()> {
     stdout.flush()
 }
 
-fn send_snapshot(message: &[u8]) -> bool {
+fn send_snapshot(sender: HWND, message: &[u8]) -> bool {
     let Ok(tray) = (unsafe { FindWindowW(TRAY_WINDOW_CLASS, None) }) else {
         return false;
     };
@@ -133,7 +134,7 @@ fn send_snapshot(message: &[u8]) -> bool {
         SendMessageTimeoutW(
             tray,
             WM_COPYDATA,
-            WPARAM(0),
+            WPARAM(sender.0 as usize),
             LPARAM((&copy_data as *const COPYDATASTRUCT).cast::<()>() as isize),
             SMTO_ABORTIFHUNG,
             100,
@@ -143,7 +144,7 @@ fn send_snapshot(message: &[u8]) -> bool {
     }
 }
 
-fn resend_last_snapshot() {
+fn resend_last_snapshot(sender: isize) {
     let last = LAST_SNAPSHOT.lock().ok().and_then(|last| last.clone());
     let Some(snapshot) = last else {
         // まだ一覧を受け取っていない。拡張に送り直してもらう
@@ -151,7 +152,7 @@ fn resend_last_snapshot() {
         return;
     };
     for _ in 0..5 {
-        if send_snapshot(&snapshot) {
+        if send_snapshot(HWND(sender as *mut _), &snapshot) {
             return;
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
@@ -189,7 +190,8 @@ extern "system" fn window_proc(
         RESEND_MESSAGE => {
             // 常駐部のメッセージループが回り始める前に届くことがあるので、
             // 別スレッドで間隔を空けて数回試す
-            std::thread::spawn(resend_last_snapshot);
+            let sender = hwnd.0 as isize;
+            std::thread::spawn(move || resend_last_snapshot(sender));
             LRESULT(0)
         }
         REFRESH_MESSAGE => {

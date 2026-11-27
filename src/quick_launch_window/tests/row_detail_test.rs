@@ -53,7 +53,11 @@ fn footer_hints_follow_the_selected_candidate() {
     let window = entry("", "", Action::FocusWindow(1));
     assert_eq!(
         footer_hints(Some(&window)),
-        [("\u{21B5}", "Switch"), ("Ctrl+W", "Close window")]
+        [
+            ("\u{21B5}", "Switch"),
+            ("Ctrl+W", "Close window"),
+            ("F2", "Alias"),
+        ]
     );
     let folder = entry("", r"E:\x", Action::OpenFolder(OpenMode::NewWindow));
     let keys: Vec<_> = footer_hints(Some(&folder)).iter().map(|h| h.0).collect();

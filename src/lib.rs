@@ -39,3 +39,5 @@ pub mod tray;
 pub mod trigger;
 pub mod url_key;
 pub mod web_search;
+#[doc(hidden)]
+pub mod window_instance;

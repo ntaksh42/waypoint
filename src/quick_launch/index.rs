@@ -231,6 +231,8 @@ impl Index {
                     tab_id: tab.id,
                     window_id: tab.window_id,
                     url: tab.url.clone(),
+                    source: tab.source,
+                    focus_only: false,
                 }),
                 branch: None,
             })

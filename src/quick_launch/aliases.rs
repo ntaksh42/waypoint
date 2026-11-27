@@ -6,8 +6,8 @@
 
 use std::collections::HashSet;
 
-use super::{Entry, Index};
-use crate::quick_launch_aliases::AliasRecord;
+use super::{Action, Entry, Index};
+use crate::quick_launch_aliases::{AliasRecord, LiveKey};
 use crate::quick_launch_history::{key_for, key_kind};
 
 impl Index {
@@ -26,13 +26,21 @@ impl Index {
         }
         let term = query.to_lowercase();
         let (exact, prefix) = self.aliases.lookup(&term);
-        if exact.is_empty() && prefix.is_empty() {
+        let (live_exact, live_prefix) = self.aliases.live.lookup(&term);
+        if exact.is_empty() && prefix.is_empty() && live_exact.is_empty() && live_prefix.is_empty()
+        {
             return results;
         }
         let mut seen = HashSet::new();
-        let exact = self.resolve_aliases(&exact, &mut seen);
-        let prefix = self.resolve_aliases(&prefix, &mut seen);
-        results.retain(|entry| key_for(entry).is_none_or(|key| !seen.contains(&key)));
+        let mut exact = self.resolve_aliases(&exact, &mut seen);
+        let mut prefix = self.resolve_aliases(&prefix, &mut seen);
+        let mut live_seen = Vec::new();
+        self.merge_live_aliases(&mut exact, live_exact, &mut live_seen);
+        self.merge_live_aliases(&mut prefix, live_prefix, &mut live_seen);
+        results.retain(|entry| {
+            key_for(entry).is_none_or(|key| !seen.contains(&key))
+                && !live_seen.iter().any(|key| key.matches(entry))
+        });
         let after_name_prefix = results
             .iter()
             .position(|entry| !entry.name.to_lowercase().starts_with(&term))
@@ -41,6 +49,52 @@ impl Index {
         results.splice(0..0, exact);
         results.truncate(limit);
         results
+    }
+
+    fn merge_live_aliases(
+        &self,
+        entries: &mut Vec<Entry>,
+        keys: Vec<LiveKey>,
+        seen: &mut Vec<LiveKey>,
+    ) {
+        let original_len = entries.len();
+        for key in keys {
+            if let Some(entry) = self.live_alias_entry(key) {
+                let mut entry = entry.clone();
+                if let Action::FocusBrowserTab(target) = &mut entry.action {
+                    target.focus_only = true;
+                }
+                seen.push(key);
+                entries.push(entry);
+            }
+        }
+        if entries.len() != original_len {
+            entries.sort_by_cached_key(|entry| {
+                self.ranking.rank_lower(entry, &entry.path.to_lowercase())
+            });
+        }
+    }
+
+    pub(crate) fn live_alias_entry(&self, key: LiveKey) -> Option<&Entry> {
+        let entries = match key {
+            LiveKey::Window(_) => &self.windows,
+            LiveKey::Tab(..) => &self.tabs,
+        };
+        key.is_current()
+            .then(|| entries.iter().find(|entry| key.matches(entry)))
+            .flatten()
+    }
+
+    pub(crate) fn prune_live_aliases(&mut self) -> bool {
+        let mut closed_windows = Vec::new();
+        let changed = self.aliases.live.prune(&self.tabs, &mut closed_windows);
+        if !closed_windows.is_empty() {
+            self.windows.retain(|entry| {
+                !matches!(entry.action, Action::FocusWindow(hwnd) if closed_windows.contains(&hwnd))
+            });
+            self.windows_lower = super::search::LowerKeys::build_for(&self.windows);
+        }
+        changed
     }
 
     /// 別名を候補へ戻す。同じ候補を指す別名は 1 件にまとめ、使用頻度順に並べる。

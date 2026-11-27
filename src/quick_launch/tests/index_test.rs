@@ -266,6 +266,7 @@ fn lightweight_refreshes_keep_browser_tabs() {
             window_id: 1,
             title: "Rust Programming Language".into(),
             url: "https://www.rust-lang.org/".into(),
+            source: None,
         },
     )]);
     assert_eq!(index.search("t rust").len(), 1, "前提: タブが検索できる");

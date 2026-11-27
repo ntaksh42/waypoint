@@ -66,7 +66,10 @@ pub fn install_index(mut index: Index, config: &Config, dynamic: &Menus) {
             // 構築中に F2 で別名を保存していたら、構築時に読んだ古い別名で上書きしない
             if state.index.aliases.is_newer_than(&index.aliases) {
                 index.aliases = std::mem::take(&mut state.index.aliases);
+            } else {
+                index.aliases.live = std::mem::take(&mut state.index.aliases.live);
             }
+            index.prune_live_aliases();
             state.index = index;
             state.previous_query = None;
             state.window.is_some()
@@ -91,6 +94,7 @@ pub fn configure_dynamic(config: &Config, dynamic: &Menus) {
             let mut state = state.borrow_mut();
             // タブは `refresh_dynamic` で消えない。別経路 (`replace_browser_tabs`) で更新する
             state.index.refresh_dynamic(config, dynamic);
+            state.index.prune_live_aliases();
             // Index の中身 (entries/windows) が変わったので、前回結果への
             // 絞り込み最適化 (`refined_search_term`) をそのまま使い回さない
             state.previous_query = None;
@@ -153,24 +157,36 @@ pub(crate) fn configure_azure(config: &Config, built: crate::quick_launch::Azure
     });
 }
 
-/// Native Messaging host が届けた 1 ブラウザ分のタブ一覧を入れ替える。
+/// Native Messaging host が届けた 1 接続分のタブ一覧を入れ替える。
 ///
 /// タブの変更通知時だけ呼ばれる。Quick Launch が表示中なら、現在の `t ` 検索結果も
 /// 即座に差し替えるが、ブラウザへ同期問い合わせは行わない。
 pub fn replace_browser_tabs(
     browser: crate::browser_tabs::Browser,
-    tabs: Vec<crate::browser_tabs::Tab>,
+    source: Option<crate::window_instance::WindowInstance>,
+    mut tabs: Vec<crate::browser_tabs::Tab>,
 ) {
+    for tab in &mut tabs {
+        tab.source = source;
+    }
     STATE.with(|state| {
-        let (has_window, edit) = {
+        let (has_window, edit, refresh_aliases) = {
             let mut state = state.borrow_mut();
+            // 同じブラウザのプロファイル同士は別の host でつながる。
+            let mut host_alive = std::collections::HashMap::new();
+            let old_len = state.browser_tabs.len();
+            state.browser_tabs.retain(|(owner, tab)| {
+                tab.source.map_or(*owner != browser || source.is_none(), |host| {
+                    *host_alive.entry(host).or_insert_with(|| host.is_current())
+                })
+            });
             // 拡張はタブの読み込み中など内容が変わらない通知でも全タブを送る。
             // 同じ一覧なら索引の再構築も再描画もしない
             let unchanged = {
                 let mut current = state
                     .browser_tabs
                     .iter()
-                    .filter(|(source, _)| *source == browser)
+                    .filter(|(owner, tab)| *owner == browser && tab.source == source)
                     .map(|(_, tab)| tab);
                 let mut incoming = tabs.iter();
                 loop {
@@ -181,25 +197,40 @@ pub fn replace_browser_tabs(
                     }
                 }
             };
-            if unchanged {
+            if unchanged && old_len == state.browser_tabs.len() {
                 return;
             }
-            state.browser_tabs.retain(|(source, _)| *source != browser);
+            state
+                .browser_tabs
+                .retain(|(owner, tab)| *owner != browser || tab.source != source);
             state
                 .browser_tabs
                 .extend(tabs.into_iter().map(|tab| (browser, tab)));
             let state = &mut *state;
+            let searching_alias = state.previous_query.as_ref().is_some_and(|query| {
+                state.index.aliases.live.matches_query(query)
+            });
+            let showing_tab_alias = state.results.iter().any(|entry| {
+                matches!(&entry.action, crate::quick_launch::Action::FocusBrowserTab(target)
+                    if target.focus_only && (target.source == source && target.browser == browser
+                         || target.source.is_some_and(|host| host_alive.get(&host) == Some(&false))))
+            });
             state.index.set_browser_tabs(&state.browser_tabs);
-            state.previous_query = None;
-            (state.window.is_some(), state.edit)
+            let changed = state.index.prune_live_aliases();
+            let refresh_aliases = showing_tab_alias || (searching_alias && changed);
+            (state.window.is_some(), state.edit, refresh_aliases)
         };
-        // タブを検索するのは `t ` のときだけなので、それ以外の表示は触らない
+        // `t ` の一覧と、タブの別名を含み得る検索だけを更新する
         let in_tabs_mode = has_window
             && edit.is_some_and(|edit| {
                 super::input::read_text(edit).starts_with(crate::quick_launch::TABS_PREFIX)
             });
         if in_tabs_mode {
+            state.borrow_mut().previous_query = None;
             update_results(state);
+        } else if has_window && refresh_aliases {
+            state.borrow_mut().previous_query = None;
+            super::alias_edit::refresh_alias_results(state);
         }
     });
 }

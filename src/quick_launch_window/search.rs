@@ -72,6 +72,7 @@ pub(super) fn update_results(state: &RefCell<State>) {
     if super::alias_edit::render(state) {
         return;
     }
+    super::alias_edit::watch_live_results(state, &query);
     // 入力が変わった時点で、先行する Live 検索の応答は現在の候補ではない。
     // リクエスト自体は中断できないため、到着時に捨てる。
     invalidate_azure_live_searches(&mut state.borrow_mut());
@@ -150,6 +151,7 @@ pub(super) fn update_results(state: &RefCell<State>) {
             // する (実測: 候補 25 件超のとき、絞り込みを続けると本来ヒット
             // するはずの候補が一覧から消えていた)。
             state.results = if !query.starts_with(crate::quick_launch::CLAUDE_CODE_PREFIX)
+                && state.index.aliases.live.is_empty()
                 && let Some(search_term) = refinable_search_term(
                     state.previous_query.as_deref(),
                     &query,

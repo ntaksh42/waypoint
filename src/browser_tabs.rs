@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use windows::Win32::Foundation::{LPARAM, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey,
@@ -73,6 +73,8 @@ pub struct Tab {
     pub title: String,
     #[serde(default)]
     pub url: String,
+    #[serde(skip)]
+    pub source: Option<crate::window_instance::WindowInstance>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -93,6 +95,10 @@ pub struct TabTarget {
     pub window_id: i32,
     /// Native Messaging host が停止している場合に開く URL。メモリ内だけに保持する。
     pub url: String,
+    #[serde(skip)]
+    pub source: Option<crate::window_instance::WindowInstance>,
+    #[serde(skip)]
+    pub focus_only: bool,
 }
 
 #[derive(Serialize)]
@@ -103,6 +109,7 @@ struct FocusRequest {
     browser: Browser,
     tab_id: i32,
     window_id: i32,
+    focus_only: bool,
 }
 
 /// 拡張からの JSON スナップショットを検証して返す。
@@ -221,10 +228,10 @@ pub(crate) fn set_native_host_registry(
     result.ok().map_err(std::io::Error::other)
 }
 
-/// 起動中の全 Native Messaging host に前面化要求を送る。
+/// タブの接続元の Native Messaging host に前面化要求を送る。
 ///
-/// Chrome と Edge はそれぞれ host プロセスを持ち得る。要求にはブラウザ種別も
-/// 入れるため、対象外の拡張は無視する。`WM_COPYDATA` は同期送信なので
+/// 接続元を送らない旧 host の候補は、従来どおり全 host に送る。要求に含めた
+/// ブラウザ種別で対象外の拡張は無視する。`WM_COPYDATA` は同期送信なので
 /// ペイロードの寿命は呼び出し中だけでよい。停止した host が残っていても
 /// 実行操作を固めないよう、各 host への送信は 100ms で打ち切る。
 pub fn request_focus(target: &TabTarget) -> bool {
@@ -233,6 +240,7 @@ pub fn request_focus(target: &TabTarget) -> bool {
         browser: target.browser,
         tab_id: target.tab_id,
         window_id: target.window_id,
+        focus_only: target.focus_only,
     }) else {
         return false;
     };
@@ -246,6 +254,12 @@ pub fn request_focus(target: &TabTarget) -> bool {
     unsafe {
         let _ = AllowSetForegroundWindow(ASFW_ANY);
     }
+    if let Some(source) = target.source {
+        return source.is_current() && send_focus(HWND(source.hwnd as *mut _), &copy_data);
+    }
+    if target.focus_only {
+        return false;
+    }
     let mut previous = None;
     let mut sent = false;
     loop {
@@ -255,21 +269,25 @@ pub fn request_focus(target: &TabTarget) -> bool {
         if host.0.is_null() {
             break;
         }
-        let result = unsafe {
-            SendMessageTimeoutW(
-                host,
-                WM_COPYDATA,
-                WPARAM(0),
-                LPARAM((&copy_data as *const COPYDATASTRUCT).cast::<()>() as isize),
-                SMTO_ABORTIFHUNG,
-                100,
-                None,
-            )
-        };
-        sent |= result.0 != 0;
+        sent |= send_focus(host, &copy_data);
         previous = Some(host);
     }
     sent
+}
+
+fn send_focus(host: HWND, copy_data: &COPYDATASTRUCT) -> bool {
+    unsafe {
+        SendMessageTimeoutW(
+            host,
+            WM_COPYDATA,
+            WPARAM(0),
+            LPARAM((copy_data as *const COPYDATASTRUCT) as isize),
+            SMTO_ABORTIFHUNG,
+            100,
+            None,
+        )
+        .0 != 0
+    }
 }
 
 /// 起動中の全 Native Messaging host に、直近のタブ一覧の再送を頼む。

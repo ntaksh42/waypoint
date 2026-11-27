@@ -74,7 +74,10 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                     // 前面化は検索窓を隠す前に完了している (queue_selected)。
                     quick_launch::Action::FocusWindow(_) => {}
                     quick_launch::Action::FocusBrowserTab(target) => {
-                        if !crate::browser_tabs::request_focus(&target) && !target.url.is_empty() {
+                        if !crate::browser_tabs::request_focus(&target)
+                            && !target.focus_only
+                            && !target.url.is_empty()
+                        {
                             let _ = shell::open_url(&target.url);
                         }
                     }
@@ -246,7 +249,9 @@ fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                         copy_data.cbData as usize,
                     );
                     if let Some((browser, tabs)) = crate::browser_tabs::parse_snapshot(bytes) {
-                        quick_launch_window::replace_browser_tabs(browser, tabs);
+                        let source =
+                            crate::window_instance::WindowInstance::read(wparam.0 as isize);
+                        quick_launch_window::replace_browser_tabs(browser, source, tabs);
                     }
                 }
             }

@@ -5,8 +5,11 @@
 //! 書き足すと管理画面の保存で消えうる。
 //!
 //! 候補の同一性は使用履歴と同じキー (`quick_launch_history::key_for`、
-//! `"{kind}|{path}"`) で判定する。次回に同じ対象を指せない候補 (ウィンドウ・
-//! タブ・プロセスなど) はキーを持たないので、別名も付けられない。
+//! `"{kind}|{path}"`) で判定する。開いているウィンドウとタブの別名はメモリに保持する。
+
+mod live;
+
+pub(crate) use live::{LiveAliasTarget, LiveKey};
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -76,6 +79,8 @@ pub struct Aliases {
     aliases: Vec<AliasRecord>,
     #[serde(skip)]
     revision: u64,
+    #[serde(skip)]
+    pub(crate) live: live::LiveAliases,
 }
 
 fn aliases_path() -> Option<PathBuf> {
@@ -114,7 +119,7 @@ impl Aliases {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.aliases.is_empty()
+        self.aliases.is_empty() && self.live.is_empty()
     }
 
     pub fn records(&self) -> &[AliasRecord] {
@@ -123,7 +128,7 @@ impl Aliases {
 
     /// 別名を付けられる候補か。
     pub fn supports(entry: &Entry) -> bool {
-        key_for(entry).is_some()
+        live::supports(entry) || key_for(entry).is_some()
     }
 
     /// `entry` に付いている別名 (付けた順)。

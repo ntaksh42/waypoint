@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
+use windows::Win32::UI::WindowsAndMessaging::{IsWindow, PostMessageW};
 
 use crate::shell::ComGuard;
 
@@ -120,7 +120,18 @@ pub fn refresh_async(notify: HWND, message: u32) -> bool {
                 started.elapsed(),
             );
         }
-        publish(notify, message, |menus| recent.apply_to(menus));
+        publish(notify, message, |menus| {
+            recent.apply_to(menus);
+            // Recent を調べている間に閉じた窓を、以前の一覧から復活させない。
+            let old_len = menus.all_windows.len();
+            menus
+                .all_windows
+                .retain(|window| unsafe { IsWindow(Some(HWND(window.hwnd as *mut _))).as_bool() });
+            if old_len != menus.all_windows.len() {
+                menus.current_windows =
+                    menus.all_windows.iter().take(ITEM_LIMIT).cloned().collect();
+            }
+        });
         REFRESHING.store(false, Ordering::Release);
     });
     true

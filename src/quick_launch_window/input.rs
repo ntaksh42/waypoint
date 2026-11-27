@@ -170,6 +170,7 @@ pub(super) fn queue_selected() {
     let selected = current_selection(list);
 
     enum Selected {
+        Refresh,
         Replace(HWND, String),
         Execute(Option<HWND>, Option<HWND>, Option<HWND>),
         LiveWorkItemSearch(crate::quick_launch::WorkItemFilter, String),
@@ -180,6 +181,20 @@ pub(super) fn queue_selected() {
     let selected = STATE.with(|state| {
         let mut state = state.borrow_mut();
         let mut entry = selected.and_then(|row| entry_at_row(&state, row))?;
+        if matches!(entry.action, Action::FocusWindow(_))
+            && !state.index.aliases.live.is_empty()
+            && state.previous_query.as_ref().is_some_and(|query| {
+                state
+                    .index
+                    .aliases
+                    .live
+                    .window_selection_is_stale(&entry, query)
+            })
+        {
+            state.index.prune_live_aliases();
+            state.previous_query = None;
+            return Some(Selected::Refresh);
+        }
         if let Action::ReplaceQuery(query) = &entry.action {
             return state
                 .edit
@@ -211,6 +226,7 @@ pub(super) fn queue_selected() {
         Some(Selected::Execute(state.window, state.owner, focus_target))
     });
     match selected {
+        Some(Selected::Refresh) => STATE.with(super::search::update_results),
         Some(Selected::Replace(edit, query)) => unsafe {
             let cursor = query.encode_utf16().count();
             let _ = SetWindowTextW(edit, &HSTRING::from(query));

@@ -7,7 +7,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows::Win32::UI::WindowsAndMessaging::{
     DefWindowProcW, EN_CHANGE, GetClientRect, LBN_DBLCLK, LBN_SELCHANGE, MoveWindow, WM_ACTIVATE,
     WM_CLOSE, WM_COMMAND, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_DRAWITEM, WM_ERASEBKGND,
-    WM_MEASUREITEM, WM_PAINT, WM_SETFOCUS, WM_SIZE,
+    WM_MEASUREITEM, WM_PAINT, WM_SETFOCUS, WM_SIZE, WM_TIMER,
 };
 
 use super::azure_live::{
@@ -27,6 +27,10 @@ use super::{
 
 pub(super) fn dispatch(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match message {
+        WM_TIMER if wparam.0 == super::alias_edit::LIVE_ALIAS_TIMER => {
+            super::alias_edit::check_live_results(hwnd);
+            LRESULT(0)
+        }
         super::WM_WORKSPACES_READY => {
             STATE.with(|state| {
                 let edit = state.borrow().edit;
