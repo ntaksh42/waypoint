@@ -1,12 +1,12 @@
 # AGENTS.md
 
-Guidance for AI coding agents working in this repository (read by Claude Code via CLAUDE.md import, and by other agents such as Codex / Copilot / Cursor directly).
+Repository instructions for coding agents. Claude Code reads them via `CLAUDE.md`.
 
 ## What this is
 
-waypoint is a Windows tray-resident popup launcher (Rust). A hotkey or the middle mouse button opens a hierarchical popup menu; selecting an entry jumps to a folder, focuses a window, opens a bookmark, or launches an app. It started as a re-implementation of Quick Access Popup's core narrowed to folder navigation, and has since grown into a general launcher — Quick Launch's search box covers folders, Recent/Frequent Folders, open windows (`w ` prefix), browser bookmarks (`b ` prefix), browser history (`h ` prefix), open browser tabs (`t ` prefix), installed apps (`a ` prefix), Everything file search (`f ` prefix), Windows settings pages (`ws ` prefix), and Azure DevOps PRs / pipelines / work items (`az ` prefix). See `docs/spec.md` FR-9 for the full behavior of each search mode.
+waypoint is a Rust launcher that runs in the Windows tray. A hotkey, middle-click, or tray click opens a menu or Quick Launch. The launcher grew out of Quick Access Popup-style folder navigation. See `docs/spec.md` FR-9 for Quick Launch search modes and shortcuts.
 
-Single developer, not distributed. No installer, no auto-update, no localization.
+Single-developer project. No auto-update or localization.
 
 UI text is **English**. Code comments are **Japanese** — keep both conventions when editing.
 
@@ -323,25 +323,9 @@ DevDeck 側のスキーマ変更で読み取りが恒常的に失敗するよう
 
 ## Current state
 
-**動く。** 中ボタン / ホットキー / トレイ左クリックでメニューが出て、選んだフォルダが
-Windows の既定フォルダーハンドラーで開く。Quick Launch のホットキーからはフォルダ・
-Recent/Frequent Folders・Open Windows (`w `) ・ブックマーク (`b `) ・ブラウザ履歴 (`h `) ・
-開いているブラウザタブ (`t `) ・アプリ (`a `) ・Everything (`f `) ・Azure DevOps (`az `) を
-横断検索できる。実機で確認済み。
-
-実装済み:
-- FR-1 トリガー (中ボタン・ホットキー・トレイ左クリック・除外プロセス・ドラッグ判定)
-- FR-2 メニュー表示 (階層・アイコン・数字アクセラレータ・グレー表示・Git ブランチ表示)
-- FR-3 4 種類の項目、FR-4 newWindow / reuse、FR-5 変数展開
-- FR-6 管理画面 (項目・ユーザー変数・トリガー設定・Azure DevOps 監視対象の編集、保存後の即時反映)
-- FR-7 設定の読み書き (原子的保存・パース失敗時の継続起動)
-- FR-8 常駐 / トレイメニュー / 二重起動抑止 / 自動起動
-- FR-9 Quick Launch — フォルダ・Recent/Frequent・Current Windows・アプリの横断検索に加え、
-  プレフィックス限定モードでブックマーク (`b `) ・ブラウザ履歴 (`h `) ・開いているタブ
-  (`t `、Native Messaging 拡張連携) ・Everything 全文検索 (`f `、`WM_COPYDATA` IPC) ・
-  Azure DevOps の PR / Pipeline / Work Item (`az `、SQLite キャッシュ + ライブ検索) を検索する。
-  お気に入り昇格 (`Ctrl+Shift+Enter`) 、パスのクリップボードコピー (`Ctrl+C`) 、
-  エクスプローラーで選択表示 (`Ctrl+E`) も実装済み
+トレイ常駐、フォルダメニュー、設定画面、Quick Launch を実装済み。トリガーからフォルダを
+開く操作と Quick Launch の検索は実機で確認済み。機能の詳細は `docs/spec.md` の FR-1〜9、
+検索プレフィックスとキー操作は `help/index.html` を参照。
 
 ## 主要モジュール
 
