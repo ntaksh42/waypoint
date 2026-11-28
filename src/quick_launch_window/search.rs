@@ -162,6 +162,7 @@ pub(super) fn update_results(state: &RefCell<State>) {
                     search_term,
                     state.index.search_paths,
                     &state.index.ranking,
+                    crate::quick_launch::prefix_badge(&query).is_none(),
                 )
                 .into_iter()
                 .take(MAX_LIST_RESULTS)

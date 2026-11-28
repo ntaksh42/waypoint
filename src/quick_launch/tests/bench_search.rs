@@ -119,6 +119,7 @@ fn bench_incremental_typing() {
                     query,
                     index.search_paths,
                     &index.ranking,
+                    true,
                 )
                 .into_iter()
                 .take(MAX_LIST_RESULTS)
@@ -303,7 +304,7 @@ fn bench_snapshot_search() {
         let snapshot = Snapshot::new(entries.clone());
         for query in ["flaky", "waypoint repo", "zzzz"] {
             let old = ms_per_iter(500, || {
-                std::hint::black_box(search_entries(&entries, query, true, &ranking));
+                std::hint::black_box(search_entries(&entries, query, true, &ranking, false));
             });
             let new = ms_per_iter(500, || {
                 std::hint::black_box(snapshot.search(query, true, &ranking));

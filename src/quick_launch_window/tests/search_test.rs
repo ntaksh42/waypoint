@@ -170,9 +170,9 @@ fn refined_search_is_skipped_when_previous_results_were_truncated() {
 fn refining_romaji_rechecks_candidates_when_syllables_change() {
     let entries = [folder_entry("なまえ")];
     let ranking = crate::quick_launch_history::Ranking::default();
-    assert!(crate::quick_launch::search_entries(&entries, "n", false, &ranking).is_empty());
+    assert!(crate::quick_launch::search_entries(&entries, "n", false, &ranking, true).is_empty());
     assert_eq!(
-        crate::quick_launch::search_entries(&entries, "na", false, &ranking).len(),
+        crate::quick_launch::search_entries(&entries, "na", false, &ranking, true).len(),
         1
     );
     assert_eq!(refinable_search_term(Some("n"), "na", 0), None);

@@ -348,6 +348,7 @@ impl Index {
             query,
             self.search_paths,
             &self.ranking,
+            true,
         )
     }
 

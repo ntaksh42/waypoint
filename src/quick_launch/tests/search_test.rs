@@ -22,20 +22,55 @@ fn exact_and_prefix_matches_rank_before_substrings() {
     let found = index.search("waypoint");
     // FR-9.2: 無接頭辞の通常検索は Folders / Open Windows / Bookmarks /
     // Apps を横断する (History は対象外、`h ` プレフィックス限定)。
-    // 先頭一致 (Waypoint docs, waypoint - Notepad) が単語境界一致
-    // (Old waypoint) や breadcrumb 一致 (Release) より先に並ぶ。
+    // タイトルに一致したウィンドウを先に出し、残りは一致度順に並べる。
     assert_eq!(
         found
             .iter()
             .map(|item| item.name.as_str())
             .collect::<Vec<_>>(),
         [
-            "Waypoint docs",
             "waypoint - Notepad",
+            "Waypoint docs",
             "Old waypoint",
             "Release"
         ]
     );
+}
+
+#[test]
+fn normal_search_promotes_contiguous_window_matches_but_not_fuzzy_ones() {
+    let index = Index {
+        bookmarks: vec![Entry {
+            name: "Outlook".into(),
+            ..index().bookmarks.remove(0)
+        }],
+        windows: vec![
+            Entry {
+                name: "Mail - Outlook".into(),
+                ..index().windows.remove(0)
+            },
+            Entry {
+                name: "Output log".into(),
+                action: Action::FocusWindow(2),
+                ..index().windows.remove(0)
+            },
+        ],
+        ..Index::default()
+    };
+    let previous: Vec<_> = index.search("out").into_iter().cloned().collect();
+    let expected = ["Mail - Outlook", "Outlook", "Output log"];
+    for results in [
+        index.search("outl"),
+        search_entries(&previous, "outl", false, &index.ranking, true),
+    ] {
+        assert_eq!(
+            results
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
 }
 
 #[test]

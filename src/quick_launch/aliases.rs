@@ -43,8 +43,8 @@ impl Index {
         });
         let after_name_prefix = results
             .iter()
-            .position(|entry| !entry.name.to_lowercase().starts_with(&term))
-            .unwrap_or(results.len());
+            .rposition(|entry| entry.name.to_lowercase().starts_with(&term))
+            .map_or(0, |position| position + 1);
         results.splice(after_name_prefix..after_name_prefix, prefix);
         results.splice(0..0, exact);
         results.truncate(limit);

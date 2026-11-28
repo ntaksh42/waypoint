@@ -89,7 +89,7 @@ fn reference_search<'a>(
 ) -> Vec<&'a Entry> {
     let _ = lower;
     // `search_entries` は常に fuzzy を評価する経路 (Fuzzy::Include 固定)。
-    super::super::search_entries(entries, query, true, ranking)
+    super::super::search_entries(entries, query, true, ranking, false)
 }
 
 fn search_entries_cached_multi_for_test<'a>(

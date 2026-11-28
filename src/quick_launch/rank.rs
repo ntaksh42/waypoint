@@ -49,6 +49,7 @@ pub(crate) fn search_entries<'a>(
     query: &str,
     search_paths: bool,
     ranking: &Ranking,
+    prioritize_windows: bool,
 ) -> Vec<&'a Entry> {
     let terms = lower_terms(query);
     rank_matches(
@@ -70,6 +71,7 @@ pub(crate) fn search_entries<'a>(
                 )
                 .map(|score| (score, order, entry))
             }),
+        prioritize_windows && !terms.is_empty(),
     )
 }
 
@@ -84,7 +86,13 @@ pub(crate) fn search_entries_cached<'a>(
     search_paths: bool,
     ranking: &Ranking,
 ) -> Vec<&'a Entry> {
-    search_entries_cached_multi(&[(entries, lower_keys)], query, search_paths, ranking)
+    search_entries_cached_multi(
+        &[(entries, lower_keys)],
+        query,
+        search_paths,
+        ranking,
+        false,
+    )
 }
 
 /// 複数の候補群 (`entries` と対応する `lower_keys` の組) を横断して検索する。
@@ -98,6 +106,7 @@ pub(crate) fn search_entries_cached_multi<'a>(
     query: &str,
     search_paths: bool,
     ranking: &Ranking,
+    prioritize_windows: bool,
 ) -> Vec<&'a Entry> {
     let terms = lower_terms(query);
     // fuzzy (tier6〜8) は Skim の DP で、候補文字列ぶんの `Vec<char>` 確保を
@@ -117,7 +126,7 @@ pub(crate) fn search_entries_cached_multi<'a>(
     if scored.len() < FUZZY_SKIP_THRESHOLD {
         scored = scan_sources(sources, &terms, search_paths, ranking, Fuzzy::Include);
     }
-    rank_matches(scored.into_iter())
+    rank_matches(scored.into_iter(), prioritize_windows && !terms.is_empty())
 }
 
 /// `sources` を順に走査してスコア付きの一致を集める。`order` はソースを
@@ -208,12 +217,17 @@ pub(super) fn score_entry(
 /// 文字列一致の質を最優先し、同点内では使用頻度・最近使った順で並べる。
 fn rank_matches<'a>(
     scored: impl Iterator<Item = ((u8, i64, (u64, u64)), usize, &'a Entry)>,
+    prioritize_windows: bool,
 ) -> Vec<&'a Entry> {
     let mut matches: Vec<SearchMatch<'a>> = scored
         .map(|((tier, fuzzy_score, usage), order, entry)| (tier, fuzzy_score, usage, order, entry))
         .collect();
-    matches.sort_by_key(|(tier, fuzzy_score, usage, order, _)| {
-        (*tier, Reverse(*fuzzy_score), *usage, *order)
+    matches.sort_by_key(|(tier, fuzzy_score, usage, order, entry)| {
+        // ティア 0〜3 はすべての検索語が名前に連続して一致した場合。
+        let window_match = prioritize_windows
+            && *tier <= 3
+            && matches!(entry.action, super::Action::FocusWindow(_));
+        (!window_match, *tier, Reverse(*fuzzy_score), *usage, *order)
     });
     matches
         .into_iter()
@@ -262,7 +276,7 @@ pub(crate) fn bench_cached_multi<'a>(
     search_paths: bool,
     ranking: &Ranking,
 ) -> Vec<&'a Entry> {
-    search_entries_cached_multi(sources, query, search_paths, ranking)
+    search_entries_cached_multi(sources, query, search_paths, ranking, false)
 }
 
 #[cfg(test)]
