@@ -49,7 +49,7 @@ pub(crate) use rank::search_entries;
 pub(crate) use scoring::highlight_ranges;
 pub(crate) use snapshot::Snapshot;
 pub use windows_settings::WINDOWS_SETTINGS_PREFIX;
-pub(crate) use windows_settings::windows_setting_entries;
+pub(crate) use windows_settings::{windows_setting_entries, windows_setting_icon};
 
 use azure::AzureIndexed;
 

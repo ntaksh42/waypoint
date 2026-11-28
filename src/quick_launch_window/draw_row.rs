@@ -17,6 +17,7 @@ use super::badge::{action_tag, action_tag_color, action_verb, azure_tile};
 use super::draw::{draw_text, draw_text_path, measured_width};
 use super::draw_icons::{
     FaviconFallback, draw_command_icon, draw_favicon_icon, draw_path_icon, draw_window_icon,
+    draw_windows_setting_icon,
 };
 use super::layout::scale;
 use super::row_parts::{TagStyle, draw_section_header, draw_tag_right_aligned};
@@ -307,6 +308,14 @@ unsafe fn draw_entry_icon(
                 dpi,
                 FaviconFallback::Web,
             ),
+            Action::OpenWindowsSetting => draw_windows_setting_icon(
+                draw.hDC,
+                draw.rcItem,
+                dpi,
+                &entry.path,
+                selected,
+                name_font,
+            ),
             Action::ReplaceQuery(_)
             | Action::AzureLiveWorkItemSearch { .. }
             | Action::AzureLivePullRequestSearch { .. }
@@ -316,7 +325,6 @@ unsafe fn draw_entry_icon(
             | Action::OpenBookmarkEditor
             | Action::OpenHelp
             | Action::OpenTabSetupGuide
-            | Action::OpenWindowsSetting
             | Action::KillProcess(_) => draw_command_icon(draw.hDC, draw.rcItem, dpi, name_font),
         }
     }

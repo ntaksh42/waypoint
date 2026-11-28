@@ -2,13 +2,13 @@
 
 use windows::Win32::Foundation::{COLORREF, HWND, RECT};
 use windows::Win32::Graphics::Gdi::{
-    AC_SRC_ALPHA, AC_SRC_OVER, AlphaBlend, BLENDFUNCTION, CreateCompatibleDC, DeleteDC, HBITMAP,
-    HDC, HFONT, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
+    AC_SRC_ALPHA, AC_SRC_OVER, AlphaBlend, BLENDFUNCTION, CreateCompatibleDC, DT_CENTER,
+    DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, DeleteDC, DrawTextW, HBITMAP, HDC, HFONT, SelectObject,
+    SetBkMode, SetTextColor, TRANSPARENT,
 };
 
-use super::draw::draw_text_centered;
-use super::layout::scale;
-use super::{ACCENT, ICON_LEFT, ICON_SIZE};
+use super::layout::{create_windows_setting_font, scale};
+use super::{ACCENT, ICON_LEFT, ICON_SIZE, STATE, TEXT_PRIMARY};
 
 /// 種別色をそのまま塗ると強すぎるので、背景 (`BACKGROUND`) に大きく
 /// 寄せた低彩度版にする (モードバッジの地に使う)。
@@ -25,6 +25,44 @@ pub(super) fn backdrop_tint(color: COLORREF) -> COLORREF {
 /// 小さな `>` グリフで示す。
 pub(super) unsafe fn draw_command_icon(hdc: HDC, rect: RECT, dpi: u32, font: Option<HFONT>) {
     let Some(font) = font else { return };
+    unsafe { draw_glyph_icon(hdc, rect, dpi, font, u16::from(b'>'), ACCENT) };
+}
+
+/// 設定候補を初めて描くときにフォントを作り、同じ DPI の行で使い回す。
+pub(super) unsafe fn draw_windows_setting_icon(
+    hdc: HDC,
+    rect: RECT,
+    dpi: u32,
+    path: &str,
+    selected: bool,
+    name_font: Option<HFONT>,
+) {
+    let glyph = crate::quick_launch::windows_setting_icon(path);
+    let font = STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        if state.windows_setting_font.is_none() {
+            state.windows_setting_font = create_windows_setting_font(dpi);
+        }
+        state.windows_setting_font
+    });
+    unsafe {
+        if let (Some(glyph), Some(font)) = (glyph, font) {
+            let color = if selected { TEXT_PRIMARY } else { ACCENT };
+            draw_glyph_icon(hdc, rect, dpi, font, glyph, color);
+        } else {
+            draw_command_icon(hdc, rect, dpi, name_font);
+        }
+    }
+}
+
+unsafe fn draw_glyph_icon(
+    hdc: HDC,
+    rect: RECT,
+    dpi: u32,
+    font: HFONT,
+    glyph: u16,
+    color: COLORREF,
+) {
     unsafe {
         let size = scale(ICON_SIZE, dpi);
         let mut icon_rect = RECT {
@@ -35,8 +73,13 @@ pub(super) unsafe fn draw_command_icon(hdc: HDC, rect: RECT, dpi: u32, font: Opt
         };
         let old_font = SelectObject(hdc, font.into());
         SetBkMode(hdc, TRANSPARENT);
-        SetTextColor(hdc, ACCENT);
-        draw_text_centered(hdc, ">", &mut icon_rect);
+        SetTextColor(hdc, color);
+        DrawTextW(
+            hdc,
+            &mut [glyph],
+            &mut icon_rect,
+            DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_NOPREFIX,
+        );
         SelectObject(hdc, old_font);
     }
 }

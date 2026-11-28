@@ -14,7 +14,7 @@ use windows::Win32::UI::Controls::{EM_SETCUEBANNER, EM_SETMARGINS};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetClientRect, GetCursorPos, GetWindowRect, MoveWindow, WM_SETFONT,
 };
-use windows::core::w;
+use windows::core::{PCWSTR, w};
 
 use crate::config::MonitorChoice;
 
@@ -130,6 +130,7 @@ pub(super) fn apply_dpi(window: HWND, dpi: u32) {
             state.highlight_font,
             state.tag_font,
             state.header_font,
+            state.windows_setting_font.take(),
         ]
         .into_iter()
         .flatten()
@@ -185,7 +186,30 @@ pub(super) fn set_search_placeholder(edit: HWND) {
     }
 }
 
-pub(super) fn create_font(pixel_height: i32, weight: i32, underline: bool) -> Option<HFONT> {
+fn create_font(pixel_height: i32, weight: i32, underline: bool) -> Option<HFONT> {
+    create_font_with_face(
+        pixel_height,
+        weight,
+        underline,
+        w!("Segoe UI Variable Text"),
+    )
+}
+
+pub(super) fn create_windows_setting_font(dpi: u32) -> Option<HFONT> {
+    create_font_with_face(
+        scale(18, dpi),
+        FW_NORMAL.0 as i32,
+        false,
+        w!("Segoe MDL2 Assets"),
+    )
+}
+
+fn create_font_with_face(
+    pixel_height: i32,
+    weight: i32,
+    underline: bool,
+    face: PCWSTR,
+) -> Option<HFONT> {
     let font = unsafe {
         CreateFontW(
             -pixel_height,
@@ -201,7 +225,7 @@ pub(super) fn create_font(pixel_height: i32, weight: i32, underline: bool) -> Op
             CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY,
             DEFAULT_PITCH.0.into(),
-            w!("Segoe UI Variable Text"),
+            face,
         )
     };
     (!font.is_invalid()).then_some(font)
